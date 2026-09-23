@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #F4F4F2; color: #1F1F1D; -webkit-font-smoothing: antialiased; }
+  a { color: #7A5E00; text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: #1F1F1D; }
+  ::selection { background: rgba(232,180,0,0.30); }
+  * { scrollbar-width: thin; scrollbar-color: #C9C9C4 transparent; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: #C9C9C4; border-radius: 0; }
+  select option { background: #FFFFFF; color: #1F1F1D; }
+  @keyframes gxpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+  @keyframes gxspin { to { transform: rotate(360deg); } }
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;min-height:100vh;background:#F4F4F2;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D">
+
+  <header style="position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:14px;height:48px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #DCDCD8">
+    <img src="gx-wordmark.png" alt="GlobalXtreme" style="height:15px;display:block" />
+    <span style="font:500 13px 'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D">CX Intelligence</span>
+    <span style="font:400 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">live sheet</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <sc-if value="{{ busy }}" hint-placeholder-val="{{ true }}">
+        <span style="display:flex;align-items:center;gap:7px;font:500 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">
+          <span style="width:10px;height:10px;border-radius:50%;border:1.5px solid #DCDCD8;border-top-color:#1F1F1D;animation:gxspin 0.8s linear infinite"></span>
+          querying
+        </span>
+      </sc-if>
+      <span style="display:flex;align-items:center;gap:7px;padding:4px 9px;border:1px solid #DCDCD8;border-radius:3px;background:#F4F4F2;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;color:#1F1F1D;white-space:nowrap">
+        <span style="width:6px;height:6px;border-radius:50%;background:#2E6B34;animation:gxpulse 2.4s ease-in-out infinite"></span>
+        {{ syncLine }}
+      </span>
+      <button type="button" onClick="{{ onRefresh }}" style="padding:5px 11px;border:1px solid #1F1F1D;border-radius:3px;background:#1F1F1D;color:#FFFFFF;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;cursor:pointer;white-space:nowrap" style-hover="background:#3A3A37">Re-sync data</button>
+    </div>
+  </header>
+
+  <div style="display:flex;align-items:stretch;flex:1;min-width:0">
+    <aside style="position:sticky;top:48px;align-self:flex-start;flex:0 0 196px;width:196px;height:calc(100vh - 48px);display:flex;flex-direction:column;gap:2px;padding:12px 8px;border-right:1px solid #DCDCD8;box-sizing:border-box">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="9">
+        <button type="button" onClick="{{ n.onClick }}" style="position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 13px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
+          <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}">
+            <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+          </sc-if>
+          <span style="position:relative;flex:0 0 18px;font:400 10.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.tag }}</span>
+          <span style="position:relative;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ n.label }}</span>
+        </button>
+      </sc-for>
+      <div style="margin-top:auto;padding:10px;font:400 11px/1.6 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">Reads live from the operations Google Sheet. No local cache.</div>
+    </aside>
+
+    <main style="flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:14px;padding:16px 20px 60px">
+
+      <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+          <span style="font:500 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.08em;text-transform:uppercase;color:#5F5F5B">{{ viewKicker }}</span>
+          <h1 style="margin:0;font:500 18px/1.3 'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D;text-wrap:pretty">{{ viewTitle }}</h1>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 8px;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px">
+          <span style="font:600 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;color:#1F1F1D">PERIOD</span>
+          <select value="{{ period }}" onChange="{{ onPeriod }}" style="padding:3px 6px;border:1px solid #DCDCD8;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;outline:none;cursor:pointer">
+            <option value="all">All time</option>
+            <sc-for list="{{ periodOptions }}" as="p" hint-placeholder-count="3">
+              <option value="{{ p.key }}">{{ p.label }}</option>
+            </sc-for>
+          </select>
+          <span style="width:1px;height:18px;background:#DCDCD8"></span>
+          <span style="font:600 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;color:#1F1F1D">BRANCH</span>
+          <select value="{{ branch }}" onChange="{{ onBranch }}" style="padding:3px 6px;border:1px solid #DCDCD8;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;outline:none;cursor:pointer">
+            <option value="all">All branches</option>
+            <sc-for list="{{ branchOptions }}" as="b" hint-placeholder-count="3">
+              <option value="{{ b.key }}">{{ b.label }}</option>
+            </sc-for>
+          </select>
+        </div>
+      </section>
+
+      <p style="margin:-4px 0 0;max-width:84ch;font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46;text-wrap:pretty">{{ viewSub }}</p>
+
+      <sc-if value="{{ error }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:12px 14px;border-radius:4px;background:#FBF1EF;border:1px solid #E2B8B1">
+          <div style="font:600 13px 'IBM Plex Sans',system-ui,sans-serif;color:#9B2C1F;margin-bottom:4px">Could not read the spreadsheet</div>
+          <div style="font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#3A3A37">{{ error }}</div>
+          <div style="margin-top:6px;font:400 12px/1.6 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">Share the file as “Anyone with the link — Viewer”, then press Re-sync data.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ dateWarn }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:12px 14px;border-radius:4px;background:#FBF5E6;border:1px solid #E3CF96">
+          <div style="font:600 13px 'IBM Plex Sans',system-ui,sans-serif;color:#7A4A10;margin-bottom:4px">Date format problem in the Tickets sheet</div>
+          <div style="font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#3A3A37">{{ dateWarnText }}</div>
+          <div style="margin-top:6px;font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46">To fix it, select the date and time columns (Date, Created, Send to CTSO, Solved, Solved by CSO and the rest), choose Format → Number → Plain text, paste the data again, then press Re-sync data.</div>
+        </div>
+      </sc-if>
+
+      <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px;overflow:hidden">
+        <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:12px 14px;background:#FFFFFF;box-shadow:1px 0 0 #DCDCD8, 0 1px 0 #DCDCD8">
+            <span style="font:500 10.5px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5F5F5B">{{ k.label }}</span>
+            <span style="font:500 22px/1.1 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:-0.02em;color:#1F1F1D">{{ k.value }}</span>
+            <span style="font:400 12px/1.45 'IBM Plex Sans',system-ui,sans-serif;color:#5F5F5B;text-wrap:pretty">{{ k.sub }}</span>
+          </div>
+        </sc-for>
+      </section>
+
+      <section style="display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:start">
+        <sc-for list="{{ cards }}" as="c" hint-placeholder-count="4">
+          <div style="{{ c.grid }}">
+            <div style="display:flex;flex-direction:column;gap:12px;padding:14px 16px 16px;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px">
+              <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px">
+                <h2 style="margin:0;padding-bottom:3px;border-bottom:2px solid #E8B400;font:600 11.5px/1.3 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;text-transform:uppercase;color:#1F1F1D">{{ c.title }}</h2>
+                <span style="font:400 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ c.meta }}</span>
+              </div>
+              <sc-if value="{{ c.sub }}" hint-placeholder-val="{{ false }}">
+                <p style="margin:0;font:400 12.5px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46;text-wrap:pretty">{{ c.sub }}</p>
+              </sc-if>
+              <div style="min-width:0">{{ c.body }}</div>
+              <sc-if value="{{ c.note }}" hint-placeholder-val="{{ false }}">
+                <p style="margin:0;padding-top:10px;border-top:1px solid #EBEBE7;font:400 12px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#5F5F5B;text-wrap:pretty">{{ c.note }}</p>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </section>
+
+      <footer style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:4px;font:400 11px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">
+        <span>GlobalXtreme · PT. Internet Madju Abad Milenindo — Customer Service &amp; Customer Experience</span>
+        <span>{{ engineLine }}</span>
+      </footer>
+    </main>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;sheetUrl&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;https://docs.google.com/spreadsheets/d/16_wxt9NtC61vaww_7HIW15PNrY6E-iPQDfBbllM-jg4/edit&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Data source&quot;},&quot;frtSla&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:5,&quot;min&quot;:1,&quot;max&quot;:30,&quot;step&quot;:1,&quot;unit&quot;:&quot; min&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Service levels&quot;},&quot;rtSla&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:2,&quot;min&quot;:1,&quot;max&quot;:15,&quot;step&quot;:1,&quot;unit&quot;:&quot; min&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Service levels&quot;},&quot;topN&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:12,&quot;min&quot;:5,&quot;max&quot;:40,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Display&quot;}}">
+class Component extends DCLogic {
+  state = {
+    view: 'overview', period: 'all', branch: 'all',
+    index: null, data: {}, busy: true, error: null,
+    swap: null, swapBusy: false, swapProgress: 0, tick: 0,
+    w: typeof window !== 'undefined' ? window.innerWidth : 1400,
+  };
+
+  onResize = () => {
+    const w = window.innerWidth;
+    if (Math.abs(w - this.state.w) > 40) this.setState({ w });
+  };
+
+  componentWillUnmount() { window.removeEventListener('resize', this.onResize); }
+
+  async componentDidMount() {
+    window.addEventListener('resize', this.onResize);
+    try {
+      const [D, C] = await Promise.all([import('./gxdata.js'), import('./gxcharts-v2.js')]);
+      this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
+      D.setSheetUrl(this.props.sheetUrl);
+      const index = await D.loadIndex();
+      const current = index.periods.find(p => p.sort <= index.nowKey);
+      const period = current ? current.key : 'all';
+      this.setState({ index, period }, () => this.load());
+    } catch (e) { this.setState({ busy: false, error: e.message }); }
+  }
+
+  componentDidUpdate(prev) {
+    if (prev.sheetUrl !== this.props.sheetUrl && this.D) {
+      this.D.setSheetUrl(this.props.sheetUrl); this.refresh();
+    }
+    if (prev.frtSla !== this.props.frtSla || prev.rtSla !== this.props.rtSla) {
+      const data = { ...this.state.data }; delete data.chat;
+      this.setState({ data }, () => this.load());
+    }
+  }
+
+  key(view) {
+    const perView = { chat: 'chat', growth: 'growth' };
+    return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
+  }
+
+  async load() {
+    const { view } = this.state;
+    const k = this.key(view);
+    if (this.state.data[k]) { this.setState({ busy: false }); return; }
+    this.setState({ busy: true, error: null });
+    const D = this.D, p = this.state.period, b = this.state.branch;
+    const jobs = {
+      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadChat(this.sla(), this.rtSla()), D.loadCsat(p), D.loadRepeat(p, b)])
+        .then(([tickets, esc, chat, csat, repeat]) => ({ tickets, esc, chat, csat, repeat })),
+      tickets: () => D.loadTickets(p, b),
+      escalation: () => D.loadEscalation(p, b),
+      resolution: () => D.loadResolution(p, b),
+      agents: () => D.loadAgents(p, b),
+      customers: () => D.loadRepeat(p, b),
+      chat: () => D.loadChat(this.sla(), this.rtSla()),
+      csat: () => D.loadCsat(p),
+      growth: () => D.loadGrowth(),
+    };
+    try {
+      if (view === 'growth' && !this.state.blocked && !this.blockedLoading) {
+        this.blockedLoading = true;
+        D.loadBlocked().then(blocked => this.setState({ blocked }))
+          .catch(e => this.setState({ blocked: { error: e.message } }))
+          .finally(() => { this.blockedLoading = false; });
+      }
+      const res = await (jobs[view] || (() => Promise.resolve({})))();
+      this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }));
+    } catch (e) { this.setState({ busy: false, error: e.message }); }
+  }
+
+  sla() { return Number(this.props.frtSla) || 5; }
+  rtSla() { return Number(this.props.rtSla) || 2; }
+  topN() { return Number(this.props.topN) || 12; }
+
+  refresh = () => {
+    this.D.clearCache();
+    this.setState({ data: {}, swap: null, blocked: null }, async () => {
+      try {
+        const index = await this.D.loadIndex();
+        this.setState({ index }, () => this.load());
+      } catch (e) { this.setState({ error: e.message, busy: false }); }
+    });
+  };
+
+  go = view => this.setState({ view }, () => this.load());
+  setPeriod = e => this.setState({ period: e.target.value }, () => this.load());
+  setBranch = e => this.setState({ branch: e.target.value }, () => this.load());
+
+  runSwap = async () => {
+    this.setState({ swapBusy: true, swapProgress: 0 });
+    try {
+      const swap = await this.D.runSwapAnalysis(n => this.setState({ swapProgress: n }));
+      this.setState({ swap, swapBusy: false });
+    } catch (e) { this.setState({ swapBusy: false, error: e.message }); }
+  };
+
+  /* ---------- small render helpers ---------- */
+
+  el(tag, style, children) { return React.createElement(tag, { style }, children); }
+
+  table(headers, rows, opts) {
+    const o = opts || {};
+    const th = { textAlign: 'left', padding: '7px 12px', background: '#F4F4F2', borderBottom: '1px solid #DCDCD8', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', whiteSpace: 'nowrap', position: o.maxHeight ? 'sticky' : 'static', top: 0 };
+    const td = { padding: '8px 12px', font: "400 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D', borderTop: '1px solid #EBEBE7', verticalAlign: 'top' };
+    return React.createElement('div', { style: { overflowX: 'auto', maxHeight: o.maxHeight || 'none', overflowY: o.maxHeight ? 'auto' : 'visible', border: '1px solid #DCDCD8', borderRadius: 3 } },
+      React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', minWidth: o.minWidth || 'auto' } },
+        React.createElement('thead', null, React.createElement('tr', null, headers.map((hd, i) =>
+          React.createElement('th', { key: i, style: { ...th, textAlign: i && o.numeric !== false ? 'right' : 'left' } }, hd)))),
+        React.createElement('tbody', null, rows.map((r, i) =>
+          React.createElement('tr', { key: i }, r.map((c, j) =>
+            React.createElement('td', {
+              key: j,
+              style: { ...td, borderTop: i ? td.borderTop : 'none', textAlign: j && o.numeric !== false ? 'right' : 'left', font: j && o.numeric !== false ? "400 12.5px 'IBM Plex Mono',ui-monospace,monospace" : td.font, color: j === 0 ? '#1F1F1D' : '#3A3A37' },
+            }, c)))))));
+  }
+
+  statRow(items) {
+    return React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 14 } },
+      items.map((it, i) => React.createElement('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        React.createElement('span', { style: { font: "500 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' } }, it.label),
+        React.createElement('span', { style: { font: "500 20px/1 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '-0.02em', color: it.color || '#1F1F1D' } }, it.value),
+        it.sub ? React.createElement('span', { style: { font: "500 11px/1.4 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.64)' } }, it.sub) : null)));
+  }
+
+  bullets(items, color) {
+    return React.createElement('ul', { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 11 } },
+      items.map((t, i) => React.createElement('li', { key: i, style: { display: 'grid', gridTemplateColumns: '18px minmax(0,1fr)', gap: 10, font: "500 13px/1.65 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)', textWrap: 'pretty' } },
+        React.createElement('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: color || '#B08A1E', paddingTop: 3 } }, String(i + 1).padStart(2, '0')),
+        React.createElement('span', null,
+          t.title ? React.createElement('strong', { style: { color: '#1F1F1D', fontWeight: 600 } }, t.title + ' ') : null,
+          t.text || t))));
+  }
+
+  scaleSpan(n) {
+    const w = this.state.w || 1400;
+    if (w < 860) return 12;
+    if (w < 1280) return n <= 6 ? 6 : 12;
+    return n;
+  }
+
+  card(title, opts) {
+    const o = opts || {};
+    return { title, meta: o.meta || '', sub: o.sub || '', note: o.note || '', body: o.body, grid: { gridColumn: 'span ' + this.scaleSpan(o.span || 12) } };
+  }
+
+  /* ---------- views ---------- */
+
+  overview(d) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D, t = d.tickets, e = d.esc, c = d.chat, s = d.csat, r = d.repeat;
+    const kpis = [
+      { label: 'Trouble tickets', value: D.fmtInt(t.total), sub: D.fmtInt(Math.round(t.avgDaily)) + ' per day average' },
+      { label: 'Unique customers', value: D.fmtInt(r.uniq), sub: D.fmtPct(r.multiShare) + ' raised more than one ticket' },
+      { label: 'Escalated to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets queued' },
+      { label: 'Work orders raised', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of tickets became field work' },
+      { label: 'Chat conversations', value: D.fmtInt(c.totalConv), sub: D.fmtPct(c.aiShare) + ' closed by DotAI' },
+      { label: 'CSAT score', value: s.total ? s.avg.toFixed(2) + ' / 5' : '—', sub: s.total ? D.fmtPct(s.top2Share) + ' top-2-box · ' + D.fmtInt(s.total) + ' responses' : 'No responses in period' },
+    ];
+    const cards = [
+      this.card('Daily ticket volume', {
+        span: 8, meta: t.series.length + ' days',
+        sub: 'Total inbound tickets per day with mass-outage tickets overlaid in red.',
+        body: React.createElement(LineChart, { series: t.series, overlayKey: 'mass', height: 250 }),
+        note: t.peak ? 'Peak ' + D.fmtInt(t.peak.value) + ' tickets on ' + t.peak.raw + '; quietest day ' + D.fmtInt(t.low.value) + ' on ' + t.low.raw + '. Mass-problem tickets in period: ' + D.fmtInt(t.massTotal) + '.' : '',
+      }),
+      this.card('Request type', {
+        span: 4, meta: D.fmtInt(t.total) + ' tickets',
+        body: React.createElement(Donut, { data: t.type, centerValue: D.fmtPct(this.share(t.type, 'Complaint')), centerLabel: 'complaints' }),
+        note: 'Complaints are reactive contacts; info requests are service or account questions.',
+      }),
+      this.card('Top categories', {
+        span: 4, meta: 'by volume',
+        body: React.createElement(RankBars, { data: t.category.slice(0, 8), total: t.total }),
+      }),
+      this.card('Entry channel', {
+        span: 4, meta: 'via origin',
+        body: React.createElement(RankBars, { data: t.channel.slice(0, 8), total: t.total, color: this.PAL[1] }),
+      }),
+      this.card('Priority mix', {
+        span: 4, meta: D.fmtPct(t.criticalShare) + ' critical',
+        body: React.createElement(Donut, { data: t.priority, centerValue: D.fmtInt(t.critical), centerLabel: 'VIP + highest', colors: ['#9B2C1F', '#C4561B', '#B08A1E', '#3E5C76', '#8C8C88'] }),
+        note: 'VIP and Highest tickets carry the greatest reputational exposure despite their small share of volume.',
+      }),
+      this.card('Response speed and field escalation at a glance', {
+        span: 12,
+        body: this.statRow([
+          { label: 'Weighted FRT (human)', value: D.fmtDur(c.weighted), sub: 'simple average ' + D.fmtDur(c.simple) },
+          { label: 'Excess wait — agents', value: D.fmtInt(c.excessHuman) + ' min', sub: '±' + D.fmtInt(c.excessHuman / 60) + ' hours above the ' + this.sla() + '-minute SLA' },
+          { label: 'Excess wait — dispatch & queues', value: D.fmtInt(c.excessSystem) + ' min', sub: '±' + D.fmtInt(c.excessSystem / 60) + ' hours above the ' + this.rtSla() + '-minute RT threshold' },
+          { label: 'CTSO handled by named officer', value: D.fmtInt(e.named), sub: D.fmtInt(e.unassigned) + ' queued without an individual owner' },
+          { label: 'Work order split', value: e.woTypes.filter(w => w.value).map(w => w.code).join(' / ') || '—', sub: e.woTypes.filter(w => w.value).map(w => D.fmtPct(w.share, 0)).join(' / ') },
+          { label: 'Repeat field work', value: D.fmtInt(r.multi), sub: 'customers needing 2 or more work orders (' + D.fmtPct(r.multiShare) + ' of sites with field work)' },
+        ]),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  share(list, key) {
+    const total = list.reduce((s, x) => s + x.value, 0);
+    const hit = list.find(x => x.key === key);
+    return total && hit ? hit.value / total : 0;
+  }
+
+  ticketsView(t) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D;
+    const prio = t.priority.map(p => {
+      const mix = t.prioComplaint[p.key] || { Complaint: 0, Info: 0 };
+      return [p.key, D.fmtInt(p.value), D.fmtPct(p.value / t.total), D.fmtInt(mix.Complaint), D.fmtPct(mix.Complaint / (p.value || 1))];
+    });
+    const kpis = [
+      { label: 'Tickets in period', value: D.fmtInt(t.total), sub: t.series.length + ' active days' },
+      { label: 'Daily average', value: D.fmtInt(Math.round(t.avgDaily)), sub: t.peak ? 'peak ' + D.fmtInt(t.peak.value) + ' · low ' + D.fmtInt(t.low.value) : '' },
+      { label: 'Complaints', value: D.fmtPct(this.share(t.type, 'Complaint')), sub: D.fmtInt((t.type.find(x => x.key === 'Complaint') || {}).value || 0) + ' of ' + D.fmtInt(t.total) + ' contacts' },
+      { label: 'Critical priority', value: D.fmtInt(t.critical), sub: D.fmtPct(t.criticalShare) + ' VIP + Highest' },
+      { label: 'Mass-outage tickets', value: D.fmtInt(t.massTotal), sub: 'baseline ' + D.fmtInt(t.massBaseline || 0) + ' per day' },
+    ];
+    const cards = [
+      this.card('Volume trend with mass-outage overlay', {
+        span: 12, meta: 'daily',
+        body: React.createElement(LineChart, { series: t.series, overlayKey: 'mass', height: 270 }),
+        note: 'Red bars mark tickets logged under the Mass-Problem problem code — the leading indicator of a network-wide incident.',
+      }),
+      this.card('Info versus complaint', {
+        span: 4,
+        body: React.createElement(Donut, { data: t.type, centerValue: D.fmtInt(t.total), centerLabel: 'tickets' }),
+      }),
+      this.card('Priority segmentation', {
+        span: 8, meta: '5 levels',
+        body: this.table(['Priority', 'Tickets', 'Share', 'Complaints', 'Complaint rate'], prio),
+        note: 'Complaint rate inside the VIP and Highest tiers shows how much of the critical queue is an active fault rather than a prioritised request.',
+      }),
+      this.card('Categories', {
+        span: 6, meta: t.category.length + ' categories',
+        body: React.createElement(RankBars, { data: t.category.slice(0, 12), total: t.total }),
+      }),
+      this.card('Specific problems', {
+        span: 6, meta: 'top 12 problem codes',
+        body: React.createElement(RankBars, { data: t.problem.slice(0, 12), total: t.total, color: this.PAL[1] }),
+      }),
+      this.card('Communication channel', {
+        span: 6, meta: 'via origin',
+        body: this.table(['Channel', 'Tickets', 'Share'], t.channel.map(c => [c.key, D.fmtInt(c.value), D.fmtPct(c.value / t.total)])),
+      }),
+      this.card('Branch and product split', {
+        span: 6,
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 18 } },
+          React.createElement(RankBars, { data: t.branchSplit.map(b => ({ key: b.key.replace(/^GlobalXtreme\s*/, ''), value: b.value })), total: t.total, color: this.PAL[2] }),
+          React.createElement(RankBars, { data: t.product.slice(0, 6), total: t.total, color: this.PAL[4] })),
+      }),
+      this.card('Highest mass-outage concentration', {
+        span: 12, meta: 'top days',
+        body: this.table(['Date', 'Mass-problem tickets', 'Total tickets that day', 'Share of the day'],
+          t.massTop.map(m => [m.raw, D.fmtInt(m.mass), D.fmtInt(m.value), D.fmtPct(m.mass / m.value)])),
+        note: 'Days well above the daily baseline indicate a network-wide incident rather than routine faults.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  escalationView(e) {
+    const { Donut, RankBars } = this.charts;
+    const D = this.D;
+    const funnel = [
+      { key: 'All tickets', value: e.total },
+      { key: 'Queued to CTSO', value: e.sent },
+      { key: 'Handled by a named CTSO', value: e.named },
+      { key: 'Became a work order', value: e.wo },
+    ];
+    const kpis = [
+      { label: 'Queued to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets' },
+      { label: 'Named CTSO owner', value: D.fmtInt(e.named), sub: D.fmtPct(e.namedShare) + ' of all tickets' },
+      { label: 'No individual owner', value: D.fmtInt(e.unassigned), sub: 'batch or automated handling' },
+      { label: 'Work orders', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of all tickets' },
+    ];
+    const cards = [
+      this.card('Escalation funnel', {
+        span: 5, meta: 'ticket → CTSO → work order',
+        body: React.createElement(RankBars, { data: funnel, total: e.total, max: e.total, colorBy: (d, i) => ['#B08A1E', '#3E5C76', '#2E6B34', '#8A3B6E'][i] }),
+        note: 'The gap between tickets queued to CTSO and tickets with a named officer is processed in batch — mostly mass-outage incidents handled collectively or dispatched straight to a work order.',
+      }),
+      this.card('Work orders by type', {
+        span: 7, meta: D.fmtInt(e.wo) + ' work orders',
+        body: React.createElement(Donut, { data: e.woTypes.filter(w => w.value).map(w => ({ key: w.code + ' · ' + w.name, value: w.value })), centerValue: D.fmtInt(e.wo), centerLabel: 'work orders', colors: ['#2E6B34', '#B08A1E', '#9B2C1F', '#3E5C76'] }),
+        note: 'WCA covers new installations (an acquisition signal), WCM covers repairs of the customer local network, and WWR covers wiredown or fiber-cut restoration.',
+      }),
+      this.card('Dispatch route by work-order type', {
+        span: 12,
+        body: this.table(['Type', 'Definition', 'Volume', 'Share of WO', 'Via CTSO', 'Direct dispatch'],
+          e.woTypes.map(w => [w.code + ' — ' + w.name, w.desc, D.fmtInt(w.value), w.value ? D.fmtPct(w.share) : '—',
+            w.value ? D.fmtInt(w.viaCtso) + ' (' + D.fmtPct(w.viaCtso / w.value, 0) + ')' : '—',
+            w.value ? D.fmtInt(w.direct) + ' (' + D.fmtPct(w.direct / w.value, 0) + ')' : '—'])),
+        note: 'A work-order code with zero volume is not present in the source system for this period. WGM (mass outage) has never been issued as a work-order code — mass incidents are tracked through the Mass-Problem ticket code instead.',
+      }),
+      this.card('Categories that generate field work', {
+        span: 6, meta: 'work orders by ticket category',
+        body: React.createElement(RankBars, { data: e.woByCategory, total: e.wo, color: this.PAL[2] }),
+      }),
+      this.card('CTSO workload', {
+        span: 6, meta: e.ctsoAgents.length + ' officers',
+        body: React.createElement(RankBars, { data: e.ctsoAgents, total: e.named, color: this.PAL[1] }),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  resolutionView(r) {
+    const { BarChart, RankBars } = this.charts;
+    const D = this.D;
+    const mins = v => D.fmtDur(v == null ? null : v * 60);
+    const kpis = [
+      { label: 'Median resolution (CSO)', value: mins(r.csoMedian), sub: D.fmtInt(r.csoCount) + ' tickets with a valid timestamp' },
+      { label: 'Mean resolution (CSO)', value: mins(r.csoMean), sub: 'distorted by extreme outliers — use the median for SLA' },
+      { label: 'Median resolution (CTSO)', value: mins(r.ctsoMedian), sub: D.fmtInt(r.ctsoCount) + ' escalated tickets' },
+      { label: 'First contact resolution', value: D.fmtPct(r.fcrRate), sub: D.fmtInt(r.fcr) + ' tickets closed on a single report' },
+      { label: 'Five or more reports', value: D.fmtPct(r.heavyRate), sub: D.fmtInt(r.heavy) + ' tickets needed repeated contact' },
+    ];
+    const cards = [
+      this.card('Resolution time distribution — CSO level', {
+        span: 6, meta: D.fmtInt(r.csoCount) + ' tickets',
+        body: React.createElement(BarChart, {
+          data: r.csoBuckets.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Tickets', color: '#B08A1E' }], height: 230,
+        }),
+        note: r.csoBuckets.map(b => b.label + ' → ' + D.fmtPct(b.cumulative, 1) + ' cumulative').join(' · '),
+      }),
+      this.card('Resolution time distribution — escalated to CTSO', {
+        span: 6, meta: D.fmtInt(r.ctsoCount) + ' tickets',
+        body: React.createElement(BarChart, {
+          data: r.ctsoBuckets.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Tickets', color: '#3E5C76' }], height: 230,
+        }),
+        note: 'Escalated cases resolve more slowly than CSO-level tickets, which is expected given their complexity and dependence on field dispatch.',
+      }),
+      this.card('Cumulative service level', {
+        span: 6,
+        body: this.table(['Window', 'Tickets', 'Share', 'Cumulative'],
+          r.csoBuckets.map(b => [b.label, D.fmtInt(b.value), D.fmtPct(b.share), D.fmtPct(b.cumulative)])),
+        note: 'Longest recorded resolution in this period: ' + mins(r.csoMax) + '.',
+      }),
+      this.card('Reports per ticket', {
+        span: 6, meta: 'FCR proxy',
+        body: React.createElement(RankBars, {
+          data: r.reports.slice(0, 10).map(x => ({ key: x.key + (x.key === 1 ? ' report' : ' reports'), value: x.value })),
+          total: r.repTotal, colorBy: (d, i) => (i === 0 ? '#2E6B34' : i < 3 ? '#B08A1E' : '#9B2C1F'),
+        }),
+        note: 'Total Reports counts every logged entry on a ticket, including proactive follow-up calls that require multiple contacts by design. True FCR is therefore likely higher than the headline figure; separating proactive outbound follow-ups from failed resolutions would sharpen the measure.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  agentsView(a) {
+    const { RankBars } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'Active CSO agents', value: D.fmtInt(a.headcount), sub: 'names recorded on tickets in period' },
+      { label: 'Tickets handled', value: D.fmtInt(a.total), sub: 'attributed to a named agent' },
+      { label: 'Average per agent', value: D.fmtInt(Math.round(a.avg)), sub: 'tickets in the selected period' },
+      { label: 'Workload spread', value: D.fmtInt(a.min) + '–' + D.fmtInt(a.max), sub: 'lowest to highest handling volume' },
+    ];
+    const cards = [
+      this.card('Handling volume by agent', {
+        span: 7, meta: 'top ' + Math.min(this.topN(), a.list.length),
+        body: React.createElement(RankBars, { data: a.list.slice(0, this.topN()).map(x => ({ key: x.key, value: x.value })), total: a.total }),
+        note: 'Cross-check against shift and attendance data before reading the spread as a performance gap — part-month rotations and backup shifts move these numbers.',
+      }),
+      this.card('Complaint load per agent', {
+        span: 5, meta: 'share of complaints',
+        body: React.createElement(RankBars, {
+          data: a.list.slice(0, this.topN()).map(x => ({ key: x.key, value: x.complaint })), total: a.total, color: this.PAL[3],
+        }),
+      }),
+      this.card('Full agent roster', {
+        span: 12, meta: a.headcount + ' agents',
+        body: this.table(['Agent', 'Tickets', 'Complaints', 'Info', 'Complaint share', 'vs team average'],
+          a.list.map(x => [x.key, D.fmtInt(x.value), D.fmtInt(x.complaint), D.fmtInt(x.info), D.fmtPct(x.complaintShare),
+            (x.value >= a.avg ? '+' : '') + D.fmtInt(x.value - a.avg)]), { maxHeight: 420, minWidth: 640 }),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  customersView(r) {
+    const { RankBars, Donut } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'Field work orders', value: D.fmtInt(r.woTotal), sub: 'WWR / WCM / WGM executed, ' + D.fmtInt(r.cancelled) + ' cancelled orders excluded' },
+      { label: 'Customers with field work', value: D.fmtInt(r.uniq), sub: 'distinct CIDs that required a technician' },
+      { label: 'Repeat field work', value: D.fmtInt(r.multi), sub: D.fmtPct(r.multiShare) + ' of those CIDs needed two or more work orders' },
+      { label: 'Five or more work orders', value: D.fmtInt(r.five), sub: D.fmtPct(r.fiveShare) + ' of those CIDs — chronic fault sites' },
+      { label: 'Work orders on repeat sites', value: D.fmtInt(r.repeatWo), sub: D.fmtPct(r.repeatWoShare) + ' of all field work goes to returning locations' },
+    ];
+    const cards = [
+      this.card('Work orders per customer', {
+        span: 5,
+        body: React.createElement(Donut, { data: r.bands, centerValue: D.fmtInt(r.uniq), centerLabel: 'customers' }),
+        note: 'Counted from executed work orders per CID, not from reported tickets — one fault reported three times still counts as one visit, and a cancelled order counts as none.',
+      }),
+      this.card('Customers with the most field visits', {
+        span: 7, meta: 'top 12 CIDs',
+        body: React.createElement(RankBars, { data: r.top.map(x => ({ key: x.cid, value: x.value })), total: null, showShare: false, color: this.PAL[3] }),
+        note: 'Route these accounts to a retention owner for a proactive line check rather than waiting for the next fault.',
+      }),
+      this.card('Which work drives the repeats', {
+        span: 5, meta: D.fmtInt(r.mixedFault) + ' sites with more than one fault type',
+        body: this.table(['Code', 'Type', 'Total', 'On repeat sites'],
+          r.byType.map(t => [t.code, t.name, D.fmtInt(t.value),
+            D.fmtInt(t.repeat) + ' (' + D.fmtPct(t.value ? t.repeat / t.value : 0, 0) + ')'])),
+        note: 'WCA activations are not counted here — a new installation is acquisition, not a repeat fault.',
+      }),
+      this.card('Repeat work order detail', {
+        span: 7, meta: 'top 12 CIDs by fault mix',
+        body: this.table(['CID', 'Work orders', 'Mix'],
+          r.top.map(x => [x.cid, D.fmtInt(x.value), x.mix]), { maxHeight: 340 }),
+        note: 'A site mixing WWR and WCM points at the drop cable or the local network rather than a one-off break.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  chatView(c) {
+    const { Scatter, RankBars, Donut, SlaBars, BarChart } = this.charts;
+    const D = this.D;
+    const colorFor = a => (a.volume >= c.medVolRt && a.rt >= c.medRt) ? '#9B2C1F'
+      : (a.volume >= c.medVolRt ? '#2E6B34' : (a.rt >= c.medRt ? '#C4561B' : '#3E5C76'));
+    const kpis = [
+      { label: 'Conversations resolved', value: D.fmtInt(c.totalConv), sub: D.fmtInt(c.byHuman) + ' handled by the team' },
+      { label: 'Resolved by DotAI', value: D.fmtInt(c.byAi), sub: D.fmtPct(c.aiShare) + ' of total chat volume' },
+      { label: 'Weighted FRT (human)', value: D.fmtDur(c.weighted), sub: 'simple average ' + D.fmtDur(c.simple) },
+      { label: 'Excess wait — agents', value: D.fmtInt(c.excessHuman) + ' min', sub: '±' + D.fmtInt(c.excessHuman / 60) + ' hours above the ' + this.sla() + '-minute SLA' },
+      { label: 'Excess wait — dispatch', value: D.fmtInt(c.excessSystem) + ' min', sub: '±' + D.fmtInt(c.excessSystem / 60) + ' hours above the ' + this.rtSla() + '-minute threshold' },
+    ];
+    const cards = [
+      this.card('Volume versus average response time', {
+        span: 8, meta: c.measuredRt.length + ' agents plotted',
+        sub: 'Speed here is each agent’s average response time across the whole conversation, not the first reply alone. Dashed lines mark the team medians. Agents in the upper-right quadrant combine above-median volume with below-median speed, so their delay reaches the largest number of customers.',
+        body: React.createElement(Scatter, {
+          points: c.measuredRt.map(a => ({ x: a.volume, y: a.rt, name: a.name, color: colorFor(a), r: 7 })),
+          medX: c.medVolRt, medY: c.medRt, xLabel: 'Conversations handled', yLabel: 'Average response time',
+          yFormat: v => D.fmtDur(v), height: 400,
+          quadrantLabels: {
+            tr: 'HIGH VOLUME · SLOW — highest priority',
+            tl: 'LOW VOLUME · SLOW',
+            br: 'HIGH VOLUME · FAST — role models',
+            bl: 'LOW VOLUME · FAST',
+          },
+        }),
+      }),
+      this.card('Human versus automated resolution', {
+        span: 4,
+        body: React.createElement(Donut, {
+          data: [{ key: 'Handled by the team', value: c.byHuman }, { key: 'Resolved by DotAI', value: c.byAi }],
+          centerValue: D.fmtPct(c.aiShare, 1), centerLabel: 'automated', colors: ['#3E5C76', '#B08A1E'],
+        }),
+        note: 'DotAI removes a real share of first-layer load, though it remains below the 60% traffic-handling target set for the initiative.',
+      }),
+      this.card('First response time by agent', {
+        span: (this.state.w || 1400) < 1280 ? 12 : 6, meta: 'threshold ' + this.sla() + ' min',
+        body: React.createElement(SlaBars, {
+          data: c.measured.slice().sort((a, b) => b.frt - a.frt).map(a => ({ name: a.name, value: a.frt })),
+          threshold: this.sla() * 60, format: v => D.fmtDur(v), height: 360,
+        }),
+      }),
+      this.card('Speed distribution', {
+        span: 6, meta: c.measured.length + ' measured agents',
+        body: React.createElement(BarChart, {
+          data: c.bands.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Agents', color: '#B08A1E' }], height: 230,
+        }),
+        note: c.bands.map(b => b.label + ': ' + b.value + ' (' + D.fmtPct(b.share, 0) + ')').join(' · '),
+      }),
+      this.card('Fastest and slowest first response', {
+        span: 6, meta: 'unweighted',
+        body: this.table(['Rank', 'Fastest', 'Time', 'Slowest', 'Time'],
+          c.fastest.map((f, i) => [String(i + 1), f.name, D.fmtDur(f.frt), (c.slowest[i] || {}).name || '—', c.slowest[i] ? D.fmtDur(c.slowest[i].frt) : '—']), { numeric: false }),
+        note: 'This ranking reflects individual speed only. The impact ranking beside it weights the same delay by how many customers experienced it.',
+      }),
+      this.card('Excess wait time contributed per agent', {
+        span: 6, meta: 'minutes above SLA × volume',
+        body: React.createElement(RankBars, {
+          data: c.topExcess.map(a => ({ key: a.name, value: Math.round(a.excessFrt) })),
+          total: c.excessHuman, unit: ' min', color: '#9B2C1F',
+        }),
+        note: 'Coaching priority should follow cumulative impact rather than raw individual speed: a high-volume agent who is moderately slow costs customers more waiting time than a slower agent with little traffic.',
+      }),
+      this.card('System and queue accounts', {
+        span: 12, meta: 'dispatch, lobby and CTSO queues',
+        body: this.table(['Account', 'Conversations', 'First response', 'Response time', 'Excess RT minutes'],
+          c.system.map(a => [a.name, D.fmtInt(a.volume), a.frt != null ? D.fmtDur(a.frt) : '—', a.rt != null ? D.fmtDur(a.rt) : '—', D.fmtInt(a.excessRt)])),
+        note: 'Dispatcher accounts carry more conversations than any individual agent and sit at the hand-off point to the field team. Their excess wait time is close to the combined total of the entire human agent roster, which makes the dispatch process the single largest lever on perceived response speed.',
+      }),
+      ...c.quadrants.map(q => this.card(q.label, {
+        span: 3, meta: q.members.length + ' agents',
+        sub: q.note,
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+          q.members.length ? q.members.map((m, i) => React.createElement('div', {
+            key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 8, font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)' },
+          }, React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, m.name),
+            React.createElement('span', { style: { font: "500 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.64)', flex: '0 0 auto' } }, D.fmtDur(m.frt))))
+            : React.createElement('span', { style: { font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.62)' } }, 'No agents in this quadrant')),
+      })),
+      c.unmeasured.length ? this.card('Agents without speed data', {
+        span: 12,
+        body: React.createElement('p', { style: { margin: 0, font: "500 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.78)' } },
+          c.unmeasured.join(', ') + ' handled conversations but have no FRT or RT recorded. Confirm that their accounts are captured by the speed reporting before the next cycle.'),
+      }) : null,
+    ].filter(Boolean);
+    return { kpis, cards };
+  }
+
+  csatView(s) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'CSAT score', value: s.total ? s.avg.toFixed(2) + ' / 5' : '—', sub: s.total ? D.fmtPct(s.top2Share) + ' top-2-box' : 'No responses in period' },
+      { label: 'Responses', value: D.fmtInt(s.total), sub: D.fmtInt(s.comments.length) + ' left a written comment' },
+      { label: 'Low ratings (1–2★)', value: D.fmtInt(s.bottom2), sub: D.fmtPct(s.bottom2Share) + ' bottom-2-box' },
+      { label: 'Detractor comments', value: D.fmtInt(s.detractors.length), sub: 'rated 3★ or below with written feedback' },
+    ];
+    const cards = [
+      this.card('Daily responses and rolling score', {
+        span: 8, meta: s.series.length + ' days',
+        body: React.createElement(LineChart, { series: s.series, height: 240, label: 'Responses' }),
+        note: 'Submission volume stays broadly stable through the month; spikes usually follow a resolved incident wave.',
+      }),
+      this.card('Rating distribution', {
+        span: 4,
+        body: React.createElement(Donut, {
+          data: s.ratings.map(r => ({ key: r.rating + '★ ' + r.label, value: r.value })),
+          centerValue: s.total ? s.avg.toFixed(2) : '—', centerLabel: 'average',
+          colors: ['#2E6B34', '#3E5C76', '#B08A1E', '#C4561B', '#9B2C1F'],
+        }),
+      }),
+      this.card('Where customers answer from', {
+        span: 6, meta: 'all responses on record',
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 18 } },
+          React.createElement(RankBars, { data: s.device, total: s.device.reduce((a, b) => a + b.value, 0), color: this.PAL[1] }),
+          React.createElement(RankBars, { data: s.browser, total: s.browser.reduce((a, b) => a + b.value, 0), color: this.PAL[5] })),
+      }),
+      this.card('Recurring themes in negative feedback', {
+        span: 6, meta: s.detractors.length + ' comments at 3★ or below',
+        body: this.bullets([
+          { title: 'Slow first response and chatbot loops.', text: 'Customers report waiting many hours for a first reply, receiving repeated template answers, and having to re-explain the same problem at every new contact because chat sessions carry no context forward.' },
+          { title: 'Field technician delays.', text: 'Faults left open for a full day or longer, and visit windows changed without notice. Corporate sites amplify the impact — one hotel account affected ten units at once.' },
+          { title: 'Sales and billing inconsistency.', text: 'Promotional terms promised at sale not honoured at activation, billing-cycle change requests left unprocessed until service was cut, and inspection fees not disclosed up front.' },
+          { title: 'Inconsistent connection quality.', text: 'Speeds below the subscribed package, fluctuating latency, and faults recurring every two to three weeks at the same locations, including physical damage to cable routes.' },
+          { title: 'No downtime compensation policy.', text: 'Business and work-from-home customers question the absence of any formal credit for prolonged outages — a policy gap with direct churn exposure in the highest-value segment.' },
+        ], '#9B2C1F'),
+      }),
+      this.card('Verbatim customer feedback', {
+        span: 12, meta: s.comments.length + ' comments in period',
+        body: React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12, maxHeight: 480, overflowY: 'auto', paddingRight: 4 } },
+          s.comments.slice(0, 90).map((c, i) => React.createElement('div', {
+            key: i,
+            style: {
+              display: 'flex', flexDirection: 'column', gap: 7, padding: '11px 12px', borderRadius: 3,
+              background: c.rating >= 4 ? 'rgba(46,107,52,0.08)' : 'rgba(155,44,31,0.07)',
+              border: '1px solid ' + (c.rating >= 4 ? 'rgba(46,107,52,0.26)' : 'rgba(155,44,31,0.26)'),
+            },
+          },
+            React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.66)' } },
+              React.createElement('span', { style: { color: c.rating >= 4 ? '#2E6B34' : '#9B2C1F' } }, '★'.repeat(c.rating) + '☆'.repeat(5 - c.rating)),
+              React.createElement('span', null, c.date ? c.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '')),
+            React.createElement('p', { style: { margin: 0, font: "500 12.5px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.88)', textWrap: 'pretty' } }, c.text),
+            c.who ? React.createElement('span', { style: { font: "500 11px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.58)' } }, c.who) : null))),
+        note: 'Comments are pulled live from the survey tab. Named praise for individual agents is frequent, which points to strong individual service quality and a process-level consistency gap rather than a capability gap.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  growthView(g) {
+    const { BarChart, RankBars, Donut } = this.charts;
+    const D = this.D;
+    const s = this.state.swap;
+    const bl = this.state.blocked && !this.state.blocked.error ? this.state.blocked : null;
+    const kpis = [
+      { label: 'Customer records', value: D.fmtInt(g.totalRecords), sub: 'all branches, full history' },
+      ...(bl ? [
+        { label: 'Blocked accounts', value: D.fmtInt(bl.total), sub: D.fmtInt(bl.over3) + ' blocked for more than 3 months' },
+        { label: 'MRC on blocked accounts', value: D.fmtRp(bl.mrcTotal), sub: D.fmtRp(bl.over3Mrc) + ' blocked for more than 3 months' },
+      ] : []),
+      { label: 'Active customers', value: D.fmtInt(g.active), sub: D.fmtPct(g.active / g.totalRecords) + ' of all records' },
+      { label: 'New in last 12 months', value: D.fmtInt(g.added12), sub: g.windowLabel },
+      { label: 'Terminated in last 12 months', value: D.fmtInt(g.lost12), sub: 'net ' + (g.added12 - g.lost12 >= 0 ? '+' : '') + D.fmtInt(g.added12 - g.lost12) + ' accounts' },
+      { label: 'Change of ownership', value: D.fmtInt(g.changeOwnership), sub: 'formal transfers recorded, excluded from churn' },
+    ];
+    const cards = [
+      this.card('New activations versus terminations', {
+        span: 12, meta: 'monthly',
+        body: React.createElement(BarChart, {
+          data: g.monthlySeries, height: 270, showNet: true,
+          keys: [{ key: 'added', label: 'New activations', color: '#2E6B34' }, { key: 'lost', label: 'Terminations', color: '#9B2C1F' }],
+        }),
+        note: 'Terminations are dated from the account expiration field, which the system uses as the proxy for the termination date.',
+      }),
+      this.card('Growth and churn by city', {
+        span: 12, meta: 'trailing 12 months',
+        body: this.table(['Branch', 'Active now', 'New (12m)', 'Terminated (12m)', 'Net growth', 'Growth rate', 'Churn rate', 'Growth : churn'],
+          g.branches.map(b => [b.label, D.fmtInt(b.active), D.fmtInt(b.added), D.fmtInt(b.lost),
+            (b.net >= 0 ? '+' : '') + D.fmtInt(b.net), D.fmtPct(b.growthRate), D.fmtPct(b.churnRate),
+            b.lost ? (b.added / b.lost).toFixed(1) + ' : 1' : '—'])),
+        note: 'Rates are measured against the estimated active base twelve months ago (current active − new + terminated). Small branches move sharply in percentage terms, so read them alongside the absolute numbers.',
+      }),
+      ...(bl && bl.total ? [
+      this.card('Blocked accounts per month', {
+        span: 7, meta: 'by month blocked · last 12 months',
+        body: React.createElement(BarChart, {
+          data: bl.series, height: 240,
+          keys: [{ key: 'accounts', label: 'Blocked accounts', color: '#C4561B' }],
+        }),
+        note: 'An account is counted in the month its grace period ended, or its expiration date when no grace was given.',
+      }),
+      this.card('Monthly recurring revenue on hold', {
+        span: 5, meta: 'Rp million per month',
+        body: React.createElement(BarChart, {
+          data: bl.series, height: 240,
+          keys: [{ key: 'mrcM', label: 'MRC (Rp million)', color: '#9B2C1F' }],
+        }),
+        note: 'MRC is the monthly fee minus discount, before PPN.',
+      }),
+      this.card('How long accounts have been blocked', {
+        span: 5, meta: 'as of today',
+        body: React.createElement(Donut, {
+          data: bl.buckets.map(b => ({ key: b.key, value: b.value }))
+            .concat(bl.undated.value ? [{ key: 'No block date', value: bl.undated.value }] : []),
+          centerValue: D.fmtInt(bl.total), centerLabel: 'blocked',
+          colors: ['#D9A441', '#C4561B', '#B5552F', '#9B2C1F', '#A8A8A4'],
+        }),
+      }),
+      this.card('Blocked duration and revenue at risk', {
+        span: 7,
+        body: this.table(['Blocked for', 'Accounts', 'Share', 'MRC', 'Share of MRC'],
+          bl.buckets.map(b => [b.key, D.fmtInt(b.value), D.fmtPct(b.value / bl.total), D.fmtRp(b.mrc), D.fmtPct(bl.mrcTotal ? b.mrc / bl.mrcTotal : 0)])
+            .concat(bl.undated.value ? [['No block date', D.fmtInt(bl.undated.value), D.fmtPct(bl.undated.value / bl.total), D.fmtRp(bl.undated.mrc), D.fmtPct(bl.mrcTotal ? bl.undated.mrc / bl.mrcTotal : 0)]] : [])
+            .concat([['Total', D.fmtInt(bl.total), '100%', D.fmtRp(bl.mrcTotal), '100%']])),
+        note: 'Accounts blocked for up to a month are the most recoverable. Beyond three months, most will end as terminations unless someone contacts them.',
+      }),
+      ...(bl.over3Customers && bl.over3Customers.names ? [this.card('Customers blocked for more than 3 months', {
+        span: 12, meta: D.fmtInt(bl.over3Customers.names) + ' customer names · ' + D.fmtInt(bl.over3Customers.accounts) + ' accounts',
+        sub: D.fmtInt(bl.over3Customers.multiNames) + ' customer names hold more than one blocked account: ' + D.fmtInt(bl.over3Customers.multiAccounts) + ' accounts and ' + D.fmtRp(bl.over3Customers.multiMrc) + ' MRC in total. These are the likely B2B late payers, and one follow-up can recover every account they hold.',
+        body: this.table(['Customer name', 'Blocked accounts', 'MRC', 'Blocked since', 'City'],
+          bl.over3Customers.list.map(x => [x.name, D.fmtInt(x.accounts), D.fmtRp(x.mrc),
+            D.MON3[x.since.getMonth()] + ' ' + x.since.getFullYear() + ' (' + x.months + ' mo)', x.branches || '—']),
+          { maxHeight: 460 }),
+        note: 'Grouped on the Holder Name exactly as written in the sheet. The same company typed two ways counts as two customers. Sorted by number of accounts, then MRC.',
+      })] : []),
+      this.card('Blocked accounts by month', {
+        span: 12, meta: 'last 12 months',
+        body: this.table(['Month blocked', 'Accounts', 'MRC', 'Average MRC per account'],
+          bl.series.slice().reverse().map(m => [m.label, D.fmtInt(m.accounts), D.fmtRp(m.mrc), m.accounts ? D.fmtRp(m.mrc / m.accounts) : '—'])
+            .concat(bl.earlier.accounts ? [['Earlier', D.fmtInt(bl.earlier.accounts), D.fmtRp(bl.earlier.mrc), D.fmtRp(bl.earlier.mrc / bl.earlier.accounts)]] : []),
+          { maxHeight: 420 }),
+      }),
+      ] : [this.card('Blocked accounts', {
+        span: 12,
+        body: React.createElement('div', { style: { font: '500 14px ' + "'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B', padding: '12px 0' } },
+          this.state.blocked && this.state.blocked.error ? 'Could not load blocked accounts: ' + this.state.blocked.error : 'Loading blocked accounts…'),
+      })]),
+      this.card('Account status mix', {
+        span: 5,
+        body: React.createElement(Donut, { data: g.statuses.slice(0, 6).map(x => ({ key: x.key, value: x.value })), centerValue: D.fmtInt(g.totalRecords), centerLabel: 'records' }),
+      }),
+      this.card('Active base by branch', {
+        span: 7,
+        body: React.createElement(RankBars, { data: g.branches.map(b => ({ key: b.label, value: b.active })), total: g.active, color: this.PAL[2] }),
+        note: 'Bali carries the overwhelming majority of the base, so its absolute churn volume drives company-level revenue exposure even while its growth-to-churn ratio stays healthy.',
+      }),
+      this.card('Active base by product', {
+        span: 6,
+        body: React.createElement(RankBars, { data: g.product, total: g.active, color: this.PAL[0] }),
+      }),
+      this.card('Highest-density service areas', {
+        span: 6, meta: 'active accounts',
+        body: React.createElement(RankBars, { data: g.area, total: g.active, color: this.PAL[1] }),
+      }),
+      this.card('What is actually churn', {
+        span: 12,
+        sub: 'Every terminated account is traced before it counts as a loss. A live account at the same coordinate under the same name or phone is an account swap. The same customer starting again at a different coordinate within ' + (s ? s.window : 14) + ' days of the termination is a relocation — they moved house and kept the service. Formal Change Ownership records are a transfer, not a loss, and were never in the churn figure.',
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
+          s ? this.statRow([
+            { label: 'Records scanned', value: D.fmtInt(s.scanned) },
+            { label: 'Termination records', value: D.fmtInt(s.terminations) },
+            { label: 'Account swaps', value: D.fmtInt(s.swaps), sub: D.fmtPct(s.swapShare) + ' — same address, new record', color: '#3E5C76' },
+            { label: 'Relocations', value: D.fmtInt(s.relocations), sub: D.fmtPct(s.relocationShare) + ' — active again elsewhere within ' + s.window + ' days', color: '#2E6B34' },
+            { label: 'Change of ownership', value: D.fmtInt(s.changeOwnership), sub: 'formal transfers, excluded from churn' },
+            { label: 'Real churn', value: D.fmtInt(s.realChurn), sub: D.fmtPct(s.realChurnShare) + ' genuine customer loss', color: '#9B2C1F' },
+            { label: 'Same coordinate, different identity', value: D.fmtInt(s.sameCoordDiffId), sub: 'multi-tenant buildings — not counted as swaps' },
+            { label: 'Unmappable coordinates', value: D.fmtInt(s.invalid), sub: 'legacy records excluded from address matching' },
+            { label: 'Terminations without a date', value: D.fmtInt(s.undatedTerm), sub: 'cannot be tested for relocation' },
+          ]) : React.createElement('button', {
+            type: 'button', onClick: this.runSwap, disabled: this.state.swapBusy,
+            style: {
+              alignSelf: 'flex-start', padding: '8px 14px', borderRadius: 3, cursor: 'pointer',
+              border: '1px solid #1F1F1D', background: '#1F1F1D', color: '#FFFFFF',
+              font: "500 12.5px 'IBM Plex Mono',ui-monospace,monospace",
+            },
+          }, this.state.swapBusy ? 'Scanning ' + D.fmtInt(this.state.swapProgress) + ' records…' : 'Run churn quality analysis'),
+          s && s.byBranch.length ? React.createElement(RankBars, { data: s.byBranch, total: s.swaps, color: this.PAL[1] }) : null),
+        note: 'Exact coordinate matching at six decimal places means any manually re-pinned location is missed, so both the swap and the relocation figures are a lower bound. The system already offers a formal Change Ownership status; most detected swaps bypass it and are recorded as ordinary terminations, which inflates reported churn.',
+      }),
+      s && s.relocations ? this.card('Relocations excluded from churn', {
+        span: 7, meta: D.fmtInt(s.relocations) + ' moves traced',
+        body: this.table(['Customer', 'City', 'Gap', 'Moved to'],
+          s.relocSamples.map(x => [x.name, x.branch,
+            x.gap == null ? '—' : (x.gap >= 0 ? x.gap + ' days after' : Math.abs(x.gap) + ' days before'),
+            x.to])),
+        note: 'Traced on customer name or phone number, so a move recorded under a different name is still counted as churn.',
+      }) : null,
+      s && s.relocByBranch.length ? this.card('Where relocations happen', {
+        span: 5, meta: 'moves by city',
+        body: React.createElement(RankBars, { data: s.relocByBranch, total: s.relocations, color: this.PAL[2] }),
+      }) : null,
+    ];
+    return { kpis, cards };
+  }
+
+  /* ---------- render ---------- */
+
+  renderVals() {
+    const S = this.state;
+    const D = this.D;
+    const views = [
+      { id: 'overview', label: 'Executive overview', tag: '01', kicker: 'Customer Service & Customer Experience', title: 'Operational command centre', sub: 'Every metric on this page is read live from the operations spreadsheet. Change the period or branch and every panel re-queries the source.' },
+      { id: 'tickets', label: 'Trouble tickets', tag: '02', kicker: 'Demand', title: 'Ticket volume and composition', sub: 'Daily inbound demand, request type, priority, category and entry channel across all operating regions.' },
+      { id: 'escalation', label: 'CTSO & work orders', tag: '03', kicker: 'Escalation', title: 'Escalation to CTSO and field work', sub: 'How inbound tickets convert into technical escalation and dispatched work orders, broken down by work-order type and routing path.' },
+      { id: 'resolution', label: 'Resolution & FCR', tag: '04', kicker: 'Performance', title: 'Resolution time and first contact resolution', sub: 'Time from ticket creation to closure at CSO and CTSO level, with the distribution of reports per ticket.' },
+      { id: 'agents', label: 'CSO workload', tag: '05', kicker: 'People', title: 'Agent workload distribution', sub: 'Ticket handling volume per customer service officer, with the complaint share each agent absorbs.' },
+      { id: 'customers', label: 'Repeat contacts', tag: '06', kicker: 'Retention risk', title: 'Customers who keep needing field work', sub: 'Repeat contact measured from executed WWR, WCM and WGM work orders per customer ID, with cancelled orders excluded — the earliest available churn signal in support data.' },
+      { id: 'chat', label: 'Chat omnichannel', tag: '07', kicker: 'Speed', title: 'Response time and impact analysis', sub: 'First response time, ongoing response time and DotAI contribution, weighted by the conversation volume each account actually handles.' },
+      { id: 'csat', label: 'CSAT', tag: '08', kicker: 'Voice of customer', title: 'Customer satisfaction', sub: 'Survey score, rating distribution and the verbatim feedback behind it.' },
+      { id: 'growth', label: 'Growth & churn', tag: '09', kicker: 'Customer base', title: 'Growth and churn by city', sub: 'Account acquisition and loss across Bali, Malang, Balikpapan, Samarinda and Jakarta, with real churn separated from administrative account swaps.' },
+    ];
+    const view = views.find(v => v.id === S.view) || views[0];
+    const key = this.key(S.view);
+    const payload = S.data[key];
+    let built = { kpis: [], cards: [] };
+    if (this.charts && D) {
+      try {
+        if (payload) {
+          built = ({
+            overview: () => this.overview(payload),
+            tickets: () => this.ticketsView(payload),
+            escalation: () => this.escalationView(payload),
+            resolution: () => this.resolutionView(payload),
+            agents: () => this.agentsView(payload),
+            customers: () => this.customersView(payload),
+            chat: () => this.chatView(payload),
+            csat: () => this.csatView(payload),
+            growth: () => this.growthView(payload),
+          })[S.view]();
+        }
+      } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
+    }
+    if (!built.cards.length && !S.error) {
+      const shimmer = hgt => React.createElement('div', {
+        style: { height: hgt, borderRadius: 2, background: 'linear-gradient(90deg, rgba(17,17,20,0.05), rgba(17,17,20,0.10), rgba(17,17,20,0.05))', animation: 'gxpulse 1.6s ease-in-out infinite' },
+      });
+      built = {
+        kpis: [1, 2, 3, 4, 5, 6].map(i => ({ label: 'Loading', value: '—', sub: 'querying the spreadsheet' })),
+        cards: [[12, 240], [6, 190], [6, 190]].map(([sp, hgt], i) => this.card('Loading data', {
+          span: sp, meta: 'reading live sheet',
+          body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+            shimmer(hgt), shimmer(12), shimmer(12)),
+        })),
+      };
+    }
+    const idx = S.index;
+    const periodLabel = S.period === 'all' ? 'All time' : ((idx && idx.periods.find(p => p.key === S.period) || {}).label || S.period);
+    const sync = D && D.stats.lastSync ? D.stats.lastSync : null;
+    return {
+      nav: views.map(v => ({ ...v, active: v.id === S.view, onClick: () => this.go(v.id) })),
+      viewTitle: view.title, viewSub: view.sub,
+      viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),
+      period: S.period, branch: S.branch,
+      periodOptions: idx ? idx.periods.map(p => ({ key: p.key, label: p.label })) : [],
+      branchOptions: idx ? idx.branches.map(b => ({ key: b.key, label: b.label })) : [],
+      onPeriod: this.setPeriod, onBranch: this.setBranch, onRefresh: this.refresh,
+      busy: S.busy, error: S.error,
+      dateWarn: !!(idx && (idx.unreadable || idx.future)),
+      dateWarnText: idx ? [
+        idx.unreadable ? D.fmtInt(idx.unreadable) + ' tickets have a date the dashboard cannot read and are missing from every chart.' : '',
+        idx.future ? D.fmtInt(idx.future) + ' tickets are dated after today, which usually means day and month were swapped.' : '',
+      ].filter(Boolean).join(' ') : '',
+      kpis: built.kpis, cards: (built.cards || []).filter(Boolean),
+      syncLine: sync ? 'Synced ' + sync.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Connecting…',
+      engineLine: D ? D.stats.queries + ' aggregate queries · ' + Math.round(D.stats.bytes / 1024) + ' KB transferred · computation pushed to Google Sheets' : '',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
