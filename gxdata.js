@@ -60,9 +60,13 @@ export function parseDMY(s) {
   s = String(s).trim();
   const g = s.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/);
   if (g) return new Date(+g[1], +g[2], +g[3], +(g[4] || 0), +(g[5] || 0), +(g[6] || 0));
-  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?$/);
+  // Text dates are always dd/mm/yyyy (1–2 digit day/month, / - or . separator, optional time).
+  const m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})(?:[\sT,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!m) return null;
-  return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+  const d = +m[1], mo = +m[2];
+  if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
+  const dt = new Date(+m[3], mo - 1, d, +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+  return dt.getDate() === d ? dt : null;
 }
 
 // Accepts every shape a sheet cell arrives in: a real Date, a gviz date cell
@@ -119,7 +123,7 @@ export function ticketWhere(period, branch, extra) {
   const c = [];
   if (period && period !== 'all') {
     const [mm, yyyy] = period.split('/');
-    c.push(ticketDateTyped ? `year(D) = ${+yyyy} and month(D) = ${+mm - 1}` : `D ends with '/${period}'`);
+    c.push(ticketDateTyped ? `year(D) = ${+yyyy} and month(D) = ${+mm - 1}` : `D matches '^[0-9]{1,2}[/.-]0?${+mm}[/.-]${yyyy}( .*)?$'`);
   }
   if (branch && branch !== 'all') c.push(`C = '${esc(branch)}'`);
   if (extra) c.push(extra);
@@ -528,14 +532,26 @@ export async function loadCsat(period) {
 
 /* ---------- 8. growth & churn ---------- */
 
-export async function loadGrowth() {
+/* Customer segment. Accounts whose Price Plan (N) contains "Intracity" are not
+   retail customers: they are reported on their own page and left out of retail. */
+const SEG_WHERE = {
+  retail: "(N is null or not lower(N) contains 'intracity')",
+  intracity: "lower(N) contains 'intracity'",
+};
+const segW = (seg, extra) => {
+  const parts = [SEG_WHERE[seg], extra].filter(Boolean);
+  return parts.length ? ' where ' + parts.join(' and ') : '';
+};
+const inSeg = (seg, plan) => !SEG_WHERE[seg] ? true : (seg === 'intracity') === /intracity/i.test(String(plan || ''));
+
+export async function loadGrowth(seg = 'retail') {
   const [status, starts, terms, product, area, price] = await Promise.all([
-    gviz(TABS.customers, 'select C, G, count(E) group by C, G'),
-    gviz(TABS.customers, 'select J, C, count(E) group by J, C'),
-    gviz(TABS.customers, "select year(L), month(L), C, count(E) where G = 'Termination' group by year(L), month(L), C"),
-    gviz(TABS.customers, "select M, count(E) where G = 'Active' group by M order by count(E) desc limit 10"),
-    gviz(TABS.customers, "select H, count(E) where G = 'Active' group by H order by count(E) desc limit 12"),
-    gviz(TABS.customers, "select N, count(E) where G = 'Active' group by N order by count(E) desc limit 10"),
+    gviz(TABS.customers, 'select C, G, count(E)' + segW(seg) + ' group by C, G'),
+    gviz(TABS.customers, 'select J, C, count(E)' + segW(seg) + ' group by J, C'),
+    gviz(TABS.customers, "select year(L), month(L), C, count(E)" + segW(seg, "G = 'Termination'") + " group by year(L), month(L), C"),
+    gviz(TABS.customers, "select M, count(E)" + segW(seg, "G = 'Active'") + " group by M order by count(E) desc limit 10"),
+    gviz(TABS.customers, "select H, count(E)" + segW(seg, "G = 'Active'") + " group by H order by count(E) desc limit 12"),
+    gviz(TABS.customers, "select N, count(E)" + segW(seg, "G = 'Active'") + " group by N order by count(E) desc limit 10"),
   ]);
   const branches = new Map();
   const statuses = new Map();
@@ -612,8 +628,8 @@ export async function loadGrowth() {
 // Loaded separately so a slow sheet can't hold up the growth page.
 // Grouped server-side on the distinct (grace, expiry, fee, discount) combos,
 // so only a few hundred rows travel instead of every blocked account.
-export async function loadBlocked() {
-  const r = await gviz(TABS.customers, "select K, L, O, P, count(E), A, C where G = 'Blocked' group by K, L, O, P, A, C");
+export async function loadBlocked(seg = 'retail') {
+  const r = await gviz(TABS.customers, "select K, L, O, P, count(E), A, C" + segW(seg, "G = 'Blocked'") + " group by K, L, O, P, A, C");
   const out = summariseBlocked(r.rows);
   // customers blocked for more than 3 months, grouped by holder name
   const today = new Date();
@@ -685,6 +701,7 @@ function summariseBlocked(rows) {
   const earlier = all.filter(x => x.mk < nowMk - 11).reduce((s, x) => ({ accounts: s.accounts + x.accounts, mrc: s.mrc + x.mrc }), { accounts: 0, mrc: 0 });
   return {
     total, mrcTotal, undated, earlier, series,
+    byMonth: Object.fromEntries([...monthly.values()].map(x => [x.mk, x.accounts])),
     buckets: buckets.map(({ key, value, mrc }) => ({ key, value, mrc })),
     over3: buckets[3].value, over3Mrc: buckets[3].mrc,
     recent: buckets[0].value, recentMrc: buckets[0].mrc,
@@ -705,13 +722,15 @@ function summariseBlocked(rows) {
 export const RELOCATION_WINDOW = 14;
 const DAY = 86400000;
 
-export async function runSwapAnalysis(onProgress) {
+export async function runSwapAnalysis(onProgress, seg = 'retail') {
   const CHUNK = 20000;
   const rows = [];
+  let scanned = 0;
   for (let offset = 0; ; offset += CHUNK) {
-    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L limit ${CHUNK} offset ${offset}`);
-    rows.push(...r.rows);
-    if (onProgress) onProgress(rows.length);
+    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L, N limit ${CHUNK} offset ${offset}`);
+    rows.push(...r.rows.filter(x => inSeg(seg, x[7])));
+    scanned += r.rows.length;
+    if (onProgress) onProgress(scanned);
     if (r.rows.length < CHUNK) break;
     if (offset > 400000) break;
   }
@@ -743,6 +762,7 @@ export async function runSwapAnalysis(onProgress) {
   const relocByBranch = new Map();
   const samples = [];
   const relocSamples = [];
+  const realByMonth = {};
 
   rows.forEach(([coord, status, name, phone, branch, , term]) => {
     if (/^change\s*(of\s*)?ownership$/i.test(String(status || ''))) { changeOwnership++; return; }
@@ -786,13 +806,14 @@ export async function runSwapAnalysis(onProgress) {
       return;
     }
     if (!termDate) undatedTerm++;
+    else { const mk = termDate.getFullYear() * 12 + termDate.getMonth(); realByMonth[mk] = (realByMonth[mk] || 0) + 1; }
     if (ck && liveAtCoord.get(ck)) sameCoordDiffId++;
   });
 
   const realChurn = terminations - swaps - relocations;
   return {
     scanned: rows.length, terminations, swaps, relocations, changeOwnership, undatedTerm,
-    realChurn,
+    realChurn, realByMonth,
     relocationShare: pct(relocations, terminations),
     realChurnShare: pct(realChurn, terminations),
     relocByBranch: [...relocByBranch.entries()].map(([key, value]) => ({ key: key.replace(/^GlobalXtreme\s*/, ''), value })).sort((a, b) => b.value - a.value),

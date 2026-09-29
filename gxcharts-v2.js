@@ -103,6 +103,45 @@ export function makeCharts(React) {
     ), tip, height, boxRef);
   }
 
+  /* ---------- several monthly series as lines ---------- */
+  function MultiLine({ data, lines, height = 280 }) {
+    const [tip, setTip] = useState(null);
+    const [boxRef, CW] = useWidth();
+    const W = CW, H = height, PL = 50, PR = 14, PT = 16, PB = 34;
+    if (!data || !data.length) return h('div', { style: { color: MUTED, font: '500 13px ' + FONT, padding: '28px 0' } }, 'No data');
+    const shown = lines.filter(l => data.some(d => d[l.key] != null));
+    const max = Math.max(1, ...data.flatMap(d => shown.map(l => d[l.key] || 0)));
+    const axis = niceAxis(max, 4);
+    const x = i => PL + (data.length === 1 ? (W - PL - PR) / 2 : (i * (W - PL - PR)) / (data.length - 1));
+    const y = v => PT + (H - PT - PB) * (1 - v / axis.max);
+    const bw = (W - PL - PR) / Math.max(1, data.length - 1);
+    const every = Math.max(1, Math.ceil(data.length / Math.max(1, Math.floor((W - PL - PR) / 62))));
+    const legend = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginBottom: 12 } },
+      lines.map(l => h('div', { key: l.key, style: { display: 'flex', alignItems: 'center', gap: 7, font: '500 12px ' + FONT, color: shown.includes(l) ? INK : MUTED } },
+        h('svg', { width: 22, height: 8 }, h('line', { x1: 0, x2: 22, y1: 4, y2: 4, stroke: l.color, strokeWidth: 2.2, strokeDasharray: l.dash || null })),
+        l.label + (shown.includes(l) ? '' : (l.pending ? ' · ' + l.pending : '')))));
+    const svg = h('div', { ref: boxRef, style: { position: 'relative', width: '100%', height: H + 'px' } },
+      h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: '100%', display: 'block', overflow: 'visible' }, onMouseLeave: () => setTip(null) },
+        [0, 1, 2, 3, 4].map(t => h('g', { key: 'g' + t },
+          h('line', { x1: PL, x2: W - PR, y1: y(axis.step * t), y2: y(axis.step * t), stroke: GRID }),
+          h('text', { x: PL - 10, y: y(axis.step * t) + 4, textAnchor: 'end', fill: MUTED, style: { font: '500 12px ' + MONO } }, nf(axis.step * t)))),
+        tip && h('line', { x1: x(tip.i), x2: x(tip.i), y1: PT, y2: H - PB, stroke: '#CFCFCA' }),
+        shown.map(l => h('path', {
+          key: l.key, fill: 'none', stroke: l.color, strokeWidth: 2, strokeDasharray: l.dash || null, strokeLinejoin: 'round', strokeLinecap: 'round',
+          d: data.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[l.key] || 0).toFixed(1)).join(' '),
+        })),
+        shown.map(l => data.map((d, i) => h('circle', {
+          key: l.key + i, cx: x(i), cy: y(d[l.key] || 0), r: tip && tip.i === i ? 4 : 2.4, fill: '#FFFFFF', stroke: l.color, strokeWidth: 1.6,
+        }))),
+        data.map((d, i) => h('rect', {
+          key: 'h' + i, x: x(i) - bw / 2, y: PT, width: bw, height: H - PT - PB, fill: 'transparent',
+          onMouseEnter: () => setTip({ i, x: (x(i) / W) * 100, y: 8, lines: [d.label].concat(shown.map(l => l.label + ': ' + nf(d[l.key] || 0))) }),
+        })),
+        data.map((d, i) => i % every === 0 ? h('text', { key: 'x' + i, x: x(i), y: H - 10, textAnchor: 'middle', fill: MUTED, style: { font: '500 12px ' + MONO } }, d.label) : null)),
+      h(Tip, { tip }));
+    return h('div', null, legend, svg);
+  }
+
   /* ---------- grouped / stacked vertical bars ---------- */
   function BarChart({ data, keys = [{ key: 'value', label: 'Value', color: PALETTE[0] }], stacked = false, height = 240, showNet }) {
     const [tip, setTip] = useState(null);
@@ -266,5 +305,5 @@ export function makeCharts(React) {
     );
   }
 
-  return { LineChart, BarChart, RankBars, Donut, Scatter, SlaBars, PALETTE, nf };
+  return { LineChart, MultiLine, BarChart, RankBars, Donut, Scatter, SlaBars, PALETTE, nf };
 }

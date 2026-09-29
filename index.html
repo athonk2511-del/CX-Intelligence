@@ -148,7 +148,7 @@ class Component extends DCLogic {
   state = {
     view: 'overview', period: 'all', branch: 'all',
     index: null, data: {}, busy: true, error: null,
-    swap: null, swapBusy: false, swapProgress: 0, tick: 0,
+    swapBy: {}, blockedBy: {}, swapBusy: false, swapProgress: 0, tick: 0,
     w: typeof window !== 'undefined' ? window.innerWidth : 1400,
   };
 
@@ -183,7 +183,7 @@ class Component extends DCLogic {
   }
 
   key(view) {
-    const perView = { chat: 'chat', growth: 'growth' };
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity' };
     return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
   }
 
@@ -203,27 +203,32 @@ class Component extends DCLogic {
       customers: () => D.loadRepeat(p, b),
       chat: () => D.loadChat(this.sla(), this.rtSla()),
       csat: () => D.loadCsat(p),
-      growth: () => D.loadGrowth(),
+      growth: () => D.loadGrowth('retail'),
+      intracity: () => D.loadGrowth('intracity'),
     };
     try {
-      if (view === 'growth' && !this.state.blocked && !this.blockedLoading) {
-        this.blockedLoading = true;
-        D.loadBlocked().then(blocked => this.setState({ blocked }))
-          .catch(e => this.setState({ blocked: { error: e.message } }))
-          .finally(() => { this.blockedLoading = false; });
+      const seg = this.seg(view);
+      this.blockedLoading = this.blockedLoading || {};
+      if (seg && !this.state.swapBy[seg] && !this.state.swapBusy) this.runSwap(seg);
+      if (seg && !this.state.blockedBy[seg] && !this.blockedLoading[seg]) {
+        this.blockedLoading[seg] = true;
+        const put = v => this.setState(s => ({ blockedBy: { ...s.blockedBy, [seg]: v } }));
+        D.loadBlocked(seg).then(put).catch(e => put({ error: e.message }))
+          .finally(() => { this.blockedLoading[seg] = false; });
       }
       const res = await (jobs[view] || (() => Promise.resolve({})))();
       this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }));
     } catch (e) { this.setState({ busy: false, error: e.message }); }
   }
 
+  seg(view) { return view === 'growth' ? 'retail' : view === 'intracity' ? 'intracity' : null; }
   sla() { return Number(this.props.frtSla) || 5; }
   rtSla() { return Number(this.props.rtSla) || 2; }
   topN() { return Number(this.props.topN) || 12; }
 
   refresh = () => {
     this.D.clearCache();
-    this.setState({ data: {}, swap: null, blocked: null }, async () => {
+    this.setState({ data: {}, swapBy: {}, blockedBy: {} }, async () => {
       try {
         const index = await this.D.loadIndex();
         this.setState({ index }, () => this.load());
@@ -235,12 +240,17 @@ class Component extends DCLogic {
   setPeriod = e => this.setState({ period: e.target.value }, () => this.load());
   setBranch = e => this.setState({ branch: e.target.value }, () => this.load());
 
-  runSwap = async () => {
+  runSwap = async (forSeg) => {
+    const seg = typeof forSeg === 'string' ? forSeg : (this.seg(this.state.view) || 'retail');
+    if (this.state.swapBusy) return;
     this.setState({ swapBusy: true, swapProgress: 0 });
     try {
-      const swap = await this.D.runSwapAnalysis(n => this.setState({ swapProgress: n }));
-      this.setState({ swap, swapBusy: false });
-    } catch (e) { this.setState({ swapBusy: false, error: e.message }); }
+      const swap = await this.D.runSwapAnalysis(n => this.setState({ swapProgress: n }), seg);
+      this.setState(st => ({ swapBy: { ...st.swapBy, [seg]: swap }, swapBusy: false }), () => {
+        const cur = this.seg(this.state.view);
+        if (cur && cur !== seg && !this.state.swapBy[cur]) this.runSwap(cur);
+      });
+    } catch (e) { this.setState(st => ({ swapBusy: false, swapBy: { ...st.swapBy, [seg]: { error: e.message } } })); }
   };
 
   /* ---------- small render helpers ---------- */
@@ -720,13 +730,15 @@ class Component extends DCLogic {
     return { kpis, cards };
   }
 
-  growthView(g) {
-    const { BarChart, RankBars, Donut } = this.charts;
+  growthView(g, seg = 'retail') {
+    const { BarChart, RankBars, Donut, MultiLine } = this.charts;
     const D = this.D;
-    const s = this.state.swap;
-    const bl = this.state.blocked && !this.state.blocked.error ? this.state.blocked : null;
+    const sRaw = this.state.swapBy[seg];
+    const s = sRaw && !sRaw.error ? sRaw : null;
+    const blRaw = this.state.blockedBy[seg];
+    const bl = blRaw && !blRaw.error ? blRaw : null;
     const kpis = [
-      { label: 'Customer records', value: D.fmtInt(g.totalRecords), sub: 'all branches, full history' },
+      { label: 'Customer records', value: D.fmtInt(g.totalRecords), sub: seg === 'intracity' ? 'Intracity price plans only' : 'retail only · Intracity plans excluded' },
       ...(bl ? [
         { label: 'Blocked accounts', value: D.fmtInt(bl.total), sub: D.fmtInt(bl.over3) + ' blocked for more than 3 months' },
         { label: 'MRC on blocked accounts', value: D.fmtRp(bl.mrcTotal), sub: D.fmtRp(bl.over3Mrc) + ' blocked for more than 3 months' },
@@ -738,10 +750,20 @@ class Component extends DCLogic {
     ];
     const cards = [
       this.card('New activations versus terminations', {
-        span: 12, meta: 'monthly',
-        body: React.createElement(BarChart, {
-          data: g.monthlySeries, height: 270, showNet: true,
-          keys: [{ key: 'added', label: 'New activations', color: '#2E6B34' }, { key: 'lost', label: 'Terminations', color: '#9B2C1F' }],
+        span: 12, meta: 'monthly · churn excludes account swaps and relocations',
+        body: React.createElement(MultiLine, {
+          height: 280,
+          data: g.monthlySeries.map(m => ({
+            ...m,
+            churn: s && s.realByMonth ? (s.realByMonth[m.mk] || 0) : null,
+            blocked: bl && bl.byMonth ? (bl.byMonth[m.mk] || 0) : null,
+          })),
+          lines: [
+            { key: 'added', label: 'New activations', color: '#2E6B34' },
+            { key: 'lost', label: 'Terminations', color: '#9B2C1F' },
+            { key: 'churn', label: 'Real churn', color: '#1F1F1C', dash: '5 4', pending: 'scanning records…' },
+            { key: 'blocked', label: 'Blocked', color: '#C4561B', pending: 'loading' },
+          ],
         }),
         note: 'Terminations are dated from the account expiration field, which the system uses as the proxy for the termination date.',
       }),
@@ -806,7 +828,7 @@ class Component extends DCLogic {
       ] : [this.card('Blocked accounts', {
         span: 12,
         body: React.createElement('div', { style: { font: '500 14px ' + "'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B', padding: '12px 0' } },
-          this.state.blocked && this.state.blocked.error ? 'Could not load blocked accounts: ' + this.state.blocked.error : 'Loading blocked accounts…'),
+          blRaw && blRaw.error ? 'Could not load blocked accounts: ' + blRaw.error : 'Loading blocked accounts…'),
       })]),
       this.card('Account status mix', {
         span: 5,
@@ -815,7 +837,7 @@ class Component extends DCLogic {
       this.card('Active base by branch', {
         span: 7,
         body: React.createElement(RankBars, { data: g.branches.map(b => ({ key: b.label, value: b.active })), total: g.active, color: this.PAL[2] }),
-        note: 'Bali carries the overwhelming majority of the base, so its absolute churn volume drives company-level revenue exposure even while its growth-to-churn ratio stays healthy.',
+        note: seg === 'retail' ? 'Bali carries the overwhelming majority of the base, so its absolute churn volume drives company-level revenue exposure even while its growth-to-churn ratio stays healthy.' : null,
       }),
       this.card('Active base by product', {
         span: 6,
@@ -880,7 +902,8 @@ class Component extends DCLogic {
       { id: 'customers', label: 'Repeat contacts', tag: '06', kicker: 'Retention risk', title: 'Customers who keep needing field work', sub: 'Repeat contact measured from executed WWR, WCM and WGM work orders per customer ID, with cancelled orders excluded — the earliest available churn signal in support data.' },
       { id: 'chat', label: 'Chat omnichannel', tag: '07', kicker: 'Speed', title: 'Response time and impact analysis', sub: 'First response time, ongoing response time and DotAI contribution, weighted by the conversation volume each account actually handles.' },
       { id: 'csat', label: 'CSAT', tag: '08', kicker: 'Voice of customer', title: 'Customer satisfaction', sub: 'Survey score, rating distribution and the verbatim feedback behind it.' },
-      { id: 'growth', label: 'Growth & churn', tag: '09', kicker: 'Customer base', title: 'Growth and churn by city', sub: 'Account acquisition and loss across Bali, Malang, Balikpapan, Samarinda and Jakarta, with real churn separated from administrative account swaps.' },
+      { id: 'growth', label: 'Growth & churn', tag: '09', kicker: 'Customer base', title: 'Growth and churn by city', sub: 'Account acquisition and loss across Bali, Malang, Balikpapan, Samarinda and Jakarta, with real churn separated from administrative account swaps. Retail customers only; Intracity price plans are reported on their own page.' },
+      { id: 'intracity', label: 'Intracity churn', tag: '10', kicker: 'Intracity', title: 'Intracity growth and churn', sub: 'Accounts on Intracity price plans, reported apart from the retail base. Same method as the retail page: activations, terminations, blocked accounts and real churn.' },
     ];
     const view = views.find(v => v.id === S.view) || views[0];
     const key = this.key(S.view);
@@ -898,7 +921,8 @@ class Component extends DCLogic {
             customers: () => this.customersView(payload),
             chat: () => this.chatView(payload),
             csat: () => this.csatView(payload),
-            growth: () => this.growthView(payload),
+            growth: () => this.growthView(payload, 'retail'),
+            intracity: () => this.growthView(payload, 'intracity'),
           })[S.view]();
         }
       } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
