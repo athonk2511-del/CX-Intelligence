@@ -220,6 +220,12 @@ export async function loadTickets(period, branch) {
   };
 }
 
+export async function loadComplaintTop(period, branch) {
+  const w = W(period, branch, "O = 'Complaint'");
+  const [total, category, problem] = await Promise.all([count(w), grouped('P', w, 5), grouped('Q', w, 5)]);
+  return { total, category, problem };
+}
+
 /* ---------- 2. escalation ---------- */
 
 const WO_TYPES = [
@@ -727,7 +733,7 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
   const rows = [];
   let scanned = 0;
   for (let offset = 0; ; offset += CHUNK) {
-    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L, N limit ${CHUNK} offset ${offset}`);
+    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L, N, K limit ${CHUNK} offset ${offset}`);
     rows.push(...r.rows.filter(x => inSeg(seg, x[7])));
     scanned += r.rows.length;
     if (onProgress) onProgress(scanned);
@@ -742,10 +748,10 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
   // live accounts indexed by coordinate, and by customer identity for relocation tracing
   const liveAtCoord = new Map();
   const liveByIdentity = new Map();
-  rows.forEach(([coord, status, name, phone, branch, start]) => {
+  rows.forEach(([coord, status, name, phone, branch, start], idx) => {
     if (!isLive(status)) return;
     const ck = coordKey(coord);
-    const rec = { name: norm(name), phone: phoneKey(phone), branch: String(branch || ''), coord: ck, start: parseAnyDate(start) };
+    const rec = { idx, name: norm(name), phone: phoneKey(phone), branch: String(branch || ''), coord: ck, start: parseAnyDate(start) };
     if (ck) {
       if (!liveAtCoord.has(ck)) liveAtCoord.set(ck, []);
       liveAtCoord.get(ck).push(rec);
@@ -763,8 +769,10 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
   const samples = [];
   const relocSamples = [];
   const realByMonth = {};
+  const cls = [];
+  const replacementIdx = new Set();
 
-  rows.forEach(([coord, status, name, phone, branch, , term]) => {
+  rows.forEach(([coord, status, name, phone, branch, , term], idx) => {
     if (/^change\s*(of\s*)?ownership$/i.test(String(status || ''))) { changeOwnership++; return; }
     if (!/^termination$/i.test(String(status || ''))) return;
     terminations++;
@@ -777,7 +785,7 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
       const hits = liveAtCoord.get(ck);
       const match = hits && hits.find(h => (nm && h.name === nm) || (ph && h.phone === ph));
       if (match) {
-        swaps++;
+        swaps++; cls[idx] = 'swap'; replacementIdx.add(match.idx);
         byBranch.set(bk, (byBranch.get(bk) || 0) + 1);
         if (samples.length < 8) samples.push({ name: String(name || ''), branch: bk.replace(/^GlobalXtreme\s*/, ''), coord: ck });
         return;
@@ -796,7 +804,7 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
       return Math.abs(h.start - termDate) <= RELOCATION_WINDOW * DAY;
     });
     if (moved) {
-      relocations++;
+      relocations++; cls[idx] = 'reloc'; replacementIdx.add(moved.idx);
       relocByBranch.set(bk, (relocByBranch.get(bk) || 0) + 1);
       if (relocSamples.length < 8) relocSamples.push({
         name: String(name || ''), branch: bk.replace(/^GlobalXtreme\s*/, ''),
@@ -805,13 +813,81 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
       });
       return;
     }
+    cls[idx] = 'other';
     if (!termDate) undatedTerm++;
-    else { const mk = termDate.getFullYear() * 12 + termDate.getMonth(); realByMonth[mk] = (realByMonth[mk] || 0) + 1; }
     if (ck && liveAtCoord.get(ck)) sameCoordDiffId++;
   });
 
+  /* 12-month cohort. Opening base is counted directly: every account started
+     before the window and not terminated before it. Terminations inside the
+     window are bridged to true churn: − swaps − relocations − backlog (grace
+     ended before the window, so the customer was already lost earlier). New
+     accounts are split into replacements (the live side of a swap or
+     relocation) and reactivations (same name/phone had an account terminated
+     more than RELOCATION_WINDOW days before this start). */
+  const mkOf = dt => dt ? dt.getFullYear() * 12 + dt.getMonth() : null;
+  const nowMk = mkOf(new Date());
+  let latest = -Infinity;
+  rows.forEach(r => { const m = mkOf(parseAnyDate(r[5])); if (m != null && m <= nowMk && m > latest) latest = m; });
+  if (!isFinite(latest)) latest = nowMk;
+  const ws = latest - 11;
+  const isTerm = st => /^termination$/i.test(String(st || ''));
+  const isEnded = st => isTerm(st) || /^change\s*(of\s*)?ownership$/i.test(String(st || ''));
+  const termsById = new Map();
+  rows.forEach(r => {
+    if (!isTerm(r[1])) return;
+    const dt = parseAnyDate(r[6]); if (!dt) return;
+    [norm(r[2]) && 'n:' + norm(r[2]), phoneKey(r[3]) && 'p:' + phoneKey(r[3])].filter(Boolean).forEach(k => {
+      if (!termsById.has(k)) termsById.set(k, []);
+      termsById.get(k).push(dt);
+    });
+  });
+  const blank = () => ({ opening: 0, added: 0, replacement: 0, reactivated: 0, terminated: 0, swaps: 0, relocations: 0, backlog: 0, churn: 0 });
+  const tot = blank(), perB = new Map();
+  const add = (bk, k) => {
+    tot[k]++;
+    const lb = bk.replace(/^GlobalXtreme\s*/, '');
+    if (!perB.has(lb)) perB.set(lb, blank());
+    perB.get(lb)[k]++;
+  };
+  rows.forEach((r, idx) => {
+    const [, status, name, phone, branch, start, term, , grace] = r;
+    const bk = String(branch || 'Unknown');
+    const sd = parseAnyDate(start), smk = mkOf(sd);
+    const td = parseAnyDate(term), tmk = mkOf(td);
+    if (smk != null && smk < ws && !(isEnded(status) && (tmk == null || tmk < ws))) add(bk, 'opening');
+    if (smk != null && smk >= ws && smk <= latest) {
+      add(bk, 'added');
+      if (replacementIdx.has(idx)) add(bk, 'replacement');
+      else {
+        const prev = [norm(name) && 'n:' + norm(name), phoneKey(phone) && 'p:' + phoneKey(phone)].filter(Boolean)
+          .flatMap(k => termsById.get(k) || []);
+        if (prev.some(p => p < sd - RELOCATION_WINDOW * DAY)) add(bk, 'reactivated');
+      }
+    }
+    if (!isTerm(status) || tmk == null) return;
+    const inWin = tmk >= ws && tmk <= latest;
+    const gd = parseAnyDate(grace);
+    const backlog = cls[idx] === 'other' && inWin && gd && mkOf(gd) < ws;
+    if (cls[idx] === 'other' && !backlog) realByMonth[tmk] = (realByMonth[tmk] || 0) + 1;
+    if (!inWin) return;
+    add(bk, 'terminated');
+    if (cls[idx] === 'swap') add(bk, 'swaps');
+    else if (cls[idx] === 'reloc') add(bk, 'relocations');
+    else if (backlog) add(bk, 'backlog');
+    else add(bk, 'churn');
+  });
+  const cohort = {
+    windowStart: ws, latest,
+    startLabel: MON3[ws % 12] + ' ' + Math.floor(ws / 12),
+    windowLabel: MON3[ws % 12] + " '" + String(Math.floor(ws / 12)).slice(2) + ' – ' + MON3[latest % 12] + " '" + String(Math.floor(latest / 12)).slice(2),
+    total: tot,
+    branches: [...perB.entries()].map(([label, v]) => ({ label, ...v })),
+  };
+
   const realChurn = terminations - swaps - relocations;
   return {
+    cohort,
     scanned: rows.length, terminations, swaps, relocations, changeOwnership, undatedTerm,
     realChurn, realByMonth,
     relocationShare: pct(relocations, terminations),

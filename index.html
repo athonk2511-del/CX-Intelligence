@@ -194,8 +194,8 @@ class Component extends DCLogic {
     this.setState({ busy: true, error: null });
     const D = this.D, p = this.state.period, b = this.state.branch;
     const jobs = {
-      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadChat(this.sla(), this.rtSla()), D.loadCsat(p), D.loadRepeat(p, b)])
-        .then(([tickets, esc, chat, csat, repeat]) => ({ tickets, esc, chat, csat, repeat })),
+      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadChat(this.sla(), this.rtSla()), D.loadCsat(p), D.loadRepeat(p, b), D.loadComplaintTop(p, b)])
+        .then(([tickets, esc, chat, csat, repeat, complaints]) => ({ tickets, esc, chat, csat, repeat, complaints })),
       tickets: () => D.loadTickets(p, b),
       escalation: () => D.loadEscalation(p, b),
       resolution: () => D.loadResolution(p, b),
@@ -208,19 +208,32 @@ class Component extends DCLogic {
     };
     try {
       const seg = this.seg(view);
-      this.blockedLoading = this.blockedLoading || {};
-      if (seg && !this.state.swapBy[seg] && !this.state.swapBusy) this.runSwap(seg);
-      if (seg && !this.state.blockedBy[seg] && !this.blockedLoading[seg]) {
-        this.blockedLoading[seg] = true;
-        const put = v => this.setState(s => ({ blockedBy: { ...s.blockedBy, [seg]: v } }));
-        D.loadBlocked(seg).then(put).catch(e => put({ error: e.message }))
-          .finally(() => { this.blockedLoading[seg] = false; });
-      }
+      if (seg) this.startCustomerJobs(seg);
       const res = await (jobs[view] || (() => Promise.resolve({})))();
-      this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }));
+      this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }), () => {
+        // Overview's growth flash loads only after its ticket panels have painted.
+        if (view !== 'overview') return;
+        if (!this.state.data.growth && !this.growthLoading) {
+          this.growthLoading = true;
+          D.loadGrowth('retail').then(gr => this.setState(s => ({ data: { ...s.data, growth: gr } })))
+            .catch(() => {}).finally(() => { this.growthLoading = false; });
+        }
+        this.startCustomerJobs('retail');
+      });
     } catch (e) { this.setState({ busy: false, error: e.message }); }
   }
 
+  startCustomerJobs(seg) {
+    const D = this.D;
+    this.blockedLoading = this.blockedLoading || {};
+    if (!this.state.swapBy[seg] && !this.state.swapBusy) this.runSwap(seg);
+    if (!this.state.blockedBy[seg] && !this.blockedLoading[seg]) {
+      this.blockedLoading[seg] = true;
+      const put = v => this.setState(s => ({ blockedBy: { ...s.blockedBy, [seg]: v } }));
+      D.loadBlocked(seg).then(put).catch(e => put({ error: e.message }))
+        .finally(() => { this.blockedLoading[seg] = false; });
+    }
+  }
   seg(view) { return view === 'growth' ? 'retail' : view === 'intracity' ? 'intracity' : null; }
   sla() { return Number(this.props.frtSla) || 5; }
   rtSla() { return Number(this.props.rtSla) || 2; }
@@ -306,14 +319,17 @@ class Component extends DCLogic {
 
   overview(d) {
     const { LineChart, Donut, RankBars } = this.charts;
-    const D = this.D, t = d.tickets, e = d.esc, c = d.chat, s = d.csat, r = d.repeat;
+    const D = this.D, t = d.tickets, e = d.esc, c = d.chat, s = d.csat, r = d.repeat, q = d.complaints, g = this.state.data.growth;
+    const swR = this.state.swapBy.retail, co = swR && !swR.error ? swR.cohort : null;
+    const blR = this.state.blockedBy.retail, bl = blR && !blR.error ? blR : null;
+    const ct = co && co.total;
     const kpis = [
       { label: 'Trouble tickets', value: D.fmtInt(t.total), sub: D.fmtInt(Math.round(t.avgDaily)) + ' per day average' },
       { label: 'Unique customers', value: D.fmtInt(r.uniq), sub: D.fmtPct(r.multiShare) + ' raised more than one ticket' },
       { label: 'Escalated to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets queued' },
       { label: 'Work orders raised', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of tickets became field work' },
       { label: 'Chat conversations', value: D.fmtInt(c.totalConv), sub: D.fmtPct(c.aiShare) + ' closed by DotAI' },
-      { label: 'CSAT score', value: s.total ? s.avg.toFixed(2) + ' / 5' : '—', sub: s.total ? D.fmtPct(s.top2Share) + ' top-2-box · ' + D.fmtInt(s.total) + ' responses' : 'No responses in period' },
+      { label: 'CSAT', value: s.total ? D.fmtPct(s.top2Share) : '—', sub: s.total ? 'rated 4 or 5 · average ' + s.avg.toFixed(2) + ' / 5 · ' + D.fmtInt(s.total) + ' responses' : 'No responses in period' },
     ];
     const cards = [
       this.card('Daily ticket volume', {
@@ -327,9 +343,13 @@ class Component extends DCLogic {
         body: React.createElement(Donut, { data: t.type, centerValue: D.fmtPct(this.share(t.type, 'Complaint')), centerLabel: 'complaints' }),
         note: 'Complaints are reactive contacts; info requests are service or account questions.',
       }),
-      this.card('Top categories', {
-        span: 4, meta: 'by volume',
-        body: React.createElement(RankBars, { data: t.category.slice(0, 8), total: t.total }),
+      this.card('Top 5 complaint categories', {
+        span: 4, meta: D.fmtInt(q.total) + ' complaints',
+        body: React.createElement(RankBars, { data: q.category, total: q.total }),
+      }),
+      this.card('Top 5 complaint types', {
+        span: 4, meta: 'problem reported',
+        body: React.createElement(RankBars, { data: q.problem, total: q.total, color: this.PAL[2] }),
       }),
       this.card('Entry channel', {
         span: 4, meta: 'via origin',
@@ -339,6 +359,18 @@ class Component extends DCLogic {
         span: 4, meta: D.fmtPct(t.criticalShare) + ' critical',
         body: React.createElement(Donut, { data: t.priority, centerValue: D.fmtInt(t.critical), centerLabel: 'VIP + highest', colors: ['#9B2C1F', '#C4561B', '#B08A1E', '#3E5C76', '#8C8C88'] }),
         note: 'VIP and Highest tickets carry the greatest reputational exposure despite their small share of volume.',
+      }),
+      this.card('Retail growth and churn', {
+        span: 8, meta: co ? co.windowLabel + ' · Intracity excluded' : 'trailing 12 months · Intracity excluded',
+        body: this.statRow([
+          { label: 'Active customers', value: g ? D.fmtInt(g.active) : '…', sub: g ? D.fmtInt(g.added12) + ' new accounts in 12 months' : 'loading' },
+          { label: 'Net growth rate', value: ct && ct.opening ? D.fmtPct((ct.added - ct.terminated) / ct.opening) : '…', sub: ct ? 'acquisition rate ' + D.fmtPct(ct.added / ct.opening) : 'scanning records' },
+          { label: 'True churn rate', value: ct && ct.opening ? D.fmtPct(ct.churn / ct.opening) : '…', sub: ct ? D.fmtInt(ct.churn) + ' customers lost' : 'scanning records', color: '#9B2C1F' },
+          { label: 'True churn per 100 new', value: ct && ct.added ? (ct.churn / ct.added * 100).toFixed(0) : '…', sub: ct ? D.fmtInt(ct.churn) + ' lost for ' + D.fmtInt(ct.added) + ' acquired' : 'scanning records' },
+          { label: 'Blocked accounts', value: bl ? D.fmtInt(bl.total) : '…', sub: bl ? D.fmtInt(bl.over3) + ' blocked more than 3 months' : 'loading' },
+          { label: 'MRC on hold', value: bl ? D.fmtRp(bl.mrcTotal) : '…', sub: 'monthly fee on blocked accounts' },
+        ]),
+        note: 'Not affected by the period and branch filters. True churn excludes account swaps, relocations and accounts already blocked before the window.',
       }),
       this.card('Response speed and field escalation at a glance', {
         span: 12,
@@ -737,6 +769,7 @@ class Component extends DCLogic {
     const s = sRaw && !sRaw.error ? sRaw : null;
     const blRaw = this.state.blockedBy[seg];
     const bl = blRaw && !blRaw.error ? blRaw : null;
+    const co = s && s.cohort;
     const kpis = [
       { label: 'Customer records', value: D.fmtInt(g.totalRecords), sub: seg === 'intracity' ? 'Intracity price plans only' : 'retail only · Intracity plans excluded' },
       ...(bl ? [
@@ -747,10 +780,18 @@ class Component extends DCLogic {
       { label: 'New in last 12 months', value: D.fmtInt(g.added12), sub: g.windowLabel },
       { label: 'Terminated in last 12 months', value: D.fmtInt(g.lost12), sub: 'net ' + (g.added12 - g.lost12 >= 0 ? '+' : '') + D.fmtInt(g.added12 - g.lost12) + ' accounts' },
       { label: 'Change of ownership', value: D.fmtInt(g.changeOwnership), sub: 'formal transfers recorded, excluded from churn' },
+      ...(co && co.total.opening ? [
+        { label: 'Net growth rate (12m)', value: D.fmtPct((co.total.added - co.total.terminated) / co.total.opening), sub: 'acquisition rate ' + D.fmtPct(co.total.added / co.total.opening) + ' on an opening base of ' + D.fmtInt(co.total.opening) },
+        { label: 'True churn per 100 new', value: co.total.added ? (co.total.churn / co.total.added * 100).toFixed(0) : '—', sub: D.fmtInt(co.total.churn) + ' customers truly lost for ' + D.fmtInt(co.total.added) + ' new accounts' },
+        { label: 'True churn (12m)', value: D.fmtInt(co.total.churn), sub: D.fmtPct(co.total.churn / co.total.opening) + ' of opening base · ' + D.fmtInt(co.total.terminated) + ' terminations before adjustment' },
+      ] : []),
     ];
+    const pr = (a, b) => b ? D.fmtPct(a / b) : '—';
+    const sg = n => (n >= 0 ? '+' : '') + D.fmtInt(n);
+    const coRows = co ? g.branches.map(b => co.branches.find(x => x.label === b.label)).filter(Boolean).concat([{ label: 'Total', ...co.total }]) : [];
     const cards = [
       this.card('New activations versus terminations', {
-        span: 12, meta: 'monthly · churn excludes account swaps and relocations',
+        span: 12, meta: 'monthly · true churn excludes swaps, relocations and backlog',
         body: React.createElement(MultiLine, {
           height: 280,
           data: g.monthlySeries.map(m => ({
@@ -761,20 +802,31 @@ class Component extends DCLogic {
           lines: [
             { key: 'added', label: 'New activations', color: '#2E6B34' },
             { key: 'lost', label: 'Terminations', color: '#9B2C1F' },
-            { key: 'churn', label: 'Real churn', color: '#1F1F1C', dash: '5 4', pending: 'scanning records…' },
+            { key: 'churn', label: 'True churn', color: '#1F1F1C', dash: '5 4', pending: 'scanning records…' },
             { key: 'blocked', label: 'Blocked', color: '#C4561B', pending: 'loading' },
           ],
         }),
         note: 'Terminations are dated from the account expiration field, which the system uses as the proxy for the termination date.',
       }),
-      this.card('Growth and churn by city', {
-        span: 12, meta: 'trailing 12 months',
-        body: this.table(['Branch', 'Active now', 'New (12m)', 'Terminated (12m)', 'Net growth', 'Growth rate', 'Churn rate', 'Growth : churn'],
-          g.branches.map(b => [b.label, D.fmtInt(b.active), D.fmtInt(b.added), D.fmtInt(b.lost),
-            (b.net >= 0 ? '+' : '') + D.fmtInt(b.net), D.fmtPct(b.growthRate), D.fmtPct(b.churnRate),
-            b.lost ? (b.added / b.lost).toFixed(1) + ' : 1' : '—'])),
-        note: 'Rates are measured against the estimated active base twelve months ago (current active − new + terminated). Small branches move sharply in percentage terms, so read them alongside the absolute numbers.',
+      co ? this.card('Growth by city', {
+        span: 12, meta: co.windowLabel,
+        body: this.table(['Branch', 'Opening base', 'New accounts', 'Reactivated', 'Replacement', 'Terminated', 'Net change', 'Acquisition rate', 'Net growth rate'],
+          coRows.map(b => [b.label, D.fmtInt(b.opening), D.fmtInt(b.added), D.fmtInt(b.reactivated), D.fmtInt(b.replacement), D.fmtInt(b.terminated),
+            sg(b.added - b.terminated), pr(b.added, b.opening), pr(b.added - b.terminated, b.opening)])),
+        note: 'Opening base counts every account that started before ' + co.startLabel + ' and had not been terminated by then. Acquisition rate = new accounts ÷ opening base, a gross figure. Net growth rate = (new − terminated) ÷ opening base. Reactivated: the same name or phone had an account terminated more than ' + s.window + ' days before this one started. Replacement: the new record created by an account swap or relocation. Both are included in new accounts.',
+      }) : this.card('Growth by city', {
+        span: 12, meta: 'trailing 12 months · estimated base',
+        body: this.table(['Branch', 'Estimated opening base', 'New accounts', 'Terminated', 'Net change', 'Acquisition rate', 'Net growth rate'],
+          g.branches.map(b => [b.label, D.fmtInt(b.base), D.fmtInt(b.added), D.fmtInt(b.lost), sg(b.net), D.fmtPct(b.growthRate), D.fmtPct(b.net / b.base)])),
+        note: 'Provisional: the base is estimated as active now − new + terminated. The exact opening base, reactivations and true churn appear once the record scan finishes' + (this.state.swapBusy ? ' (scanning ' + D.fmtInt(this.state.swapProgress) + ' records…).' : '.'),
       }),
+      ...(co ? [this.card('From terminations to true churn', {
+        span: 12, meta: co.windowLabel,
+        body: this.table(['Branch', 'New accounts', 'Terminated', 'Account swaps', 'Relocations', 'Blocked before window', 'True churn', 'True churn per 100 new', 'Reported churn rate', 'True churn rate'],
+          coRows.map(b => [b.label, D.fmtInt(b.added), D.fmtInt(b.terminated), D.fmtInt(b.swaps), D.fmtInt(b.relocations), D.fmtInt(b.backlog), D.fmtInt(b.churn), b.added ? (b.churn / b.added * 100).toFixed(0) : '—',
+            pr(b.terminated, b.opening), pr(b.churn, b.opening)])),
+        note: 'True churn = terminated − account swaps − relocations − accounts whose grace period ended before ' + co.startLabel + '. Those last accounts were already lost before the window and were only closed administratively inside it. Rates use the opening base. The sheet has no termination-reason column, so moves are traced by name or phone plus coordinates and dates, not by a "Moving" reason.',
+      })] : []),
       ...(bl && bl.total ? [
       this.card('Blocked accounts per month', {
         span: 7, meta: 'by month blocked · last 12 months',
