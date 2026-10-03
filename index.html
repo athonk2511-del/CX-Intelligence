@@ -190,7 +190,7 @@ class Component extends DCLogic {
   async load() {
     const { view } = this.state;
     const k = this.key(view);
-    if (this.state.data[k]) { this.setState({ busy: false }); return; }
+    if (this.state.data[k]) { this.setState({ busy: false }); this.ensureTrends(view); return; }
     this.setState({ busy: true, error: null });
     const D = this.D, p = this.state.period, b = this.state.branch;
     const jobs = {
@@ -211,6 +211,7 @@ class Component extends DCLogic {
       if (seg) this.startCustomerJobs(seg);
       const res = await (jobs[view] || (() => Promise.resolve({})))();
       this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }), () => {
+        this.ensureTrends(view);
         // Overview's growth flash loads only after its ticket panels have painted.
         if (view !== 'overview') return;
         if (!this.state.data.growth && !this.growthLoading) {
@@ -234,6 +235,128 @@ class Component extends DCLogic {
         .finally(() => { this.blockedLoading[seg] = false; });
     }
   }
+  ensureTrends(view) {
+    if (!['overview', 'tickets', 'csat'].includes(view)) return;
+    const k = 'trends|' + this.state.branch;
+    if (this.state.data[k] || this.trendsLoading === k) return;
+    this.trendsLoading = k;
+    const put = v => this.setState(s => ({ data: { ...s.data, [k]: v } }));
+    this.D.loadTrends(this.state.branch).then(put).catch(e => put({ error: e.message }))
+      .finally(() => { if (this.trendsLoading === k) this.trendsLoading = null; });
+  }
+
+  /* ---------- week / month / year comparison ---------- */
+
+  h(tag, style, ...kids) { return React.createElement(tag, { style }, ...kids); }
+
+  chip(cur, prev, m, vs, covered) {
+    const h = this.h.bind(this), D = this.D;
+    const mono = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
+    const muted = { font: mono, color: '#5F5F5B', whiteSpace: 'nowrap' };
+    if (!covered || cur == null || prev == null) return h('span', muted, 'no data ' + vs);
+    let dir, txt;
+    if (m.mode === 'pp') { const dv = (cur - prev) * 100; dir = Math.abs(dv) < 0.05 ? 0 : Math.sign(dv); txt = (dv >= 0 ? '+' : '') + dv.toFixed(1) + ' pp'; }
+    else if (m.mode === 'abs') { const dv = cur - prev; dir = Math.sign(dv); txt = (dv >= 0 ? '+' : '') + D.fmtInt(dv); }
+    else {
+      if (!prev) return h('span', muted, (cur ? 'new ' : '– ') + vs);
+      const r = (cur - prev) / prev; dir = Math.abs(r) < 0.005 ? 0 : Math.sign(r); txt = (r >= 0 ? '+' : '') + (r * 100).toFixed(1) + '%';
+    }
+    const good = m.better === 'up' ? dir > 0 : dir < 0;
+    const color = !dir || !m.better ? '#5F5F5B' : good ? '#2E6B34' : '#9B2C1F';
+    return h('span', { font: mono, whiteSpace: 'nowrap', color: '#5F5F5B' },
+      h('span', { color, fontWeight: 600 }, (dir > 0 ? '▲ ' : dir < 0 ? '▼ ' : '■ ') + txt), ' ' + vs);
+  }
+
+  cmpCell(value, ...chips) {
+    const h = this.h.bind(this);
+    return h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 },
+      h('span', { font: "500 14px 'IBM Plex Mono',ui-monospace,monospace", color: '#1F1F1D' }, value), ...chips);
+  }
+
+  thLabel(title, range) {
+    const h = this.h.bind(this);
+    return h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 },
+      h('span', null, title), h('span', { textTransform: 'none', letterSpacing: 0, fontWeight: 400 }, range));
+  }
+
+  opsCompareCard(view, span) {
+    const D = this.D, T = this.state.data['trends|' + this.state.branch];
+    const title = 'Week, month and year comparison';
+    if (!T) return this.card(title, { span, meta: 'loading', body: this.h('div', { height: 120, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) });
+    if (T.error || T.empty) return this.card(title, { span, body: this.h('p', { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B' }, T.error || 'No dated tickets yet.') });
+    const pct = v => v == null ? '—' : D.fmtPct(v);
+    const all = [
+      { id: 't', label: 'Trouble tickets', get: x => x.tickets, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Complaints', get: x => x.complaints, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Complaint share', get: x => x.tickets ? x.complaints / x.tickets : null, fmt: pct, better: 'down', mode: 'pp' },
+      { id: 't', label: 'Mass-problem tickets', get: x => x.mass, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Work orders raised', get: x => x.wo, fmt: D.fmtInt },
+      { id: 'c', label: 'CSAT (rated 4–5)', get: x => x.csatN ? x.csatTop2 / x.csatN : null, fmt: pct, better: 'up', mode: 'pp' },
+      { id: 'c', label: 'CSAT average', get: x => x.csatN ? x.csatScore / x.csatN : null, fmt: v => v == null ? '—' : v.toFixed(2), better: 'up', mode: 'score' },
+      { id: 'c', label: 'CSAT responses', get: x => x.csatN, fmt: D.fmtInt },
+    ];
+    const keep = { overview: ['t', 'c'], tickets: ['t'], csat: ['c'] }[view];
+    const rows = all.filter(m => keep.includes(m.id) && !(view === 'overview' && m.mode === 'score'));
+    rows.forEach(m => { if (m.mode === 'score') m.mode = 'scoreAbs'; });
+    const ch = (m, a, b, vs) => {
+      const cur = m.get(a), prev = m.get(b);
+      if (m.mode === 'scoreAbs') {
+        if (!b.covered || cur == null || prev == null) return this.chip(null, null, m, vs, false);
+        const dv = cur - prev, dir = Math.abs(dv) < 0.005 ? 0 : Math.sign(dv);
+        const color = !dir ? '#5F5F5B' : dir > 0 ? '#2E6B34' : '#9B2C1F';
+        return this.h('span', { font: "500 11px 'IBM Plex Mono',ui-monospace,monospace", whiteSpace: 'nowrap', color: '#5F5F5B' },
+          this.h('span', { color, fontWeight: 600 }, (dir > 0 ? '▲ ' : dir < 0 ? '▼ ' : '■ ') + (dv >= 0 ? '+' : '') + dv.toFixed(2)), ' ' + vs);
+      }
+      return this.chip(cur, prev, m, vs, b.covered);
+    };
+    const fd = d => d.getDate() + ' ' + D.MON3[d.getMonth()];
+    const body = this.table(
+      ['Metric', this.thLabel('Last 7 days', fd(T.week.from) + ' – ' + fd(T.week.to)), this.thLabel('Month to date', fd(T.mtd.from) + ' – ' + fd(T.mtd.to)), this.thLabel('Year to date', fd(T.ytd.from) + ' – ' + fd(T.ytd.to) + ' ' + T.ref.getFullYear())],
+      rows.map(m => [m.label,
+        this.cmpCell(m.fmt(m.get(T.week)), ch(m, T.week, T.prevWeek, 'vs prior week')),
+        this.cmpCell(m.fmt(m.get(T.mtd)), ch(m, T.mtd, T.prevMtd, 'vs last month'), ch(m, T.mtd, T.lyMtd, 'vs last year')),
+        this.cmpCell(m.fmt(m.get(T.ytd)), ch(m, T.ytd, T.lyYtd, 'vs last year'))]),
+      { minWidth: 560 });
+    return this.card(title, {
+      span, meta: 'complete days up to ' + fd(T.ref) + ' ' + T.ref.getFullYear(),
+      body,
+      note: 'Each period is compared with the same number of calendar days before it: last month and last year use days 1–' + T.ref.getDate() + ' only. Green means the change is favourable, red unfavourable, grey neutral.' + (keep.includes('c') ? ' CSAT is not split by branch.' : '') + ' Data starts ' + fd(T.first) + ' ' + T.first.getFullYear() + '; comparisons before that show "no data".',
+    });
+  }
+
+  growthCompareCard(g, seg, span) {
+    const D = this.D, title = 'Month-on-month and year-on-year accounts';
+    if (!g || !g.monthlySeries) return this.card(title, { span, meta: 'loading', body: this.h('div', { height: 120, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) });
+    const sw = this.state.swapBy[seg], s = sw && !sw.error ? sw : null;
+    const bR = this.state.blockedBy[seg], bl = bR && !bR.error ? bR : null;
+    const now = new Date(), L = now.getFullYear() * 12 + now.getMonth() - 1;
+    const by = new Map(g.monthlySeries.map(x => [x.mk, x]));
+    const minMk = Math.min(...g.monthlySeries.map(x => x.mk));
+    const lab = mk => D.MON3[mk % 12] + " '" + String(Math.floor(mk / 12)).slice(2);
+    const fromSeries = f => mk => mk < minMk ? null : f(by.get(mk) || { added: 0, lost: 0 });
+    const fromMap = (src, ready) => mk => ready ? (src[mk] || 0) : null;
+    const rows = [
+      { label: 'New activations', get: fromSeries(x => x.added), better: 'up' },
+      { label: 'Terminations', get: fromSeries(x => x.lost), better: 'down' },
+      { label: 'Net change', get: fromSeries(x => x.added - x.lost), better: 'up', mode: 'abs', sign: true },
+      { label: 'True churn', get: fromMap(s && s.realByMonth || {}, !!(s && s.realByMonth)), better: 'down', pending: this.state.swapBusy ? 'scanning…' : '—' },
+      { label: 'Blocked accounts', get: fromMap(bl && bl.byMonth || {}, !!(bl && bl.byMonth)), better: 'down', pending: 'loading' },
+    ];
+    const fv = (m, v) => v == null ? (m.pending || '—') : (m.sign && v > 0 ? '+' : '') + D.fmtInt(v);
+    const was = v => this.h('span', { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#5F5F5B' }, 'was ' + v);
+    const vsCell = (m, mk, tag) => {
+      const cur = m.get(L), prev = m.get(mk);
+      if (cur == null || prev == null) return this.cmpCell(fv(m, prev), this.chip(null, null, m, tag, false));
+      return this.h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }, this.chip(cur, prev, m, tag, true), was(fv(m, prev)));
+    };
+    return this.card(title, {
+      span, meta: 'last complete month · ' + lab(L),
+      body: this.table(['Metric', lab(L), 'vs ' + lab(L - 1), 'vs ' + lab(L - 12)],
+        rows.map(m => [m.label, this.cmpCell(fv(m, m.get(L))), vsCell(m, L - 1, 'MoM'), vsCell(m, L - 12, 'YoY')]), { minWidth: 420 }),
+      note: lab(L + 1) + ' is still running, so the latest complete month is compared. ' + (seg === 'intracity' ? 'Intracity plans only.' : 'Retail only; Intracity plans excluded.'),
+    });
+  }
+
   seg(view) { return view === 'growth' ? 'retail' : view === 'intracity' ? 'intracity' : null; }
   sla() { return Number(this.props.frtSla) || 5; }
   rtSla() { return Number(this.props.rtSla) || 2; }
@@ -976,6 +1099,11 @@ class Component extends DCLogic {
             growth: () => this.growthView(payload, 'retail'),
             intracity: () => this.growthView(payload, 'intracity'),
           })[S.view]();
+          const at = { overview: 2, tickets: 1, csat: 2 }[S.view];
+          if (at != null) built.cards.splice(at, 0, ...(S.view === 'overview'
+            ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
+            : [this.opsCompareCard(S.view, 12)]));
+          if (S.view === 'growth' || S.view === 'intracity') built.cards.splice(1, 0, this.growthCompareCard(payload, this.seg(S.view), 12));
         }
       } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
     }

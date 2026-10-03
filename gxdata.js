@@ -899,3 +899,47 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
     samples,
   };
 }
+
+/* ---------- period comparison ----------
+   Week = last 7 complete days vs the 7 before. Month and year compare the same
+   calendar days (month-to-date, year-to-date) so a partial month is never set
+   against a full one. Today is excluded because it is still being logged. */
+export async function loadTrends(branch) {
+  const [daily, mass, wo, csat] = await Promise.all([
+    gviz(TABS.tickets, `select D, O, count(B)${W('all', branch)} group by D, O`),
+    gviz(TABS.tickets, `select D, count(B)${W('all', branch, "Q = 'Mass-Problem'")} group by D`),
+    gviz(TABS.tickets, `select D, count(B)${W('all', branch, "AC is not null and AC <> '-'")} group by D`),
+    gviz(TABS.csat, 'select year(S), month(S), day(S), C, count(G) group by year(S), month(S), day(S), C'),
+  ]);
+  const F = ['tickets', 'complaints', 'mass', 'wo', 'csatN', 'csatTop2', 'csatScore'];
+  const day = new Map();
+  const at = k => { let e = day.get(k); if (!e) { e = {}; F.forEach(f => { e[f] = 0; }); day.set(k, e); } return e; };
+  const dk = v => { const d = parseDMY(v); return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null; };
+  daily.rows.forEach(([d, o, n]) => { const k = dk(d); if (k == null) return; const e = at(k); e.tickets += num(n); if (o === 'Complaint') e.complaints += num(n); });
+  mass.rows.forEach(([d, n]) => { const k = dk(d); if (k != null) at(k).mass += num(n); });
+  wo.rows.forEach(([d, n]) => { const k = dk(d); if (k != null) at(k).wo += num(n); });
+  csat.rows.forEach(([y, m, d, r, n]) => {
+    if (y == null || r == null) return;
+    const e = at(new Date(num(y), num(m), num(d)).getTime()), c = num(n);
+    e.csatN += c; e.csatScore += c * num(r); if (num(r) >= 4) e.csatTop2 += c;
+  });
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tDays = [...day.entries()].filter(([k, e]) => e.tickets && k < today.getTime()).map(([k]) => k);
+  if (!tDays.length) return { empty: true };
+  const first = Math.min(...tDays);
+  const ref = new Date(Math.max(...tDays));
+  const y = ref.getFullYear(), m = ref.getMonth(), d = ref.getDate();
+  const clamp = (yy, mm, dd) => new Date(yy, mm, Math.min(dd, new Date(yy, mm + 1, 0).getDate()));
+  const win = (from, to) => {
+    const s = { from, to, covered: from.getTime() >= first };
+    F.forEach(f => { s[f] = 0; });
+    day.forEach((e, k) => { if (k >= from.getTime() && k <= to.getTime()) F.forEach(f => { s[f] += e[f]; }); });
+    return s;
+  };
+  return {
+    ref, first: new Date(first),
+    week: win(new Date(y, m, d - 6), ref), prevWeek: win(new Date(y, m, d - 13), new Date(y, m, d - 7)),
+    mtd: win(new Date(y, m, 1), ref), prevMtd: win(new Date(y, m - 1, 1), clamp(y, m - 1, d)), lyMtd: win(new Date(y - 1, m, 1), clamp(y - 1, m, d)),
+    ytd: win(new Date(y, 0, 1), ref), lyYtd: win(new Date(y - 1, 0, 1), clamp(y - 1, m, d)),
+  };
+}
