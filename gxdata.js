@@ -943,3 +943,121 @@ export async function loadTrends(branch) {
     ytd: win(new Date(y, 0, 1), ref), lyYtd: win(new Date(y - 1, 0, 1), clamp(y - 1, m, d)),
   };
 }
+
+/* ---------- customer map ----------
+   Coordinates (I) are "lat, lng" text. Only Active, Blocked and Terminated
+   accounts are plotted; other statuses are transitional. Rows are pulled in
+   parallel 20k chunks to keep each gviz response small. */
+export const MAP_STATUS = [
+  { key: 'Active', color: '#2E7D4F' },
+  { key: 'Blocked', color: '#D09A1C' },
+  { key: 'Terminated', color: '#B23A2E' },
+];
+const PRODUCT_COLORS = { 'Lite': '#2F5D8A', 'Lite+': '#7A5AA6', 'Signature': '#C2410C', 'Dedicated Internet Access': '#1F1F1D', 'Intracity': '#138A8A' };
+const PRODUCT_EXTRA = ['#8A6D3B', '#5F7F2E', '#A03E6E', '#6B6B66'];
+
+export async function loadMap() {
+  const where = " where G = 'Active' or G = 'Blocked' or G = 'Termination' or G = 'Termination in Progress'";
+  const STEP = 20000;
+  const get = k => gviz(TABS.customers, `select F, G, I, M, C, E, A, H, N, J, K, L, O, P${where} limit ${STEP} offset ${k * STEP}`).then(r => r.rows);
+  const wdP = loadWiredown();
+  const chunks = await Promise.all([0, 1, 2, 3, 4, 5].map(get));
+  for (let k = chunks.length; chunks[k - 1].length === STEP; k++) chunks.push(await get(k));
+  const rows = chunks.flat();
+  const stIdx = g => g === 'Active' ? 0 : g === 'Blocked' ? 1 : 2;
+  const prodMap = new Map(), brMap = new Map();
+  const idx = (map, v) => { if (!map.has(v)) map.set(v, map.size); return map.get(v); };
+  const n = rows.length;
+  const lat = new Float64Array(n), lng = new Float64Array(n), st = new Uint8Array(n), pr = new Uint16Array(n), br = new Uint16Array(n), cid = new Array(n), uid = new Array(n), name = new Array(n), area = new Array(n), variant = new Array(n);
+  const start = new Float64Array(n), blockAt = new Float64Array(n), endAt = new Float64Array(n), mrc = new Float64Array(n);
+  const ms = v => { const d = parseAnyDate(v) || parseDMY(v); return d ? d.getTime() : NaN; };
+  const noCoord = [];
+  let j = 0;
+  rows.forEach(([f, g, coord, m, c, u, nm, ar, va, sj, gk, el, fo, dp]) => {
+    const p = idx(prodMap, String(m || 'Unknown').trim() || 'Unknown');
+    const b = idx(brMap, String(c || 'Unknown').replace(/^GlobalXtreme\s*/i, '').trim() || 'Unknown');
+    const sIx = stIdx(String(g));
+    const mm = String(coord || '').match(/(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)/);
+    let a = mm ? parseFloat(mm[1]) : NaN, o = mm ? parseFloat(mm[2]) : NaN;
+    if (Math.abs(a) > 20 && Math.abs(o) <= 20) { const t = a; a = o; o = t; }
+    if (!(a > -12 && a < 7 && o > 94 && o < 142)) { noCoord.push([sIx, p, b]); return; }
+    lat[j] = a; lng[j] = o; st[j] = sIx; pr[j] = p; br[j] = b; cid[j] = f; uid[j] = u; name[j] = nm; area[j] = ar; variant[j] = va;
+    start[j] = ms(sj); endAt[j] = ms(el); const bk = ms(gk); blockAt[j] = isNaN(bk) ? endAt[j] : bk; mrc[j] = Math.max(0, rp(fo) - rp(dp)); j++;
+  });
+  // Latest non-cancelled WWR work order per CID → 0 open, 1 in progress, 2 closed.
+  // Same for WCM (maintenance) → cm / cmInfo.
+  const woAll = await wdP.catch(() => ({ WWR: new Map(), WCM: new Map() }));
+  const wdBy = woAll.WWR, cmBy = woAll.WCM;
+  const wd = new Int8Array(j).fill(-1), wdInfo = new Array(j), cm = new Int8Array(j).fill(-1), cmInfo = new Array(j);
+  let wdMatched = 0, cmMatched = 0;
+  for (let i = 0; i < j; i++) {
+    const k = String(cid[i]).replace(/\D/g, '');
+    const w = wdBy.get(k); if (w) { wd[i] = w.state; wdInfo[i] = w; wdMatched++; }
+    const c = cmBy.get(k); if (c) { cm[i] = c.state; cmInfo[i] = c; cmMatched++; }
+  }
+  // Every WWR / WCM work order with its date, tied to a plotted point (for period counts by area).
+  const ptOf = new Map(); for (let i = 0; i < j; i++) ptOf.set(String(cid[i]).replace(/\D/g, ''), i);
+  const evs = (woAll.events || []).filter(e => ptOf.has(e[0]));
+  const wo = { n: evs.length, pt: Int32Array.from(evs, e => ptOf.get(e[0])), type: Uint8Array.from(evs, e => e[1]), t: Float64Array.from(evs, e => e[2]) };
+  const products = [...prodMap.keys()].map((key, i) => ({ key, color: PRODUCT_COLORS[key] || PRODUCT_EXTRA[i % PRODUCT_EXTRA.length] }));
+  return {
+    start: start.subarray(0, j), blockAt: blockAt.subarray(0, j), endAt: endAt.subarray(0, j), mrc: mrc.subarray(0, j), wo,
+    count: j, lat: lat.subarray(0, j), lng: lng.subarray(0, j), status: st.subarray(0, j), product: pr.subarray(0, j), branch: br.subarray(0, j), cid: cid.slice(0, j), uid: uid.slice(0, j), name: name.slice(0, j), area: area.slice(0, j), variant: variant.slice(0, j),
+    wd, wdInfo, wdStatuses: WD_STATUS, wdTotal: wdBy.size, wdMatched, cm, cmInfo, cmTotal: cmBy.size, cmMatched,
+    noCoord, products, branches: [...brMap.keys()], statuses: MAP_STATUS,
+  };
+}
+
+export async function loadCustomerDetail(cid) {
+  const r = await gviz(TABS.customers, `select A, H, N, J, L, G, C where F = ${Number(cid)} limit 1`);
+  const x = r.rows[0];
+  return x ? { name: x[0], area: x[1], variant: x[2], start: x[3], expiry: x[4], status: x[5], branch: x[6] } : null;
+}
+
+/* Look up one account by CID or UID, for accounts the map could not plot. */
+export async function findCustomer(q) {
+  const s = String(q).trim().replace(/'/g, '');
+  const w = /^\d+$/.test(s) ? `F = ${s}` : `lower(E) = '${s.toLowerCase()}'`;
+  const r = await gviz(TABS.customers, `select A, F, E, G, I where ${w} limit 1`);
+  const x = r.rows[0];
+  return x ? { name: x[0], cid: x[1], uid: x[2], status: x[3], coord: x[4] } : null;
+}
+
+export const WD_STATUS = [
+  { key: 'Open', color: '#D9480F' },
+  { key: 'In progress', color: '#1C64B4' },
+  { key: 'Closed', color: '#6B6B66' },
+];
+async function loadWiredown() {
+  const r = await gviz(TABS.tickets, "select F, AC, AD, D where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
+  const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress/.test(v) ? 1 : 0; };
+  const out = { WWR: new Map(), WCM: new Map(), events: [] };
+  r.rows.forEach(([f, wo, st, dt]) => {
+    const k = String(f).replace(/\D/g, ''); if (!k) return;
+    const ty = String(wo || '').slice(0, 3).toUpperCase(), by = out[ty]; if (!by) return;
+    const t = (parseDMY(dt) || new Date(0)).getTime(), s = state(st);
+    out.events.push([k, ty === 'WWR' ? 0 : 1, t]);
+    const e = by.get(k);
+    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1 }); return; }
+    e.n++;
+    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t });
+  });
+  return out;
+}
+
+/* Work orders for one day with a technician column, for travel-time analysis. */
+export async function loadFieldWOs(day, techCol) {
+  const col = String(techCol).trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!col) return [];
+  const p = n => String(n).padStart(2, '0');
+  const dmy = p(day.getDate()) + '/' + p(day.getMonth() + 1) + '/' + day.getFullYear();
+  const ymd = (x) => x.getFullYear() + '-' + p(x.getMonth() + 1) + '-' + p(x.getDate());
+  const sel = `select D, F, AC, AD, ${col} where AC is not null and AC <> '-' and AD <> 'Canceled' and ${col} is not null and `;
+  let r;
+  try { r = await gviz(TABS.tickets, sel + `D contains '${dmy}'`); }
+  catch (e) { r = await gviz(TABS.tickets, sel + `D >= date '${ymd(day)}' and D < date '${ymd(new Date(day.getTime() + 86400e3))}'`); }
+  return r.rows.map(([dt, cid, wo, st, tech]) => {
+    const t = parseDMY(dt);
+    return { wo, type: String(wo).slice(0, 3), cid, status: st, tech, dispatch: t ? t.getTime() : day.getTime() };
+  });
+}
