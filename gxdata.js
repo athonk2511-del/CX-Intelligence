@@ -26,18 +26,83 @@ const cache = new Map();
 export function clearCache() { cache.clear(); }
 export const stats = { queries: 0, bytes: 0, lastSync: null };
 
+/* ---------- secure access via Apps Script proxy ----------
+   The sheet itself stays "Restricted". Queries go through a Google Apps Script
+   web app that runs as the sheet owner and only answers requests carrying a
+   valid access key. The key is checked on Google's side and is never stored
+   in this public code — each viewer types it once and it is kept in their own
+   browser. Open the dashboard with ?logout to forget the key on this browser.
+   Leave PROXY_URL empty to fall back to reading a public sheet directly. */
+const PROXY_URL = 'https://script.google.com/macros/s/AKfycbweJLkjh789z2UXN9kI1qOlhfL1Lyr2UZgcNoqi2toYCqHNcqCaUeSfK13IsDukv8df/exec';
+const KEY_STORE = 'gx-access-key';
+const useProxy = () => /^https:\/\/script\.google\.com\//.test(PROXY_URL);
+
+function readKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch (e) { return memKey; } }
+function saveKey(k) { memKey = k; try { localStorage.setItem(KEY_STORE, k); } catch (e) {} }
+export function forgetKey() { memKey = ''; try { localStorage.removeItem(KEY_STORE); } catch (e) {} }
+let memKey = '';
+let keyPrompt = null;
+try { if (/[?&]logout\b/.test(location.search)) forgetKey(); } catch (e) {}
+
+function askKey(message) {
+  if (keyPrompt) return keyPrompt;
+  keyPrompt = new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.55);padding:16px;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif');
+    wrap.innerHTML = `
+      <form style="background:#fff;color:#0f172a;border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+        <div style="font-size:18px;font-weight:600;margin-bottom:6px">CX Intelligence</div>
+        <div style="font-size:14px;color:#475569;margin-bottom:18px">${message}</div>
+        <input type="password" autocomplete="current-password" placeholder="Access key" required
+          style="width:100%;box-sizing:border-box;font-size:15px;padding:11px 12px;border:1px solid #cbd5e1;border-radius:10px;outline:none">
+        <button type="submit" style="margin-top:14px;width:100%;font-size:15px;font-weight:600;padding:11px;border:0;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer">Open dashboard</button>
+      </form>`;
+    const form = wrap.querySelector('form'), input = wrap.querySelector('input');
+    form.addEventListener('submit', ev => {
+      ev.preventDefault();
+      const k = input.value.trim();
+      if (!k) return;
+      saveKey(k); wrap.remove(); keyPrompt = null; resolve(k);
+    });
+    document.body.appendChild(wrap);
+    setTimeout(() => input.focus(), 0);
+  });
+  return keyPrompt;
+}
+
+async function fetchProxy(gid, tq, retry = true) {
+  let k = readKey();
+  if (!k) k = await askKey('Enter your access key to load the data.');
+  const url = `${PROXY_URL}?gid=${encodeURIComponent(gid)}&tq=${encodeURIComponent(tq)}&key=${encodeURIComponent(k)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Data request failed (HTTP ' + res.status + ')');
+  const text = await res.text();
+  if (text.indexOf('"UNAUTHORIZED"') !== -1) {
+    forgetKey();
+    if (!retry) throw new Error('Access key rejected');
+    await askKey('That access key was not accepted. Please try again.');
+    return fetchProxy(gid, tq, false);
+  }
+  return text;
+}
+
 export async function gviz(gid, tq) {
   const key = SHEET_ID + '|' + gid + '|' + tq;
   if (cache.has(key)) return cache.get(key);
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${gid}&tq=${encodeURIComponent(tq)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Sheet request failed (HTTP ' + res.status + ')');
-  const text = await res.text();
+  let text;
+  if (useProxy()) {
+    text = await fetchProxy(gid, tq);
+  } else {
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${gid}&tq=${encodeURIComponent(tq)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Sheet request failed (HTTP ' + res.status + ')');
+    text = await res.text();
+  }
   stats.queries++; stats.bytes += text.length;
   const s = text.indexOf('{'), e = text.lastIndexOf('}');
   let json;
   try { json = JSON.parse(text.slice(s, e + 1)); }
-  catch (err) { throw new Error('Could not parse sheet response — is the sheet shared as "anyone with the link"?'); }
+  catch (err) { throw new Error('Could not read the data response — check the Apps Script deployment.'); }
   if (json.status === 'error') {
     throw new Error((json.errors || []).map(x => x.detailed_message || x.message).join('; ') || 'Query error');
   }
