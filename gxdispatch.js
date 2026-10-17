@@ -289,7 +289,7 @@ class Dispatch {
   }
 
   /* ---------- view ---------- */
-  // ctx: { host, mapBox, full, hideF, modeRow, hostBi, go(i) }
+  // ctx: { host, mapBox, full, hideF, hostBi }
   view(m, ctx) {
     const R = this.R, e = R.createElement, host = ctx.host, cfg = this.st.cfg;
     const bi = this.branchIdx(m, ctx.hostBi);
@@ -332,7 +332,6 @@ class Dispatch {
     const brs = m.branches.map((b, i) => i).filter(i => i === bi || this.hasJobs(m, i));
     const armed = this.ui.armed;
     const controls = e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
-      ctx.modeRow(row),
       row('Branch', ctx.hostBi >= 0 ? [e('span', { key: 'bn', style: { font: SANS, color: C.ink } }, m.branches[bi]), e('span', { key: 'bh', style: { font: SANS, color: C.muted } }, 'set by the branch filter above')]
         : brs.map(i => chip('br' + i, i === bi, m.branches[i], null, null, () => { cfg.branch = m.branches[i]; this.changed(); }))),
       row('Plan', [
