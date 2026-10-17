@@ -1094,18 +1094,19 @@ export const WD_STATUS = [
   { key: 'Closed', color: '#6B6B66' },
 ];
 async function loadWiredown() {
-  const r = await gviz(TABS.tickets, "select F, AC, AD, D where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
+  const r = await gviz(TABS.tickets, "select F, AC, AD, D, G, P, Q where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
   const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress/.test(v) ? 1 : 0; };
   const out = { WWR: new Map(), WCM: new Map(), events: [] };
-  r.rows.forEach(([f, wo, st, dt]) => {
+  r.rows.forEach(([f, wo, st, dt, pr, ca, pb]) => {
     const k = String(f).replace(/\D/g, ''); if (!k) return;
     const ty = String(wo || '').slice(0, 3).toUpperCase(), by = out[ty]; if (!by) return;
     const t = (parseDMY(dt) || new Date(0)).getTime(), s = state(st);
     out.events.push([k, ty === 'WWR' ? 0 : 1, t]);
     const e = by.get(k);
-    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1 }); return; }
+    // prio / cat / prob: ticket priority (G), category (P) and problem (Q) of that work order, for the dispatch planner.
+    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: ca || '', prob: pb || '' }); return; }
     e.n++;
-    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t });
+    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: ca || '', prob: pb || '' });
   });
   return out;
 }

@@ -280,6 +280,7 @@ export async function createMap(el, data, opts) {
   let ring = null;
   const techLayer = L.layerGroup().addTo(map), routeLayer = L.layerGroup().addTo(map), techMarkers = new Map();
   let replayM = null, onTech = null, routeKey = null;
+  const planLayer = L.layerGroup().addTo(map); let planKey = null;
   const initials = n => String(n || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
   const techIcon = (d, sel, colors) => L.divIcon({
     className: '', iconSize: [30, 30], iconAnchor: [15, 15],
@@ -378,6 +379,28 @@ export async function createMap(el, data, opts) {
       const box = p.getElement();
       if (box) box.addEventListener('click', ev => { const b = ev.target.closest('[data-adm-act]'); if (b) { map.closePopup(p); onAction && onAction(b.getAttribute('data-adm-act')); } });
       return p;
+    },
+    // IDS dispatch plan: 3 km cells with jobs, one coloured route per team from the base, deferred jobs as rings.
+    setPlan(p) {
+      const k = p ? p.key : null;
+      if (k === planKey) return;
+      planKey = k; planLayer.clearLayers();
+      if (!p) return;
+      const all = [[p.base.lat, p.base.lng]];
+      p.cells.forEach(([key, n]) => {
+        const q = key.split(',');
+        L.rectangle(cellBounds(+q[0], +q[1], p.size), { color: '#B08A1E', weight: 1, opacity: 0.7, fillColor: '#E8B400', fillOpacity: Math.min(0.32, 0.08 + n * 0.03), interactive: false }).addTo(planLayer);
+      });
+      p.teams.forEach(t => {
+        const ll = [[p.base.lat, p.base.lng]].concat(t.pts.map(x => [x.lat, x.lng]));
+        L.polyline(ll, { color: '#FFFFFF', weight: 6, opacity: 0.85, interactive: false }).addTo(planLayer);
+        L.polyline(ll, { color: t.color, weight: 3, opacity: 0.95, interactive: false }).addTo(planLayer);
+        t.pts.forEach((x, n) => { all.push([x.lat, x.lng]); L.marker([x.lat, x.lng], { icon: woIcon(n + 1, t.color), zIndexOffset: 600 }).bindTooltip(esc(x.title), { direction: 'top', offset: [0, -10] }).addTo(planLayer); });
+      });
+      p.next.forEach(x => { all.push([x.lat, x.lng]); L.circleMarker([x.lat, x.lng], { radius: 6, color: '#D9480F', weight: 2.5, fillColor: '#FFFFFF', fillOpacity: 1 }).bindTooltip(esc(x.title), { direction: 'top' }).addTo(planLayer); });
+      L.marker([p.base.lat, p.base.lng], { zIndexOffset: 700, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div style="width:16px;height:16px;box-sizing:border-box;background:#1F1F1D;border:2px solid #E8B400;border-radius:2px"></div>' }) })
+        .bindTooltip(esc(p.base.title), { direction: 'top', offset: [0, -8] }).addTo(planLayer);
+      if (p.fit && all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 15 });
     },
     panTo(lat, lng, z) { map.setView([lat, lng], Math.max(map.getZoom(), z || 15)); },
     resize() { map.invalidateSize(); },

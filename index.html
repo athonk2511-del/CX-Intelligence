@@ -150,6 +150,7 @@
 class Component extends DCLogic {
   state = {
     view: 'overview', period: 'all', branch: 'all', navOpen: true, mapShowF: false,
+    mapTab: (() => { try { return localStorage.getItem('gx.mapTab') === 'dispatch' ? 'dispatch' : 'loc'; } catch (e) { return 'loc'; } })(), dspTick: 0,
     index: null, data: {}, busy: true, error: null,
     trk: { sel: null, day: 0, t: null, playing: false, speed: 180, show: true }, tDraft: null, tMsg: null,
     adm: { path: [], show: true, legend: true, p: { mode: 'all', y: new Date().getFullYear(), m: new Date().getMonth(), d: new Date().getDate() } },
@@ -172,7 +173,7 @@ class Component extends DCLogic {
     window.addEventListener('resize', this.onResize);
     this.navTimer = setTimeout(() => this.setState({ navOpen: false }), 3000);
     this.onUndoKey = ev => {
-      if (this.state.view !== 'map' || !(ev.ctrlKey || ev.metaKey) || ev.shiftKey || String(ev.key).toLowerCase() !== 'z') return;
+      if (this.state.view !== 'map' || this.state.mapTab === 'dispatch' || !(ev.ctrlKey || ev.metaKey) || ev.shiftKey || String(ev.key).toLowerCase() !== 'z') return;
       if (/^(INPUT|TEXTAREA)$/.test((ev.target && ev.target.tagName) || '')) return;
       ev.preventDefault(); this.undoGrid();
     };
@@ -203,6 +204,7 @@ class Component extends DCLogic {
     this.syncGrid();
     this.syncTrack();
     this.syncAdmin();
+    this.syncPlan();
   }
 
   key(view) {
@@ -433,14 +435,16 @@ class Component extends DCLogic {
     if (!el || !data) return;
     this._gSent = null;
     import('./gxmap.js').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
-      .then(api => { if (this.mapEl !== el) { api.destroy(); return; } this.mapApi = api; this.routeFit = null; this._admFit = null; this.syncMap(); this.syncGrid(); this.syncTrack(); this.syncAdmin(); this.forceUpdate(); })
+      .then(api => { if (this.mapEl !== el) { api.destroy(); return; } this.mapApi = api; this.routeFit = null; this._admFit = null; this.syncMap(); this.syncGrid(); this.syncTrack(); this.syncAdmin(); this._planSent = undefined; this.syncPlan(); this.forceUpdate(); })
       .catch(e => { el.textContent = e.message; });
   };
 
   syncMap() {
     const m = this.state.data.map;
     if (!this.mapApi || !m) return;
-    const bi = this.mapBranchIdx(m), F = this.state.mapF;
+    const bi = this.mapBranchIdx(m), dsp = this.state.mapTab === 'dispatch';
+    // Dispatch planner: keep customers as a faint backdrop so the routes read clearly.
+    const F = dsp ? { ...this.state.mapF, display: 'points', ptA: Math.min(this.state.mapF.ptA, 0.25), wdOnly: false } : this.state.mapF;
     const sig = JSON.stringify([F, bi]);
     if (sig === this.mapSig) return;
     const fit = !this.mapSig || JSON.parse(this.mapSig)[1] !== bi;
@@ -702,9 +706,9 @@ class Component extends DCLogic {
   syncGrid() {
     const api = this.mapApi;
     if (!api || !api.setGrid) return;
-    const g = this.state.grid, u = this.state.gridUI;
-    if (this._gSent === g && this._uSent === u) return;
-    this._gSent = g; this._uSent = u;
+    const g = this.state.grid, dsp = this.state.mapTab === 'dispatch', u = dsp ? { ...this.state.gridUI, show: false, edit: false } : this.state.gridUI;
+    if (this._gSent === g && this._uSent === this.state.gridUI && this._tSent === dsp) return;
+    this._gSent = g; this._uSent = this.state.gridUI; this._tSent = dsp;
     const teams = {}; g.teams.forEach(t => { teams[t.id] = t; });
     const edit = u.edit && (u.erase || u.team != null) ? { team: u.team, brush: u.brush, erase: u.erase } : null;
     api.setGrid({ size: g.size, show: u.show, cells: g.cells, teams, focus: u.team, edit }, ch => this.setGrid(gr => {
@@ -1003,7 +1007,54 @@ class Component extends DCLogic {
     return { controls, cards };
   }
 
+  /* ---------- dispatch planner (IDS) ---------- */
+
+  setMapTab(t) {
+    try { localStorage.setItem('gx.mapTab', t); } catch (e) {}
+    this.setState({ mapTab: t }, () => { if (this.mapApi) setTimeout(() => this.mapApi && this.mapApi.resize(), 60); });
+  }
+  ensureDispatch() {
+    if (this.DSP || this.dspLoading) return;
+    this.dspLoading = true;
+    Promise.all([import('./gxdispatch.js'), import('./gxmap.js')]).then(([X, M]) => {
+      this.GM = this.GM || M;
+      this.DSP = X.createDispatch({ React, map: M, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
+      this.DSP.onLocate = i => { if (this.mapApi) this.mapApi.focus(i); if (this.mapFrameEl) this.mapFrameEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      this.forceUpdate();
+    }).catch(e => { this.dspError = e.message; this.forceUpdate(); }).finally(() => { this.dspLoading = false; });
+  }
+  syncPlan() {
+    const api = this.mapApi;
+    if (!api || !api.setPlan) return;
+    const on = this.state.view === 'map' && this.state.mapTab === 'dispatch' && this.DSP;
+    const layer = on ? this.DSP.layer() : null;
+    if (layer === this._planSent) return;
+    this._planSent = layer;
+    api.setPlan(layer);
+  }
+  modeRow(row) {
+    const e = React.createElement, tab = this.state.mapTab;
+    const b = (k, label) => e('button', { key: k, type: 'button', onClick: () => tab !== k && this.setMapTab(k),
+      style: { padding: '6px 14px', border: '1px solid ' + (tab === k ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: tab === k ? '#1F1F1D' : '#FFFFFF', color: tab === k ? '#FFFFFF' : '#1F1F1D', font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' } }, label);
+    return row('Mode', [b('loc', 'Locations & work areas'), b('dispatch', 'Dispatch planner')]);
+  }
+  dispatchView(m) {
+    const e = React.createElement, h = this.h.bind(this);
+    const full = this.state.mapFull, hideF = full && this.state.mapHideF;
+    const mapBox = e('div', { ref: this.mapRef, style: { height: full ? '100%' : this.state.w < 760 ? 460 : 560, border: '1px solid #DCDCD8', borderRadius: 3, background: '#EDEDEA', overflow: 'hidden', position: 'relative', zIndex: 0 } });
+    if (!this.DSP) {
+      this.ensureDispatch();
+      const row = (label, kids) => h('div', { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+        h('span', { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', minWidth: 78 }, label), ...kids);
+      return { kpis: [], cards: [this.card('Dispatch map', { span: 12, meta: this.dspError ? 'error' : 'loading planner',
+        body: this.mapFrame(h('div', { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }, this.modeRow(row),
+          h('span', { font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", color: this.dspError ? '#9B2C1F' : '#5F5F5B' }, this.dspError || 'Loading the dispatch planner…')), mapBox, full, hideF, "500 12px 'IBM Plex Sans',system-ui,sans-serif") })] };
+    }
+    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), modeRow: row => this.modeRow(row) });
+  }
+
   mapView(m) {
+    if (this.state.mapTab === 'dispatch') return this.dispatchView(m);
     const D = this.D, h = this.h.bind(this), F = this.state.mapF, e = React.createElement;
     const bi = this.mapBranchIdx(m), c = this.mapCounts(m, bi);
     const mapped = c.st[0] + c.st[1] + c.st[2], none = c.none[0] + c.none[1] + c.none[2];
@@ -1034,6 +1085,7 @@ class Component extends DCLogic {
       msg ? h('span', { font: sans, color: msg.ok ? '#2E6B34' : '#5F5F5B' }, msg.text) : null);
     const gv = this.gridView(m, bi, row, chip, sans, mono);
     const controls = h('div', { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 },
+      this.modeRow(row),
       search,
       ...this.admControls(m, row, chip, sans, mono),
       !this.state.mapShowF ? null : h('div', { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FAFAF8' },
@@ -2206,7 +2258,9 @@ class Component extends DCLogic {
       nav: views.map(v => ({ ...v, active: v.id === S.view, onClick: () => this.go(v.id) })),
       navEnter: this.navEnter, navLeave: this.navLeave,
       navX: S.navOpen ? 'translateX(0)' : 'translateX(-196px)', navShadow: S.navOpen ? '4px 0 18px rgba(0,0,0,0.10)' : 'none',
-      viewTitle: view.title, viewSub: view.sub,
+      ...(S.view === 'map' && S.mapTab === 'dispatch'
+        ? { viewTitle: 'Dispatch planner', viewSub: 'Open WWR work orders grouped into fixed grid cells (3 km by default), ranked by customer tier, job urgency and aging, then assigned to field teams by drive time and working hours. Dispatchers confirm with customers and adjust routes by drag and drop. Follows the branch filter; the period filter does not apply.' }
+        : { viewTitle: view.title, viewSub: view.sub }),
       viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),
       period: S.period, branch: S.branch,
       periodOptions: idx ? idx.periods.map(p => ({ key: p.key, label: p.label })) : [],
