@@ -41,7 +41,7 @@ function tokenize(s) {
   }
   return out;
 }
-const KW = new Set(['select', 'where', 'group', 'by', 'order', 'limit', 'offset', 'and', 'or', 'not', 'is', 'null', 'asc', 'desc', 'starts', 'ends', 'with', 'contains', 'matches', 'like', 'date', 'count', 'year', 'month', 'day', 'label', 'format', 'pivot', 'sum', 'min', 'max', 'avg']);
+const KW = new Set(['select', 'where', 'group', 'by', 'order', 'limit', 'offset', 'and', 'or', 'not', 'is', 'null', 'asc', 'desc', 'starts', 'ends', 'with', 'contains', 'matches', 'like', 'date', 'count', 'year', 'month', 'day', 'label', 'format', 'pivot', 'sum', 'min', 'max', 'avg', 'lower', 'upper']);
 
 function parseDate(v) {
   if (v == null || v === '') return null;
@@ -67,9 +67,9 @@ function compile(tq) {
     if (t.t === 'id') {
       const w = t.v.toLowerCase();
       if (w === 'date' && peek(1) && peek(1).t === 'str') { p += 2; return { k: 'date', v: parseDate(T[p - 1].v) }; }
-      if (['count', 'year', 'month', 'day', 'sum', 'min', 'max', 'avg'].includes(w) && peek(1) && peek(1).t === 'op' && peek(1).v === '(') {
+      if (['count', 'year', 'month', 'day', 'sum', 'min', 'max', 'avg', 'lower', 'upper'].includes(w) && peek(1) && peek(1).t === 'op' && peek(1).v === '(') {
         p += 2; const a = operand(); if (op(')')) p++;
-        return ['year', 'month', 'day'].includes(w) ? { k: 'fn', f: w, a } : { k: 'agg', f: w, a };
+        return ['year', 'month', 'day', 'lower', 'upper'].includes(w) ? { k: 'fn', f: w, a } : { k: 'agg', f: w, a };
       }
       if (/^[A-Z]{1,3}$/i.test(t.v) && !KW.has(w)) { p++; return { k: 'col', i: colIdx(t.v), name: t.v.toUpperCase() }; }
       if (w === 'true' || w === 'false') { p++; return { k: 'lit', v: w === 'true' }; }
@@ -116,6 +116,7 @@ const cell = (r, i) => { const v = r[i]; return v === undefined || v === '' ? nu
 function val(e, r) {
   if (e.k === 'lit' || e.k === 'date') return e.v;
   if (e.k === 'col') return cell(r, e.i);
+  if (e.k === 'fn' && (e.f === 'lower' || e.f === 'upper')) { const v = val(e.a, r); return v == null ? null : e.f === 'lower' ? String(v).toLowerCase() : String(v).toUpperCase(); }
   if (e.k === 'fn') { const d = parseDate(val(e.a, r)); if (!d) return null; return e.f === 'year' ? d.getFullYear() : e.f === 'month' ? d.getMonth() : d.getDate(); }
   return null;
 }
@@ -198,13 +199,13 @@ async function cachePut(k, v) { try { const db = await idb(); await new Promise(
 async function cachePrune(keep) { try { const db = await idb(); const st = db.transaction('files', 'readwrite').objectStore('files'); const r = st.getAllKeys(); r.onsuccess = () => r.result.forEach(k => { if (!keep.has(k)) st.delete(k); }); } catch (e) {} }
 
 /* Datasets in the Drive folder. Subfolders are matched by name (Tickets, Customers,
-   Work Orders); CSVs in the root folder are matched by file name (WWR / WCM / WO →
+   Work Orders, CSAT); CSVs in the root folder are matched by file name (WWR / WCM / WO →
    work orders, "customer" → customers, anything else → tickets). */
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 export function kindOf(name, inFolder) {
   const n = String(name || '').toLowerCase();
-  if (inFolder) return /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
-  return /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
+  if (inFolder) return /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
+  return /csat/.test(n) ? 'csat' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
 }
 // auth: { key } for an API key, or { token: async (renew) => accessToken } for Google sign-in.
 async function driveFetch(url, auth, retry = true) {
@@ -226,7 +227,7 @@ async function listDrive(folderId, apiKey) {
   return out;
 }
 export async function listSets(rootId, apiKey) {
-  const sets = { tickets: [], customers: [], wo: [] };
+  const sets = { tickets: [], customers: [], wo: [], csat: [] };
   const root = await listDrive(rootId, apiKey);
   const isCsv = f => !f.folder && /\.csv$/i.test(f.name);
   root.filter(isCsv).forEach(f => sets[kindOf(f.name, false)].push(f));
