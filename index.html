@@ -2262,7 +2262,7 @@ class Component extends DCLogic {
       ].filter(Boolean).join(' ') : '',
       kpis: built.kpis, cards: (built.cards || []).filter(Boolean),
       syncLine: sync ? 'Synced ' + sync.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Connecting…',
-      engineLine: D ? D.stats.queries + ' aggregate queries · ' + Math.round(D.stats.bytes / 1024) + ' KB transferred · computation pushed to Google Sheets' : '',
+      engineLine: D ? D.stats.queries + ' aggregate queries · ' + Math.round(D.stats.bytes / 1024) + ' KB transferred · ' + (D.csvInfo && D.csvInfo.text ? D.csvInfo.text : D.csvInfo && D.csvInfo.error ? 'Google Sheets (Drive CSV unavailable: ' + D.csvInfo.error + ')' : 'computation pushed to Google Sheets') : '',
     };
   }
 }

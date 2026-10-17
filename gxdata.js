@@ -23,7 +23,106 @@ export function setSheetUrl(url) {
 export function sheetId() { return SHEET_ID; }
 
 const cache = new Map();
-export function clearCache() { cache.clear(); }
+export function clearCache() { cache.clear(); setP = {}; setsP = null; csvFailed = {}; }
+
+/* ---------- CSV files in Google Drive ----------
+   Tickets, Customers and Work Orders are read from the CSV files in one Drive folder
+   (subfolders "Tickets", "Customers", "Work Orders", or root files named by type; see
+   gxcsv.js). Ticket and customer CSVs keep the column order of their sheet tab (A, B,
+   C …) with one header row; files are stacked in name order. Work orders use the WO
+   export layout (B WO Number, C Branch, F WO Status, H WO Created, L CID, T Priority,
+   Y Date of Work). Files are cached in the browser and only downloaded again when they
+   change. A dataset with no CSV files falls back to its sheet tab. */
+const CSV_FOLDER = '1N3gawXOuOObXgOZUOm-louDURLzfv3Xx';
+const DRIVE_API_KEY = '';
+// Google sign-in (OAuth client ID). When set, users sign in with their Google account and
+// the folder only needs to be shared with their emails (no public link). The API key is
+// then not used for the CSV files.
+const GOOGLE_CLIENT_ID = '591013784266-8p4uqdchkb4gk7gjcmfh4181g186d5fi.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const TOKEN_STORE = 'gx-google-token';
+let gTok = null, gTokP = null, gClient = null;
+try { const t = JSON.parse(sessionStorage.getItem(TOKEN_STORE) || 'null'); if (t && t.exp > Date.now() + 60000) gTok = t; } catch (e) {}
+function loadGis() {
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.onload = res; sc.onerror = () => rej(new Error('Could not load Google sign-in')); document.head.appendChild(sc); });
+}
+// The sign-in popup must open from a click, so show a button first.
+function googleToken(renew) {
+  if (!renew && gTok && gTok.exp > Date.now() + 60000) return Promise.resolve(gTok.t);
+  if (gTokP) return gTokP;
+  gTokP = (async () => {
+    await loadGis();
+    return await new Promise((resolve, reject) => {
+      const done = (t, err) => { wrap.remove(); gTokP = null; err ? reject(err) : resolve(t); };
+      gClient = google.accounts.oauth2.initTokenClient({ client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE, prompt: '',
+        callback: r => { if (r.error || !r.access_token) { msg.textContent = 'Sign-in failed (' + (r.error || 'no token') + '). Try again.'; return; }
+          gTok = { t: r.access_token, exp: Date.now() + (+r.expires_in || 3600) * 1000 };
+          try { sessionStorage.setItem(TOKEN_STORE, JSON.stringify(gTok)); } catch (e) {}
+          done(gTok.t); },
+        error_callback: e => { msg.textContent = e && e.type === 'popup_closed' ? 'Sign-in window closed. Try again.' : 'Sign-in could not open (' + ((e && e.type) || 'error') + ').'; } });
+      const wrap = document.createElement('div');
+      wrap.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.55);padding:16px;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif');
+      wrap.innerHTML = `
+        <div style="background:#fff;color:#0f172a;border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+          <div style="font-size:18px;font-weight:600;margin-bottom:6px">CX Intelligence</div>
+          <div style="font-size:14px;color:#475569;margin-bottom:18px">${renew ? 'Your Google session has expired. Sign in again to keep loading data.' : 'Sign in with your office Google account to load the ticket, customer and work order files.'}</div>
+          <button type="button" data-go style="width:100%;font-size:15px;font-weight:600;padding:11px;border:0;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer">Sign in with Google</button>
+          <button type="button" data-skip style="margin-top:8px;width:100%;font-size:13px;padding:8px;border:0;background:none;color:#475569;cursor:pointer">Skip \u2014 use Google Sheet data</button>
+          <div data-msg style="margin-top:10px;font-size:13px;color:#b91c1c;min-height:1em"></div>
+        </div>`;
+      const msg = wrap.querySelector('[data-msg]');
+      wrap.querySelector('[data-go]').addEventListener('click', () => { msg.textContent = ''; gClient.requestAccessToken(); });
+      wrap.querySelector('[data-skip]').addEventListener('click', () => done(null, new Error('Google sign-in skipped')));
+      document.body.appendChild(wrap);
+    });
+  })();
+  return gTokP;
+}
+export function googleSignOut() {
+  if (gTok && window.google && google.accounts) try { google.accounts.oauth2.revoke(gTok.t, () => {}); } catch (e) {}
+  gTok = null; try { sessionStorage.removeItem(TOKEN_STORE); } catch (e) {}
+}
+try { if (/[?&]logout\b/.test(location.search)) googleSignOut(); } catch (e) {}
+const DRIVE_AUTH = GOOGLE_CLIENT_ID ? { token: googleToken } : { key: DRIVE_API_KEY };
+const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', wo: 'wo' };
+const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders' };
+let CSV = null, setsP = null, setP = {}, csvFailed = {};
+export const csvInfo = { on: !!CSV_FOLDER, folder: CSV_FOLDER, files: 0, rows: 0, phase: '', error: null, sets: {}, text: '' };
+function csvSummary() {
+  const parts = Object.entries(csvInfo.sets).filter(([, v]) => v.rows != null).map(([k, v]) => SET_LABEL[k] + ' ' + v.files + ' files (' + v.rows.toLocaleString('en-US') + ' rows)');
+  csvInfo.text = parts.length ? 'Drive CSV: ' + parts.join(' \u00b7 ') : '';
+  const t = csvInfo.sets.tickets; if (t && t.rows != null) { csvInfo.files = t.files; csvInfo.rows = t.rows; csvInfo.phase = 'ready'; }
+}
+function driveSets() {
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo)); return s; })()
+    .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
+  return setsP;
+}
+// Table for one dataset, or null when the folder has no files for it.
+function csvSet(name) {
+  if (!setP[name]) setP[name] = (async () => {
+    const sets = await driveSets(), files = sets[name];
+    if (!files.length) return null;
+    csvInfo.sets[name] = { files: 0, total: files.length, rows: null };
+    const t = await CSV.loadSet(files, DRIVE_AUTH, (d, n) => { csvInfo.sets[name].files = d; csvInfo.phase = 'downloaded ' + d + '/' + n + ' ' + SET_LABEL[name]; });
+    csvInfo.sets[name] = { files: files.length, rows: t.rows.length };
+    csvSummary();
+    return t;
+  })().catch(e => { delete setP[name]; csvInfo.error = e.message; throw e; });
+  return setP[name];
+}
+// Work-order CSV table, or null (no files / unreachable) so callers use ticket column AC.
+export async function woTable() {
+  if (!CSV_FOLDER || csvFailed.wo) return null;
+  try { return await csvSet('wo'); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }
+}
+export async function woQuery(tq) {
+  const t = await woTable(); if (!t) return null;
+  const key = 'wo|' + tq; if (cache.has(key)) return cache.get(key);
+  stats.queries++;
+  const out = CSV.runQuery(t, tq); cache.set(key, out); return out;
+}
 export const stats = { queries: 0, bytes: 0, lastSync: null };
 
 /* ---------- secure access via Apps Script proxy ----------
@@ -89,6 +188,18 @@ async function fetchProxy(gid, tq, retry = true) {
 export async function gviz(gid, tq) {
   const key = SHEET_ID + '|' + gid + '|' + tq;
   if (cache.has(key)) return cache.get(key);
+  const setName = SET_OF[String(gid)];
+  if (CSV_FOLDER && setName && setName !== 'wo' && !csvFailed[setName]) {
+    let t = null;
+    try { t = await csvSet(setName); }
+    catch (e) { csvFailed[setName] = true; console.warn(setName + ' CSV unavailable, reading the sheet instead:', e.message); }
+    if (t) {
+      stats.queries++;
+      const out = CSV.runQuery(t, tq);
+      cache.set(key, out);
+      return out;
+    }
+  }
   let text;
   if (useProxy()) {
     text = await fetchProxy(gid, tq);
@@ -195,6 +306,19 @@ export function ticketWhere(period, branch, extra) {
   return c.length ? ' where ' + c.join(' and ') : '';
 }
 const W = (period, branch, extra) => ticketWhere(period, branch, extra);
+// Work-order CSV filters: period by Date of Work (Y), or WO Created (H) when not yet worked.
+const WO_LIVE = "F <> 'Cancelled' and F <> 'Canceled'";
+function woWhere(period, branch, extra) {
+  const c = [];
+  if (period && period !== 'all') {
+    const [mm, yyyy] = period.split('/'), re = `'^[0-9]{1,2}[/.-]0?${+mm}[/.-]${yyyy}( .*)?$'`;
+    c.push(`(Y matches ${re} or ((Y is null or Y = '-') and H matches ${re}))`);
+  }
+  if (branch && branch !== 'all') c.push(`C = '${esc(branch)}'`);
+  if (extra) c.push(extra);
+  return c.length ? ' where ' + c.join(' and ') : '';
+}
+async function woCount(where) { const r = await woQuery('select count(B)' + where); return r ? num(r.rows[0] && r.rows[0][0]) : null; }
 
 async function count(where) {
   const r = await gviz(TABS.tickets, 'select count(B)' + where);
@@ -315,17 +439,27 @@ export async function loadEscalation(period, branch) {
       count(W(period, branch, `AC starts with '${t.code}' and ${sentCtso}`)),
     ]),
   ]);
+  // WWR / WCM come from the work-order CSV files when present (more complete than ticket column AC).
+  let woN = wo, woSrc = 'tickets';
+  if (await woTable()) {
+    woSrc = 'wo';
+    for (let i = 0; i < WO_TYPES.length; i++) {
+      const c = WO_TYPES[i].code; if (c !== 'WWR' && c !== 'WCM') continue;
+      const [v, via] = await Promise.all([woCount(woWhere(period, branch, `B starts with '${c}' and ${WO_LIVE}`)), woCount(woWhere(period, branch, `B starts with '${c}' and ${WO_LIVE} and J is not null and J <> '-'`))]);
+      woN += v - rest[i * 2]; rest[i * 2] = v; rest[i * 2 + 1] = via;
+    }
+  }
   const woTypes = WO_TYPES.map((t, i) => {
     const value = rest[i * 2], viaCtso = rest[i * 2 + 1];
-    return { ...t, value, viaCtso, direct: value - viaCtso, share: pct(value, wo) };
+    return { ...t, value, viaCtso, direct: value - viaCtso, share: pct(value, woN), src: woSrc === 'wo' && (t.code === 'WWR' || t.code === 'WCM') ? 'wo' : 'tickets' };
   });
   const [ctsoAgents, woByCategory] = await Promise.all([
     gviz(TABS.tickets, `select N, count(B)${W(period, branch, namedCtso)} group by N order by count(B) desc limit 15`),
     gviz(TABS.tickets, `select P, count(B)${W(period, branch, hasWO)} group by P order by count(B) desc limit 10`),
   ]);
   return {
-    total, sent, named, unassigned: sent - named, wo,
-    sentShare: pct(sent, total), namedShare: pct(named, total), woShare: pct(wo, total),
+    total, sent, named, unassigned: sent - named, wo: woN, woSrc,
+    sentShare: pct(sent, total), namedShare: pct(named, total), woShare: pct(woN, total),
     woTypes,
     ctsoAgents: ctsoAgents.rows.map(r => ({ key: String(r[0]), value: num(r[1]) })),
     woByCategory: woByCategory.rows.filter(r => r[0]).map(r => ({ key: String(r[0]), value: num(r[1]) })),
@@ -434,7 +568,20 @@ export async function loadRepeat(period, branch) {
   const code = v => String(v || '').trim().slice(0, 3).toUpperCase();
   const byCid = new Map();
   let woTotal = 0;
-  live.rows.forEach(([f, ac]) => {
+  // WWR / WCM from the work-order CSV files when present; WGM stays on ticket column AC.
+  const fromWo = !!(await woTable());
+  let liveRows = live.rows, killedRows = killed.rows;
+  if (fromWo) {
+    const isWo = "(B starts with 'WWR' or B starts with 'WCM') and L is not null";
+    const [wl, wk] = await Promise.all([
+      woQuery(`select L, B${woWhere(period, branch, isWo + ' and ' + WO_LIVE)}`),
+      woQuery(`select B${woWhere(period, branch, isWo + " and (F = 'Cancelled' or F = 'Canceled')")}`),
+    ]);
+    const cidOf = v => String(v || '').replace(/\D/g, '');
+    liveRows = live.rows.filter(r => code(r[1]) === 'WGM').concat(wl.rows.map(([l, b]) => [cidOf(l), b]));
+    killedRows = killed.rows.filter(r => code(r[0]) === 'WGM').concat(wk.rows);
+  }
+  liveRows.forEach(([f, ac]) => {
     const c = code(ac);
     if (!REPEAT_WO.includes(c)) return;
     woTotal++;
@@ -443,7 +590,7 @@ export async function loadRepeat(period, branch) {
     e.value++; e[c]++;
     byCid.set(cid, e);
   });
-  const cancelled = killed.rows.filter(r => REPEAT_WO.includes(code(r[0]))).length;
+  const cancelled = killedRows.filter(r => REPEAT_WO.includes(code(r[0]))).length;
   const list = [...byCid.values()]
     .map(e => ({ ...e, mix: REPEAT_WO.filter(c => e[c]).map(c => c + '×' + e[c]).join('  ') }))
     .sort((a, b) => b.value - a.value);
@@ -469,7 +616,7 @@ export async function loadRepeat(period, branch) {
     uniq, multi, multiShare: pct(multi, uniq), three, threeShare: pct(three, uniq),
     five, fiveShare: pct(five, uniq),
     woTotal, cancelled, repeatWo, repeatWoShare: pct(repeatWo, woTotal),
-    byType, mixedFault,
+    byType, mixedFault, fromWo,
     top: list.slice(0, 12), bands,
   };
 }
@@ -1094,6 +1241,7 @@ export const WD_STATUS = [
   { key: 'Closed', color: '#6B6B66' },
 ];
 async function loadWiredown() {
+  if (await woTable()) return loadWiredownCsv();
   const r = await gviz(TABS.tickets, "select F, AC, AD, D, G, P, Q where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
   const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress/.test(v) ? 1 : 0; };
   const out = { WWR: new Map(), WCM: new Map(), events: [] };
@@ -1107,6 +1255,25 @@ async function loadWiredown() {
     if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: ca || '', prob: pb || '' }); return; }
     e.n++;
     if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: ca || '', prob: pb || '' });
+  });
+  return out;
+}
+
+// Same shape as loadWiredown, from the work-order CSV files. t = WO Created (H) for
+// aging; events use Date of Work (Y), falling back to WO Created.
+async function loadWiredownCsv() {
+  const r = await woQuery("select L, B, F, H, T, R, S, Y where (B starts with 'WWR' or B starts with 'WCM') and " + WO_LIVE + " and L is not null");
+  const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress|started|checked|pending/.test(v) ? 1 : 0; };
+  const out = { WWR: new Map(), WCM: new Map(), events: [], src: 'wo' };
+  r.rows.forEach(([l, wo, st, cr, pr, an, so, dw]) => {
+    const k = String(l).replace(/\D/g, ''); if (!k) return;
+    const ty = String(wo || '').slice(0, 3).toUpperCase(), by = out[ty]; if (!by) return;
+    const t = (parseDMY(cr) || new Date(0)).getTime(), s = state(st);
+    const ev = parseDMY(dw); out.events.push([k, ty === 'WWR' ? 0 : 1, ev ? ev.getTime() : t]);
+    const e = by.get(k);
+    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: an || '', prob: so || '' }); return; }
+    e.n++;
+    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: an || '', prob: so || '' });
   });
   return out;
 }
