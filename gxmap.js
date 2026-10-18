@@ -386,20 +386,25 @@ export async function createMap(el, data, opts) {
       if (k === planKey) return;
       planKey = k; planLayer.clearLayers();
       if (!p) return;
-      const all = [[p.base.lat, p.base.lng]];
-      p.cells.forEach(([key, n]) => {
-        const q = key.split(',');
-        L.rectangle(cellBounds(+q[0], +q[1], p.size), { color: '#B08A1E', weight: 1, opacity: 0.7, fillColor: '#E8B400', fillOpacity: Math.min(0.32, 0.08 + n * 0.03), interactive: false }).addTo(planLayer);
+      const BS = p.bases || [p.base], all = BS.map(b => [b.lat, b.lng]);
+      p.cells.forEach(c => {
+        const q = c.key.split(','), b = cellBounds(+q[0], +q[1], p.size);
+        L.rectangle(b, { color: c.color, weight: 1.2, opacity: 0.9 * Math.min(1, (p.cellA ?? 0.36) * 2.5), fillColor: c.color, fillOpacity: p.cellA ?? 0.36 })
+          .bindTooltip(c.tip.map(esc).join('<br>'), { sticky: true, direction: 'top' }).addTo(planLayer);
+        if (c.rank <= 40) L.marker([(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2], { interactive: false, zIndexOffset: 400, icon: L.divIcon({ className: '', iconSize: [34, 16], iconAnchor: [17, 8],
+          html: '<div style="text-align:center;font:600 10.5px \'IBM Plex Mono\',ui-monospace,monospace;color:#FFFFFF;background:' + c.color + ';border:1px solid #FFFFFF;border-radius:3px;line-height:14px">#' + c.rank + '</div>' }) }).addTo(planLayer);
       });
       p.teams.forEach(t => {
-        const ll = [[p.base.lat, p.base.lng]].concat(t.pts.map(x => [x.lat, x.lng]));
-        L.polyline(ll, { color: '#FFFFFF', weight: 6, opacity: 0.85, interactive: false }).addTo(planLayer);
-        L.polyline(ll, { color: t.color, weight: 3, opacity: 0.95, interactive: false }).addTo(planLayer);
+        const ll = t.line;
+        if (ll) {
+          L.polyline(ll, { color: '#FFFFFF', weight: 6, opacity: 0.85 * (p.routeA ?? 1), interactive: false }).addTo(planLayer);
+          L.polyline(ll, { color: t.color, weight: 3, opacity: 0.95 * (p.routeA ?? 1), interactive: false }).addTo(planLayer);
+        }
         t.pts.forEach((x, n) => { all.push([x.lat, x.lng]); L.marker([x.lat, x.lng], { icon: woIcon(n + 1, t.color), zIndexOffset: 600 }).bindTooltip(esc(x.title), { direction: 'top', offset: [0, -10] }).addTo(planLayer); });
       });
       p.next.forEach(x => { all.push([x.lat, x.lng]); L.circleMarker([x.lat, x.lng], { radius: 6, color: '#D9480F', weight: 2.5, fillColor: '#FFFFFF', fillOpacity: 1 }).bindTooltip(esc(x.title), { direction: 'top' }).addTo(planLayer); });
-      L.marker([p.base.lat, p.base.lng], { zIndexOffset: 700, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div style="width:16px;height:16px;box-sizing:border-box;background:#1F1F1D;border:2px solid #E8B400;border-radius:2px"></div>' }) })
-        .bindTooltip(esc(p.base.title), { direction: 'top', offset: [0, -8] }).addTo(planLayer);
+      BS.forEach(bb => L.marker([bb.lat, bb.lng], { zIndexOffset: 700, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div style="width:16px;height:16px;box-sizing:border-box;background:#1F1F1D;border:2px solid #E8B400;border-radius:2px"></div>' }) })
+        .bindTooltip(esc(bb.title), { direction: 'top', offset: [0, -8] }).addTo(planLayer));
       if (p.fit && all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 15 });
     },
     panTo(lat, lng, z) { map.setView([lat, lng], Math.max(map.getZoom(), z || 15)); },

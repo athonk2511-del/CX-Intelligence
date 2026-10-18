@@ -51,14 +51,31 @@
       <div style="position:absolute;top:0;right:0;bottom:0;width:14px;display:flex;align-items:center;justify-content:center;background:#FFFFFF;border-left:1px solid #DCDCD8;cursor:pointer">
         <span style="writing-mode:vertical-rl;font:600 9.5px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.18em;color:#5F5F5B">MENU</span>
       </div>
-      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="10">
-        <button type="button" onClick="{{ n.onClick }}" style="position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 13px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
-          <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}">
-            <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="8">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <button type="button" onClick="{{ n.onClick }}" style="position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 13px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
+            <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}">
+              <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+            </sc-if>
+            <span style="position:relative;flex:0 0 18px;font:400 10.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.tag }}</span>
+            <span style="position:relative;flex:1;min-width:0;line-height:1.3;overflow-wrap:break-word">{{ n.label }}</span>
+            <sc-if value="{{ n.isGroup }}" hint-placeholder-val="{{ false }}">
+              <span style="position:relative;flex:none;font:400 11px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.chev }}</span>
+            </sc-if>
+          </button>
+          <sc-if value="{{ n.open }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:2px;margin-left:19px;padding-left:9px;border-left:1px solid #DCDCD8">
+              <sc-for list="{{ n.kids }}" as="c" hint-placeholder-count="2">
+                <button type="button" onClick="{{ c.onClick }}" style="position:relative;display:flex;align-items:center;width:100%;padding:6px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
+                  <sc-if value="{{ c.active }}" hint-placeholder-val="{{ false }}">
+                    <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+                  </sc-if>
+                  <span style="position:relative;flex:1;min-width:0;line-height:1.3;overflow-wrap:break-word">{{ c.label }}</span>
+                </button>
+              </sc-for>
+            </div>
           </sc-if>
-          <span style="position:relative;flex:0 0 18px;font:400 10.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.tag }}</span>
-          <span style="position:relative;flex:1;min-width:0;line-height:1.3;overflow-wrap:break-word">{{ n.label }}</span>
-        </button>
+        </div>
       </sc-for>
       <div style="margin-top:auto;padding:10px;font:400 11px/1.6 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">Reads live from the operations Google Sheet. No local cache.</div>
     </aside>
@@ -208,7 +225,7 @@ class Component extends DCLogic {
   }
 
   key(view) {
-    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map' };
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map' };
     return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
   }
 
@@ -233,6 +250,7 @@ class Component extends DCLogic {
       intracity: () => D.loadGrowth('intracity'),
       map: () => D.loadMap(),
       dispatch: () => D.loadMap(),
+      dispatchWcm: () => D.loadMap(),
     };
     try {
       const seg = this.seg(view);
@@ -443,7 +461,7 @@ class Component extends DCLogic {
   syncMap() {
     const m = this.state.data.map;
     if (!this.mapApi || !m) return;
-    const bi = this.mapBranchIdx(m), dsp = this.state.view === 'dispatch';
+    const bi = this.mapBranchIdx(m), dsp = this.isDsp();
     // Dispatch planner: keep customers as a faint backdrop so the routes read clearly.
     const F = dsp ? { ...this.state.mapF, display: 'points', ptA: Math.min(this.state.mapF.ptA, 0.25), wdOnly: false } : this.state.mapF;
     const sig = JSON.stringify([F, bi]);
@@ -707,7 +725,7 @@ class Component extends DCLogic {
   syncGrid() {
     const api = this.mapApi;
     if (!api || !api.setGrid) return;
-    const g = this.state.grid, dsp = this.state.view === 'dispatch', u = dsp ? { ...this.state.gridUI, show: false, edit: false } : this.state.gridUI;
+    const g = this.state.grid, dsp = this.isDsp(), u = dsp ? { ...this.state.gridUI, show: false, edit: false } : this.state.gridUI;
     if (this._gSent === g && this._uSent === this.state.gridUI && this._tSent === dsp) return;
     this._gSent = g; this._uSent = this.state.gridUI; this._tSent = dsp;
     const teams = {}; g.teams.forEach(t => { teams[t.id] = t; });
@@ -1010,20 +1028,26 @@ class Component extends DCLogic {
 
   /* ---------- dispatch planner (IDS) ---------- */
 
+  isDsp(v) { v = v || this.state.view; return v === 'dispatch' || v === 'dispatchWcm'; }
+  get DSP() { return this.DSPS ? this.DSPS[this.state.view === 'dispatchWcm' ? 'WCM' : 'WWR'] : null; }
   ensureDispatch() {
-    if (this.DSP || this.dspLoading) return;
+    if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
     Promise.all([import('./gxdispatch.js'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
-      this.DSP = X.createDispatch({ React, map: M, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
-      this.DSP.onLocate = i => { if (this.mapApi) this.mapApi.focus(i); if (this.mapFrameEl) this.mapFrameEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      const mk = type => {
+        const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
+        d.onLocate = i => { if (this.mapApi) this.mapApi.focus(i); if (this.mapFrameEl) this.mapFrameEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+        return d;
+      };
+      this.DSPS = { WWR: mk('WWR'), WCM: mk('WCM') };
       this.forceUpdate();
     }).catch(e => { this.dspError = e.message; this.forceUpdate(); }).finally(() => { this.dspLoading = false; });
   }
   syncPlan() {
     const api = this.mapApi;
     if (!api || !api.setPlan) return;
-    const on = this.state.view === 'dispatch' && this.DSP;
+    const on = this.isDsp() && this.DSP;
     const layer = on ? this.DSP.layer() : null;
     if (layer === this._planSent) return;
     this._planSent = layer;
@@ -1076,7 +1100,6 @@ class Component extends DCLogic {
       search,
       ...this.admControls(m, row, chip, sans, mono),
       !this.state.mapShowF ? null : h('div', { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FAFAF8' },
-      ...this.trackControls(row, chip, sans, mono),
       row('Display', [
         chip('dp', F.display === 'points', 'Points', null, null, () => this.setMapF({ display: 'points' })),
         chip('dh', F.display === 'heat', 'Heatmap', null, null, () => this.setMapF({ display: 'heat' })),
@@ -1135,7 +1158,6 @@ class Component extends DCLogic {
       }),
       this.admCard(m),
       ...gv.cards,
-      ...this.trackCards(),
       this.card('Package by status', {
         span: 12, meta: bi >= 0 ? m.branches[bi] : 'all branches',
         body: this.table(['Package', 'Active', 'Blocked', 'Terminated', 'Total'],
@@ -1163,9 +1185,11 @@ class Component extends DCLogic {
 
   syncTrack() {
     const v = this.state.view;
-    if (v === 'map' || v === 'settings' || v === 'dispatch') this.ensureTrack();
+    if (v === 'settings' || this.isDsp(v)) this.ensureTrack();
     const T = this.track, api = this.mapApi, tr = this.state.trk;
-    if (T && api && v === 'dispatch') { api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: null, show: true, onClick: () => {} }); return; }
+    if (api && v === 'map') { if (this._trkOnMap !== false) { api.setTechs([], { colors: {}, sel: null, show: false, onClick: () => {} }); api.showRoute(null); api.setReplay(null); this._trkOnMap = false; } return; }
+    this._trkOnMap = true;
+    if (T && api && this.isDsp(v)) { api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: null, show: true, onClick: () => {} }); return; }
     if (!T || !api || v !== 'map') return;
     api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: tr.sel, show: tr.show, onClick: id => this.selectTech(id) });
     const dd = tr.sel != null ? T.dayData(tr.day) : null;
@@ -2185,8 +2209,9 @@ class Component extends DCLogic {
       { id: 'growth', label: 'Growth & churn', tag: '05', kicker: 'Customer base', title: 'Growth and churn by city', sub: 'Account acquisition and loss across Bali, Malang, Balikpapan, Samarinda and Jakarta, with real churn separated from administrative account swaps. Retail customers only; Intracity price plans are reported on their own page.' },
       { id: 'intracity', label: 'Intracity churn', tag: '06', kicker: 'Intracity', title: 'Intracity growth and churn', sub: 'Accounts on Intracity price plans, reported apart from the retail base. Same method as the retail page: activations, terminations, blocked accounts and real churn.' },
       { id: 'map', label: 'Customer map', tag: '07', kicker: 'Customer base', title: 'Customer locations', sub: 'Every account with coordinates in the customer sheet, plotted on OpenStreetMap by current status and package, with field technicians from Traccar. Follows the branch filter; the period filter does not apply.' },
-      { id: 'dispatch', label: 'Intelligence Dispatch System', tag: '08', kicker: 'Field operations', title: 'Intelligence Dispatch System', sub: 'Open WWR work orders grouped into fixed grid cells (3 km by default), ranked by ticket priority, job urgency and aging, then assigned to field teams by drive time and working hours. Dispatchers confirm with customers and adjust routes by drag and drop. Follows the branch filter; the period filter does not apply.' },
-      { id: 'settings', label: 'Tracking setup', tag: '09', kicker: 'Field team', title: 'Tracking setup', sub: 'Connect the dashboard to your own Traccar server. Settings are saved in this browser; demo data runs until a server is connected.' },
+      { id: 'dispatch', label: 'IDS · WWR wiredown', tag: '08', kicker: 'Intelligence Dispatch System', title: 'IDS · WWR wiredown', sub: 'Open WWR work orders grouped into fixed grid cells. Each cell is coloured and ranked by the total priority score of its jobs, with the number of teams it needs and how long the work takes. Teams go to the highest-scoring cells first, on road drive times. Follows the branch filter; the period filter does not apply.' },
+      { id: 'dispatchWcm', label: 'IDS · WCM maintenance', tag: '09', kicker: 'Intelligence Dispatch System', title: 'IDS · WCM maintenance', sub: 'Open WCM work orders, planned separately from wiredown with their own teams, grid priorities and board. Follows the branch filter; the period filter does not apply.' },
+      { id: 'settings', label: 'Tracking setup', tag: '10', kicker: 'Field team', title: 'Tracking setup', sub: 'Connect the dashboard to your own Traccar server. Settings are saved in this browser; demo data runs until a server is connected.' },
     ];
     const view = views.find(v => v.id === S.view) || views[0];
     const key = this.key(S.view);
@@ -2218,6 +2243,7 @@ class Component extends DCLogic {
             intracity: () => this.growthView(payload, 'intracity'),
             map: () => this.mapView(payload),
             dispatch: () => this.dispatchView(payload),
+            dispatchWcm: () => this.dispatchView(payload),
             settings: () => this.settingsView(),
           })[S.view]();
           const at = { overview: 2, tickets: 1, csat: 2 }[S.view];
@@ -2245,7 +2271,18 @@ class Component extends DCLogic {
     const periodLabel = S.period === 'all' ? 'All time' : ((idx && idx.periods.find(p => p.key === S.period) || {}).label || S.period);
     const sync = D && D.stats.lastSync ? D.stats.lastSync : null;
     return {
-      nav: views.map(v => ({ ...v, active: v.id === S.view, onClick: () => this.go(v.id) })),
+      nav: (() => {
+        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchWcm', 'WCM · maintenance']]], ['settings']];
+        const by = id => views.find(v => v.id === id), og = S.navGroups || {};
+        return G.map((g, i) => {
+          const tag = String(i + 1).padStart(2, '0');
+          if (!g[1]) { const v = by(g[0]); return { tag, label: v.label, active: v.id === S.view, isGroup: false, open: false, chev: '', kids: [], onClick: () => this.go(v.id) }; }
+          const hasActive = g[1].some(c => c[0] === S.view), open = og[g[0]] != null ? og[g[0]] : hasActive;
+          return { tag, label: g[0], active: hasActive && !open, isGroup: true, open, chev: open ? '▾' : '▸',
+            onClick: () => this.setState(s => ({ navGroups: { ...(s.navGroups || {}), [g[0]]: !open } })),
+            kids: g[1].map(([id, label]) => ({ label, active: id === S.view, onClick: () => this.go(id) })) };
+        });
+      })(),
       navEnter: this.navEnter, navLeave: this.navLeave,
       navX: S.navOpen ? 'translateX(0)' : 'translateX(-196px)', navShadow: S.navOpen ? '4px 0 18px rgba(0,0,0,0.10)' : 'none',
       viewTitle: view.title, viewSub: view.sub,

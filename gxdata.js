@@ -33,7 +33,7 @@ export function clearCache() { cache.clear(); setP = {}; setsP = null; csvFailed
    export layout (B WO Number, C Branch, F WO Status, H WO Created, L CID, T Priority,
    Y Date of Work). Files are cached in the browser and only downloaded again when they
    change. A dataset with no CSV files falls back to its sheet tab. */
-const CSV_FOLDER = '1N3gawXOuOObXgOZUOm-louDURLzfv3Xx';
+const CSV_FOLDER = '1XPOvL9Tcqsq7JKKd76m_tKz7pNBPyv3g';
 const DRIVE_API_KEY = '';
 // Google sign-in (OAuth client ID). When set, users sign in with their Google account and
 // the folder only needs to be shared with their emails (no public link). The API key is
@@ -85,8 +85,8 @@ export function googleSignOut() {
 }
 try { if (/[?&]logout\b/.test(location.search)) googleSignOut(); } catch (e) {}
 const DRIVE_AUTH = GOOGLE_CLIENT_ID ? { token: googleToken } : { key: DRIVE_API_KEY };
-const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', wo: 'wo' };
-const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders' };
+const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', [TABS.csat]: 'csat', wo: 'wo' };
+const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders', csat: 'CSAT' };
 let CSV = null, setsP = null, setP = {}, csvFailed = {};
 export const csvInfo = { on: !!CSV_FOLDER, folder: CSV_FOLDER, files: 0, rows: 0, phase: '', error: null, sets: {}, text: '' };
 function csvSummary() {
@@ -95,7 +95,7 @@ function csvSummary() {
   const t = csvInfo.sets.tickets; if (t && t.rows != null) { csvInfo.files = t.files; csvInfo.rows = t.rows; csvInfo.phase = 'ready'; }
 }
 function driveSets() {
-  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo)); return s; })()
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat)); return s; })()
     .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
   return setsP;
 }
