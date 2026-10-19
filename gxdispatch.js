@@ -1,7 +1,7 @@
 // GlobalXtreme BI — IDS (Intelligence Dispatch System). One instance per work-order type: WWR and WCM run as separate pages.
-// Grid first: open jobs (latest WO per CID, still open) are grouped into fixed grid cells. A cell's priority is the sum of
-// its job scores, so one VIP turns a quiet cell dark red. Teams are sent to cells in priority order, as many as each cell
-// needs to finish inside working hours. Drive times come from an OSRM road router; straight-line estimates are only a
+// Grid first: open jobs (latest WO per CID, still open) are grouped into fixed grid cells. Cells are joined into anchor blocks
+// (cell + 8 neighbours) once a block holds enough hours of work; every block gets at least one anchor team, most urgent SLA
+// first, then as many as it needs. Free teams become floaters for sparse cells. Jobs close to SLA breach always go first. Drive times come from an OSRM road router; straight-line estimates are only a
 // fallback while road times load or where the router has no answer.
 
 const SANS = "500 12px 'IBM Plex Sans',system-ui,sans-serif";
@@ -46,6 +46,7 @@ const DEF = {
   teams: 10, gridKm: 3, speed: 22, road: 1.3, traffic: 1.2, roadOn: true, osrm: 'https://router.project-osrm.org',
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, start: 540, cut: 960, end: 1020, ot: false, maxAge: 30, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
+  anchorH: 4, sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -54,6 +55,7 @@ const dh = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : M
 const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 const fmtN = v => Math.round(v).toLocaleString('en-US');
 const nf1 = v => (Math.round(v * 10) / 10).toFixed(1);
+const dd = m => m < 2880 ? dh(m) : Math.floor(m / 1440) + ' d';
 const tierOf = raw => { const v = String(raw || '').toLowerCase(); return /vip/.test(v) ? 'VIP' : /highest/.test(v) ? 'Highest' : /high/.test(v) ? 'High' : /low/.test(v) ? 'Low' : /normal|medium|standard/.test(v) ? 'Normal' : null; };
 // Job type from the ticket's category and problem text. Anything not recognised is Low/Unknown until the problem is known.
 const catOf = (a, b) => { const v = (String(a || '') + ' ' + String(b || '')).toLowerCase();
@@ -225,6 +227,27 @@ class Dispatch {
   cmp = (a, b) => this.score(b) - this.score(a) || CATS[b.cat].s - CATS[a.cat].s || TIERS[b.tier].r - TIERS[a.tier].r || a.t - b.t;
   dur(j) { return +this.st.cfg.dur[j.cat] || CATS[j.cat].d; }
 
+  /* ---------- SLA ---------- */
+  // SLA clock: from WO Created until WO Closed (closed WO leave the list), counted only inside working hours (start–end)
+  // and paused while the customer asks to reschedule. VIP slaVip hours, everything else sla hours. "Soon" = nearH h or less left.
+  slaMin(j) { const c = this.st.cfg; return (j.tier === 'VIP' ? c.slaVip : c.sla) * 60; }
+  bizMin(a, b) {
+    if (!(b > a)) return 0;
+    const c = this.st.cfg, W = Math.max(0, c.end - c.start), cl = m => Math.min(c.end, Math.max(c.start, m));
+    const A = new Date(a), Bd = new Date(b), ma = A.getHours() * 60 + A.getMinutes() + A.getSeconds() / 60, mb = Bd.getHours() * 60 + Bd.getMinutes() + Bd.getSeconds() / 60;
+    const days = Math.round((new Date(Bd.getFullYear(), Bd.getMonth(), Bd.getDate()) - new Date(A.getFullYear(), A.getMonth(), A.getDate())) / 864e5);
+    return days === 0 ? Math.max(0, cl(mb) - cl(ma)) : (c.end - cl(ma)) + (days - 1) * W + (cl(mb) - c.start);
+  }
+  rem(j) {
+    if (!(j.t > 0)) return Infinity;
+    const now = Date.now(), pz = ((this.st.meta[j.key] || {}).pz) || [];
+    const used = this.bizMin(j.t, now) - pz.reduce((s, p) => s + this.bizMin(Math.max(p.a, j.t), p.b || now), 0);
+    return this.slaMin(j) - Math.max(0, used);
+  }
+  soon(j) { const r = this.rem(j); return r >= 0 && r <= this.st.cfg.nearH * 60; }
+  breached(j) { return this.rem(j) < 0; }
+  urg = (a, b) => (this.soon(b) - this.soon(a)) || (this.soon(a) ? this.rem(a) - this.rem(b) : 0) || this.cmp(a, b);
+
   /* ---------- drive time ---------- */
   roadHit(a, b) { return this.st.cfg.roadOn ? this.road.get(a, b) : null; }
   travel(a, b) {
@@ -332,14 +355,35 @@ class Dispatch {
     }
     return r;
   }
-  needs(B) {
-    if (this._need && this._need.J === this._J && this._need.rv === this.road.ver && this._need.cv === this.cfgSig()) return this._need.v;
-    const v = new Map();
-    this.group(this._J.list).forEach(g => { const jobs = g.jobs.slice().sort(this.cmp); v.set(g.key, this.needOf(jobs, this._BS[this.nearBase(jobs[0])] || B)); });
-    this._need = { J: this._J, rv: this.road.ver, cv: this.cfgSig(), v };
+  // Anchor blocks: the cell whose 3×3 block (cell + 8 neighbours) holds the most work becomes a centre when the block has at
+  // least anchorH hours. Its block is taken out and the search repeats. Cells left over are sparse: floater work.
+  // Blocks are ordered by the job closest to SLA breach (still savable), then breached count, then load.
+  clusters(list, B) {
+    const cfg = this.st.cfg, G = this.group(list), by = new Map(G.map(g => [g.key, g])), left = new Set(by.keys()), out = [];
+    const work = new Map(G.map(g => [g.key, g.jobs.reduce((a, j) => a + this.dur(j), 0)]));
+    const blk = k => { const [c, r] = String(k).split(',').map(Number), a = []; for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) { const q = (c + x) + ',' + (r + y); if (left.has(q)) a.push(q); } return a; };
+    while (left.size) {
+      let best = null;
+      left.forEach(k => { const cs = blk(k), w = cs.reduce((a, q) => a + work.get(q), 0); if (!best || w > best.w || (w === best.w && by.get(k).jobs.length > by.get(best.k).jobs.length)) best = { k, cs, w }; });
+      if (best.w < cfg.anchorH * 60) break;
+      best.cs.forEach(q => left.delete(q));
+      const jobs = best.cs.flatMap(q => by.get(q).jobs).sort(this.urg);
+      const live = jobs.map(j => this.rem(j)).filter(r => r >= 0);
+      const nd = this.needOf(jobs, (this._BS || [])[this.nearBase(jobs[0])] || B);
+      out.push({ key: best.k, cells: best.cs, jobs, load: best.w, minRem: live.length ? Math.min(...live) : Infinity, breached: jobs.filter(j => this.breached(j)).length, need: nd.n, finish: nd.finish, left: nd.left });
+    }
+    out.sort((a, b) => a.minRem - b.minRem || b.breached - a.breached || b.load - a.load);
+    const of = new Map(); out.forEach(c => c.cells.forEach(k => of.set(k, c)));
+    return { list: out, of, sparse: [...left].flatMap(k => by.get(k).jobs) };
+  }
+  clusterInfo(B) {
+    const sig = this.cfgSig();
+    if (this._need && this._need.J === this._J && this._need.rv === this.road.ver && this._need.cv === sig) return this._need.v;
+    const v = this.clusters(this._J.list, B);
+    this._need = { J: this._J, rv: this.road.ver, cv: sig, v };
     return v;
   }
-  cfgSig() { const c = this.st.cfg; return [c.start, c.cut, c.end, c.ot, c.traffic, c.speed, c.road, c.roadOn, JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
+  cfgSig() { const c = this.st.cfg; return [c.start, c.cut, c.end, c.ot, c.traffic, c.speed, c.road, c.roadOn, c.anchorH, c.sla, c.slaVip, c.nearH, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
 
   /* ---------- planning ---------- */
   today() { return ymd(new Date()); }
@@ -348,13 +392,14 @@ class Dispatch {
     let P = this.st.plans[name];
     if (P && (P.date !== day || !Array.isArray(P.home))) { if (P.date !== day) this.rollover(P, J); P = null; }
     if (!P) {
-      P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy() };
+      P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: this.nowMin() >= this.st.cfg.rebAt ? day : null };
       this.autoPlan(P, J, B, false);
       this.note(this.type + ' plan for ' + name + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
       this.save();
       return P;
     }
     if (!Array.isArray(P.tb)) P.tb = P.teams.map(() => 0);
+    if (!Array.isArray(P.role)) P.role = P.teams.map((t, i) => P.home[i] ? 'anchor' : null);
     const known = new Set([...P.teams.flat(), ...P.next]);
     let drop = false;
     P.teams = P.teams.map(t => t.filter(k => J.by.has(k) || !(drop = true)));
@@ -380,73 +425,105 @@ class Dispatch {
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
-  // 1. Cells in order of total score. 2. Each cell gets the teams it needs while teams are free. 3. Teams under target take
-  // leftover jobs from neighbouring cells. 4. Anything left goes to H+1.
+  // 1. Anchor blocks, most urgent SLA first: every block gets one team, then blocks are topped up to the teams they need.
+  // 2. Teams still free become floaters for sparse cells, nearest next job first. 3. Teams with hours left take leftovers
+  // nearby (own block, then neighbours); jobs close to SLA breach go first and may go further. 4. Anything left goes to H+1.
   autoPlan(P, J, B, keepLocked) {
     const cfg = this.st.cfg, nT = Math.max(1, Math.round(cfg.teams));
-    const old = P.teams || [], oldHome = P.home || [], oldWhy = P.why || {}, oldTb = P.tb || [];
-    P.teams = Array.from({ length: nT }, () => []); P.home = Array(nT).fill(null); P.tb = Array(nT).fill(0);
+    const old = P.teams || [], oldHome = P.home || [], oldWhy = P.why || {}, oldTb = P.tb || [], oldRole = P.role || [];
+    P.teams = Array.from({ length: nT }, () => []); P.home = Array(nT).fill(null); P.tb = Array(nT).fill(0); P.role = Array(nT).fill(null);
     P.why = {}; P.manual = {};
     const placed = new Set();
     if (keepLocked) old.forEach((t, i) => t.forEach(k => {
       const j = J.by.get(k), ti = Math.min(i, nT - 1);
-      if (j && this.locked(j)) { P.teams[ti].push(k); placed.add(k); if (!P.home[ti]) { P.home[ti] = oldHome[i] || j.cell.key; P.tb[ti] = oldTb[i] || 0; } }
+      if (j && this.locked(j)) { P.teams[ti].push(k); placed.add(k); if (!P.home[ti]) { P.home[ti] = oldHome[i] || j.cell.key; P.tb[ti] = oldTb[i] || 0; P.role[ti] = oldRole[i] || 'anchor'; } }
     }));
     const hold = (keepLocked ? P.next || [] : []).filter(k => oldWhy[k] === 'customer' && J.by.has(k) && !placed.has(k));
     hold.forEach(k => placed.add(k));
+    const CX = this.clusters(J.list.filter(j => !placed.has(j.key)), B);
+    const free = () => P.teams.map((t, i) => i).filter(i => !P.home[i] && !P.teams[i].length);
+    const reach = (i, j) => this.tstart(i) + this.travel(this.tbase(P, i), j);
+    const take = c => {
+      const f = free(); if (!f.length) return false;
+      f.sort((a, b) => reach(a, c.jobs[0]) - reach(b, c.jobs[0]));
+      const i = f[0]; P.home[i] = c.key; P.tb[i] = this.nearBase(c.jobs[0]); P.role[i] = 'anchor'; c.mine.push(i); return true;
+    };
+    CX.list.forEach(c => { c.mine = P.home.map((h, i) => h === c.key ? i : -1).filter(i => i >= 0); });
+    CX.list.forEach(c => { if (!c.mine.length) take(c); });
+    CX.list.forEach(c => { while (c.mine.length < c.need && take(c)); });
     const rest = [];
-    this.group(J.list.filter(j => !placed.has(j.key))).forEach(g => {
-      const jobs = g.jobs.slice().sort(this.cmp), gb = this.nearBase(jobs[0]), need = this.needOf(jobs, this._BS[gb] || B).n;
-      const mine = P.home.map((h, i) => h === g.key ? i : -1).filter(i => i >= 0);
-      const free = P.teams.map((t, i) => i).filter(i => !P.home[i] && !P.teams[i].length).sort((a, b) => (this.tstart(a) + this.travel(this.tbase(P, a), jobs[0])) - (this.tstart(b) + this.travel(this.tbase(P, b), jobs[0])));
-      while (mine.length < need && free.length) { const i = free.shift(); P.home[i] = g.key; P.tb[i] = gb; mine.push(i); }
-      if (!mine.length) { rest.push(...jobs); return; }
-      rest.push(...this.packInto(mine.map(i => this.state(P.teams[i], this.tbase(P, i), i, P)), jobs));
+    CX.list.forEach(c => {
+      if (!c.mine.length) { rest.push(...c.jobs); return; }
+      rest.push(...this.packInto(c.mine.map(i => this.state(P.teams[i], this.tbase(P, i), i, P)), c.jobs));
     });
-    const rest2 = [];
-    rest.sort(this.cmp).forEach(j => {
-      let best = null;
+    const fl = free(), sp = CX.sparse.slice().sort(this.urg);
+    let rest2 = sp;
+    if (fl.length && sp.length) {
+      const S = fl.map(i => ({ i, ids: P.teams[i], t: this.tstart(i), pos: this.tbase(P, i) }));
+      rest2 = [];
+      sp.forEach(j => {
+        let best = null;
+        S.forEach(s => {
+          const hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
+          if (arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
+          if (!best || hop < best.hop || (hop === best.hop && end < best.end)) best = { s, hop, end };
+        });
+        if (best) { best.s.ids.push(j.key); best.s.t = best.end; best.s.pos = j; } else rest2.push(j);
+      });
+      S.forEach(s => { if (s.ids.length) { P.role[s.i] = 'floater'; P.home[s.i] = J.by.get(s.ids[0]).cell.key; P.tb[s.i] = this.crew(s.i).base || 0; } });
+    }
+    const rest3 = [];
+    rest.concat(rest2).sort(this.urg).forEach(j => {
+      let best = null; const sb = this.soon(j);
       P.teams.forEach((ids, i) => {
-        if (!P.home[i] || this.ringK(P.home[i], j.cell.key) > cfg.ring2) return;
+        if (!P.home[i]) return;
+        if (P.role[i] !== 'floater' && !sb && this.ringK(P.home[i], j.cell.key) > cfg.ring2) return;
         const s = this.state(ids, this.tbase(P, i), i, P), hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
         if (hop > cfg.hop2 || arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
         if (!best || hop < best.hop) best = { ids, hop };
       });
-      if (best) best.ids.push(j.key); else rest2.push(j);
+      if (best) best.ids.push(j.key); else rest3.push(j);
     });
-    rest2.forEach(j => { P.why[j.key] = 'internal'; });
+    rest3.forEach(j => { P.why[j.key] = 'internal'; });
     hold.forEach(k => { P.why[k] = 'customer'; });
     P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i)) : ids);
-    P.next = rest2.map(j => j.key).concat(hold);
+    P.next = rest3.map(j => j.key).concat(hold);
   }
-  // A work order that appears during the day joins a team working its own or a neighbouring cell, else opens a free team.
+  // A work order that appears during the day joins the anchor of its own cell, then a neighbouring cell, then a floater.
+  // A job close to SLA breach goes to the nearest team within ring2 / hop2 and is put at the front of its route.
   place(P, j, B) {
-    const cfg = this.st.cfg;
+    const cfg = this.st.cfg, sb = this.soon(j), J = this._J;
     let best = null;
     P.teams.forEach((ids, i) => {
       if (!P.home[i]) return;
-      const ring = this.ringK(P.home[i], j.cell.key);
-      if (ring > cfg.ring) return;
+      const ring = this.ringK(P.home[i], j.cell.key), fl = (P.role || [])[i] === 'floater';
+      if (!fl && ring > (sb ? cfg.ring2 : cfg.ring)) return;
       const s = this.state(ids, this.tbase(P, i), i, P), hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
-      if ((ids.length && hop > cfg.maxHop) || arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
-      if (!best || ring < best.ring || (ring === best.ring && hop < best.hop)) best = { ids, hop, ring };
+      if ((ids.length && hop > (sb ? cfg.hop2 : cfg.maxHop)) || arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
+      const r = sb ? hop : (fl ? cfg.ring + 1 : ring) * 1e4 + hop;
+      if (!best || r < best.r) best = { ids, r };
     });
-    if (best) { best.ids.push(j.key); return true; }
+    if (best) {
+      if (sb) { let n = 0; while (n < best.ids.length && (k => this.locked(J.by.get(k)) || this.soon(J.by.get(k)))(best.ids[n])) n++; best.ids.splice(n, 0, j.key); }
+      else best.ids.push(j.key);
+      return true;
+    }
     const i = P.teams.findIndex((ids, n) => !P.home[n] && !ids.length);
     if (i >= 0) {
       const nb = this.crew(i).base || 0, arr = this.tstart(i) + this.travel(this.tbase(P, i), j);
-      if (arr <= cfg.cut && (cfg.ot || arr + this.dur(j) <= cfg.end)) { P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = nb; return true; }
+      if (arr <= cfg.cut && (cfg.ot || arr + this.dur(j) <= cfg.end)) { P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = nb; if (P.role) P.role[i] = 'floater'; return true; }
     }
     return false;
   }
-  // Route order: locked jobs, then every VIP (highest score first), then nearest next stop.
+  // Route order: locked jobs, then jobs close to SLA breach (least time left first), then every VIP, then nearest next stop.
   tidy(ids, B) {
     const J = this._J, lk = ids.filter(k => this.locked(J.by.get(k))), free = ids.filter(k => !this.locked(J.by.get(k)));
-    const top = free.filter(k => J.by.get(k).tier === 'VIP').sort((a, b) => this.cmp(J.by.get(a), J.by.get(b)));
+    const sb = free.filter(k => this.soon(J.by.get(k))).sort((a, b) => this.rem(J.by.get(a)) - this.rem(J.by.get(b)));
+    const top = free.filter(k => !sb.includes(k) && J.by.get(k).tier === 'VIP').sort((a, b) => this.cmp(J.by.get(a), J.by.get(b)));
     const nr = k => (this.st.meta[k] || {}).conf === 'noresp';
-    const late = free.filter(k => !top.includes(k) && nr(k));
-    const mid = free.filter(k => !top.includes(k) && !nr(k));
-    const out = lk.concat(top);
+    const late = free.filter(k => !sb.includes(k) && !top.includes(k) && nr(k));
+    const mid = free.filter(k => !sb.includes(k) && !top.includes(k) && !nr(k));
+    const out = lk.concat(sb, top);
     let pos = out.length ? J.by.get(out[out.length - 1]) : B;
     while (mid.length) { mid.sort((a, b) => this.travel(pos, J.by.get(a)) - this.travel(pos, J.by.get(b))); const n = mid.shift(); out.push(n); pos = J.by.get(n); }
     while (late.length) { late.sort((a, b) => this.travel(pos, J.by.get(a)) - this.travel(pos, J.by.get(b))); const n = late.shift(); out.push(n); pos = J.by.get(n); }
@@ -467,7 +544,8 @@ class Dispatch {
         if (arr > cfg.cut) f.push(['bad', 'Starts ' + hm(arr) + ', after the ' + hm(cfg.cut) + ' cut-off']);
         if (end > cfg.end) f.push([cfg.ot ? 'warn' : 'bad', 'Ends ' + hm(end) + ', after ' + hm(cfg.end)]);
         if (n > 0 && hop > cfg.maxHop) f.push(['warn', hop + ' min drive, limit ' + cfg.maxHop]);
-        if (j.tier === 'VIP' && ids.slice(0, n).some(x => { const y = J.by.get(x); return y.tier !== 'VIP' && !this.locked(y); })) f.push(['warn', 'VIP: move before the non-VIP jobs']);
+        if (j.tier === 'VIP' && ids.slice(0, n).some(x => { const y = J.by.get(x); return y.tier !== 'VIP' && !this.locked(y) && !this.soon(y); })) f.push(['warn', 'VIP: move before the non-VIP jobs']);
+        if (this.soon(j)) { const due = this.nowMin() + this.rem(j); if (end > due) f.push(['bad', 'Misses SLA: due ' + hm(due) + ', done ' + hm(end)]); }
         if ((this.st.meta[k] || {}).conf === 'noresp') f.push(['warn', 'No answer yet: consider the end of the route']);
         work += this.dur(j); trav += hop; dist += d; t = end; pos = j;
         return { k, j, hop, d, road, arr, end, f };
@@ -478,12 +556,12 @@ class Dispatch {
     return T;
   }
   cellStats(P, B) {
-    const need = this.needs(B), inNext = new Set(P.next);
+    const CX = this.clusterInfo(B), inNext = new Set(P.next), st = this.st.cfg.start;
     return this.group(this._J.list).map((g, n) => {
-      const nd = need.get(g.key) || { n: 0, left: 0, finish: this.st.cfg.start };
+      const cl = CX.of.get(g.key) || null, ctr = !!cl && cl.key === g.key;
       const keys = new Set(g.jobs.map(j => j.key));
       const tms = P.teams.map((ids, i) => P.home[i] === g.key || ids.some(k => keys.has(k)) ? i : -1).filter(i => i >= 0);
-      return { ...g, rank: n + 1, need: nd.n, finish: nd.finish, left: nd.left, work: g.jobs.reduce((a, j) => a + this.dur(j), 0), tms, nx: g.jobs.filter(j => inNext.has(j.key)).length, band: bandOf(g.jobs.length) };
+      return { ...g, rank: n + 1, cl, ctr, need: ctr ? cl.need : 0, finish: ctr ? cl.finish : st, left: ctr ? cl.left : 0, work: g.jobs.reduce((a, j) => a + this.dur(j), 0), tms, nx: g.jobs.filter(j => inNext.has(j.key)).length, band: bandOf(g.jobs.length) };
     });
   }
 
@@ -546,7 +624,9 @@ class Dispatch {
     this.move(P, key, colId, n);
   }
   setConf(P, j, v) {
-    this.meta(j.key).conf = v;
+    const mt = this.meta(j.key), pz = mt.pz || (mt.pz = []), open = pz.length && pz[pz.length - 1].b == null;
+    if (v === 'resched' && !open) pz.push({ a: Date.now() }); else if (v !== 'resched' && open) pz[pz.length - 1].b = Date.now();
+    mt.conf = v;
     if (v === 'resched' && !this.locked(j)) { P.why[j.key] = 'customer'; this.move(P, j.key, 'next', null, j.wo + ': customer asks to reschedule, deferred to H+1 without aging.'); return; }
     const ti = P.teams.findIndex(t => t.includes(j.key));
     if (ti >= 0 && !this.locked(j)) {
@@ -576,6 +656,12 @@ class Dispatch {
     this._ctx = { m, bi, B, name: m.branches[bi] };
     const P = this.plan(m, bi, J, B);
     this._ctx.P = P;
+    if (cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt) {
+      P.reb = P.date;
+      if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, J, B, true); this.note('Rebalance ' + hm(cfg.rebAt) + ': plan re-run on the current spread of open WO. Locked jobs and customer reschedules kept.'); }
+      else this.note('Rebalance ' + hm(cfg.rebAt) + ' skipped: the plan has manual changes. Use Re-plan to rebalance.');
+      this.save();
+    }
     const T = this.calc(P, B);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
@@ -603,12 +689,15 @@ class Dispatch {
     /* KPIs */
     const used = T.filter(t => t.ids.length), sched = used.reduce((a, t) => a + t.ids.length, 0);
     const nInt = P.next.filter(k => P.why[k] !== 'customer').length, nCus = P.next.length - nInt;
-    const needAll = G.reduce((a, g) => a + g.need, 0), hot = G.filter(g => g.jobs.length >= 8).length;
+    const CX = this.clusterInfo(B), avail = Math.max(60, cfg.end - cfg.start), flNeed = Math.ceil(CX.sparse.reduce((a, j) => a + this.dur(j), 0) / avail);
+    const needAll = CX.list.reduce((a, c) => a + c.need, 0) + flNeed, hot = G.filter(g => g.jobs.length >= 8).length;
+    const soonN = J.list.filter(j => this.soon(j)).length, brN = J.list.filter(j => this.breached(j)).length;
     const breaches = T.reduce((a, t) => a + t.rows.reduce((b, r) => b + r.f.filter(f => f[0] === 'bad').length, 0), 0);
     const kpis = [
       { label: 'Open ' + this.type + ' jobs', value: fmtN(J.list.length), sub: (m.branches[bi] || '') + ' · last ' + cfg.maxAge + ' days' },
       { label: 'Grid cells with work', value: fmtN(G.length), sub: hot + ' red or dark red (8+ WO)' },
-      { label: 'Teams needed', value: fmtN(needAll), sub: cfg.teams + ' available' + (needAll > cfg.teams ? ' · short by ' + (needAll - cfg.teams) : '') },
+      { label: 'Teams needed', value: fmtN(needAll), sub: CX.list.length + ' anchor blocks + ' + flNeed + ' floater · ' + cfg.teams + ' available' + (needAll > cfg.teams ? ' · short by ' + (needAll - cfg.teams) : '') },
+      { label: 'Near SLA breach', value: fmtN(soonN), sub: cfg.nearH + ' h or less left · ' + fmtN(brN) + ' already breached' },
       { label: 'Scheduled today', value: fmtN(sched), sub: used.length + ' of ' + cfg.teams + ' teams used' + (breaches ? ' · ' + breaches + ' hour breaches' : '') },
       { label: 'Deferred to H+1', value: fmtN(P.next.length), sub: nInt + ' internal (aging) · ' + nCus + ' customer' },
       { label: 'Drive times', value: !cfg.roadOn ? 'Estimate' : busy ? '…' : roadPct + '%', sub: !cfg.roadOn ? 'road routing off' : busy ? 'loading from road router' : 'of drives on real roads' },
@@ -653,7 +742,7 @@ class Dispatch {
       host.card('Priority by grid cell', {
         span: 12, meta: 'densest first (most WO) · ' + (this.ui.cellsAll || G.length <= 25 ? G.length : '25 of ' + G.length) + ' cells',
         body: this.cellTable(e, P, host, col, G),
-        note: 'Teams needed = the fewest teams that fit every job of the cell between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + ', starting from the nearest base, with road drive times between stops. Est. duration = from ' + hm(cfg.start) + ' until the last job of the cell is done with that many teams. Teams are sent to cells from the top of this list until all ' + cfg.teams + ' are used; teams with working hours left then take leftover jobs from neighbouring cells within ' + cfg.hop2 + ' min. Remaining jobs go to H+1.',
+        note: 'Anchor block = a cell plus its 8 neighbours holding ' + cfg.anchorH + ' h of work or more; the block is named after its centre cell. Every block gets one anchor team first, in order of the job closest to SLA breach (SLA ' + cfg.sla + ' h, VIP ' + cfg.slaVip + ' h, counted from WO Created inside ' + hm(cfg.start) + '–' + hm(cfg.end) + ' and paused while the customer asks to reschedule), then is topped up to its Teams needed = the fewest teams that fit every job of the block between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + '. Teams left over become floaters for cells outside any block. Teams with hours left take leftovers from neighbouring cells within ' + cfg.hop2 + ' min; jobs with ' + cfg.nearH + ' h or less to SLA breach go first and to the nearest team. ' + (cfg.rebOn ? 'The plan is re-run once at ' + hm(cfg.rebAt) + ' unless it has manual changes. ' : '') + 'Remaining jobs go to H+1.',
       }),
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
@@ -692,7 +781,7 @@ class Dispatch {
   baseRow(e, P, n, home) {
     const BS = this._BS || [], cur = this.crew(n).base || 0;
     return e('div', { key: 'hb', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: MONO, color: C.muted } },
-      home ? e('span', null, 'Cell ' + home) : null,
+      home ? e('span', { style: { color: (P.role || [])[n] === 'floater' ? C.warn : C.ink } }, ((P.role || [])[n] === 'floater' ? 'Floater · from ' : 'Anchor · ') + home) : null,
       BS.length > 1 ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now starts from ' + BS[+ev.target.value].name + '.'); },
         style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 170 } },
         ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name)))
@@ -749,6 +838,8 @@ class Dispatch {
     const chips = [pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
       pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', CATS[j.cat].lvl === 'Critical' ? 'bad' : CATS[j.cat].lvl === 'High' ? 'warn' : null, 'c'),
       pill(this.cellName(j), null, 'g')];
+    const rm = this.rem(j);
+    if (rm < 0) chips.push(pill('SLA breached ' + dd(-rm), 'bad', 's')); else if (this.soon(j)) chips.push(pill('SLA ' + dh(rm) + ' left', 'warn', 's'));
     if (ag) chips.push(pill('Aging +' + AGING * ag, 'warn', 'a'));
     if (j.tier === 'VIP') chips.push(pill('VIP first', 'vip', 'v'));
     if (j.noPrio) chips.push(pill('Priority missing', 'warn', 'np'));
@@ -804,14 +895,16 @@ class Dispatch {
       fmtN(g.jobs.length),
       g.vip ? e('span', { style: { color: C.vip, fontWeight: 600 } }, String(g.vip)) : '0',
       nf1(g.work / 60) + ' h',
-      e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, String(g.need) + (g.left ? ' +' : '')),
-      e('span', { style: { whiteSpace: 'nowrap', color: g.finish > cfg.end ? C.bad : C.text } }, dh(g.finish - cfg.start) + ' · done ' + hm(g.finish)),
+      g.ctr ? e('span', { style: { color: C.ink, fontWeight: 600, whiteSpace: 'nowrap' } }, 'Anchor · ' + nf1(g.cl.load / 60) + ' h')
+        : g.cl ? e('span', { style: { color: C.muted, whiteSpace: 'nowrap' } }, 'in ' + this.M.cellLabel(g.cl.key)) : e('span', { style: { color: C.warn } }, 'Floater'),
+      g.ctr ? e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, String(g.need) + (g.left ? ' +' : '')) : '—',
+      g.ctr ? e('span', { style: { whiteSpace: 'nowrap', color: g.finish > cfg.end ? C.bad : C.text } }, dh(g.finish - cfg.start) + ' · done ' + hm(g.finish)) : '—',
       g.tms.length ? e('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } }, ...g.tms.map(n => e('span', { key: n, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, e('span', { style: { width: 8, height: 8, borderRadius: 2, background: col(n) } }), this.tn(n))))
         : e('span', { style: { color: C.bad, fontWeight: 600 } }, 'none'),
       g.nx ? e('span', { style: { color: C.warn, fontWeight: 600 } }, String(g.nx)) : '0',
     ]);
     return e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-      host.table(['#', 'Cell', 'Area', 'WO', 'VIP', 'Work', 'Teams needed', 'Est. duration', 'Assigned', 'H+1'], rows, { minWidth: 900, maxHeight: 520 }),
+      host.table(['#', 'Cell', 'Area', 'WO', 'VIP', 'Work', 'Block', 'Teams needed', 'Est. duration', 'Assigned', 'H+1'], rows, { minWidth: 1000, maxHeight: 520 }),
       G.length > 25 ? e('button', { type: 'button', onClick: () => { this.ui.cellsAll = !this.ui.cellsAll; this.onChange(); }, style: { alignSelf: 'flex-start', padding: '5px 11px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, this.ui.cellsAll ? 'Show top 25' : 'Show all ' + G.length + ' cells') : null);
   }
   logView(e) {
@@ -861,6 +954,9 @@ class Dispatch {
       row('Fallback', [lab('If no road time: straight line ×', 'l7'), num('road', 60, 0.05), lab('at', 'l7b'), num('speed', 56), lab('km/h', 'l7c')]),
       row('Reach', [lab('New jobs during the day join a team within', 'l8'), num('ring', 48), lab('cells and', 'l9'), num('maxHop', 56), lab('min', 'l10'),
         lab('· Teams with hours left take leftovers within', 'l11'), num('ring2', 48), lab('cells and', 'l12'), num('hop2', 56), lab('min', 'l13')]),
+      row('Anchor', [lab('A block (cell + 8 neighbours) gets an anchor team from', 'an1'), num('anchorH', 56, 0.5), lab('h of work. Teams left over become floaters.', 'an2')]),
+      row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left (goes first)', 's4')]),
+      row('Rebalance', [chip('rb', d.rebOn, 'Re-plan once at', null, null, () => set('rebOn', !d.rebOn)), time('rebAt'), lab('skipped when the plan has manual changes', 'rb2')]),
       row('Hours', [lab('Start', 'l14'), time('start'), lab('Last start', 'l15'), time('cut'), lab('End', 'l16'), time('end'),
         chip('ot', d.ot, 'Allow overtime', null, null, () => set('ot', !d.ot))]),
       row('Duration', Object.keys(CATS).map(k => e('span', { key: 'd' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.muted } }, k, num(k, 60, 5, d.dur, 'dur' + k), 'min',
@@ -889,6 +985,8 @@ class Dispatch {
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (c.names || []).slice(),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, app: x.app || '' } : null),
       breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst),
+      anchorH: clean(d.anchorH, 0.5, 24, DEF.anchorH), sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
+      rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt),
       dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean(d.dur[k], 10, 720, CATS[k].d)])),
     });
     this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null;
@@ -911,7 +1009,7 @@ class Dispatch {
       key: k, name: x.name, fit, size: cfg.gridKm * 1000, cellA: cfg.cellA ?? 0.36, routeA: cfg.routeA ?? 1,
       cells: this._cells.map(g => ({ key: g.key, color: g.band.color, rank: g.rank,
         tip: [this.M.cellLabel(g.key) + ' · priority #' + g.rank, fmtN(g.jobs.length) + ' WO' + (g.vip ? ' · ' + g.vip + ' VIP (worked first)' : ''),
-          g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start), g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
+          g.ctr ? 'Anchor block · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : g.cl ? 'In anchor block ' + this.M.cellLabel(g.cl.key) : 'Outside blocks · floater work', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
       teams: P.teams.map((ids, n) => ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, x.B)) || null : null,
         pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j) })) })).filter(t => t.pts.length),
