@@ -197,11 +197,14 @@ function askKey(message) {
   return keyPrompt;
 }
 
-async function fetchProxy(gid, tq, retry = true) {
+async function fetchProxy(gid, tq, retry = true, tries = 0) {
   let k = readKey();
   if (!k) k = await askKey('Enter your access key to load the data.');
   const url = `${PROXY_URL}?gid=${encodeURIComponent(gid)}&tq=${encodeURIComponent(tq)}&key=${encodeURIComponent(k)}`;
-  const res = await fetch(url);
+  let res;
+  // Apps Script drops some large requests ("Load failed" / HTTP 5xx): retry up to 3 times with a growing pause.
+  try { res = await fetch(url); } catch (e) { if (tries < 3) { await new Promise(r => setTimeout(r, 1500 * (tries + 1))); return fetchProxy(gid, tq, retry, tries + 1); } throw e; }
+  if (res.status >= 500 && tries < 3) { await new Promise(r => setTimeout(r, 1500 * (tries + 1))); return fetchProxy(gid, tq, retry, tries + 1); }
   if (!res.ok) throw new Error('Data request failed (HTTP ' + res.status + ')');
   const text = await res.text();
   if (text.indexOf('"UNAUTHORIZED"') !== -1) {
@@ -1202,7 +1205,8 @@ export async function loadMap() {
   const STEP = 20000;
   const get = k => gviz(TABS.customers, `select F, G, I, M, C, E, A, H, N, J, K, L, O, P${where} limit ${STEP} offset ${k * STEP}`, true).then(r => r.rows);
   const wdP = loadWiredown();
-  const chunks = await Promise.all([0, 1, 2, 3, 4, 5].map(get));
+  const chunks = [];
+  for (let k = 0; k < 6; k += 2) chunks.push(...await Promise.all([k, k + 1].map(get)));
   for (let k = chunks.length; chunks[k - 1].length === STEP; k++) chunks.push(await get(k));
   const rows = chunks.flat();
   const stIdx = g => g === 'Active' ? 0 : g === 'Blocked' ? 1 : 2;
