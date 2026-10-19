@@ -38,6 +38,14 @@
           querying
         </span>
       </sc-if>
+      <sc-if value="{{ csvLoading }}" hint-placeholder-val="{{ false }}">
+        <span title="{{ csvTitle }}" style="display:flex;align-items:center;gap:8px;font:500 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B;white-space:nowrap">
+          <span style="position:relative;width:96px;height:4px;border-radius:2px;background:#EBEBE7;overflow:hidden">
+            <span style="position:absolute;left:0;top:0;bottom:0;width:{{ csvPctW }};background:#1F1F1D;transition:width 0.4s ease"></span>
+          </span>
+          {{ csvLabel }}
+        </span>
+      </sc-if>
       <span style="display:flex;align-items:center;gap:7px;padding:4px 9px;border:1px solid #DCDCD8;border-radius:3px;background:#F4F4F2;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;color:#1F1F1D;white-space:nowrap">
         <span style="width:6px;height:6px;border-radius:50%;background:#2E6B34;animation:gxpulse 2.4s ease-in-out infinite"></span>
         {{ syncLine }}
@@ -184,7 +192,28 @@ class Component extends DCLogic {
     if (Math.abs(w - this.state.w) > 40) this.setState({ w });
   };
 
-  componentWillUnmount() { window.removeEventListener('resize', this.onResize); window.removeEventListener('keydown', this.onUndoKey); document.removeEventListener('fullscreenchange', this.onFsChange); if (this.mapApi) this.mapApi.destroy(); if (this.track) this.track.stop(); clearInterval(this.playTimer); }
+  // CSV files arrive one by one. After each batch the open page is re-queried in place (old figures stay
+  // on screen until the new ones are ready), at most every 2.5 s; other pages are marked stale.
+  onCsvBatch(ev) {
+    this.setState(s => ({ csvTick: (s.csvTick || 0) + 1 }));
+    if (ev.error || !ev.done) return;
+    if (ev.complete && ev.name === 'customers') { this.blockedLoading = {}; this.setState({ blockedBy: {} }); }
+    this._csvDue = this._csvDue || ev.complete;
+    if (this._csvT) { if (ev.complete) { clearTimeout(this._csvT); this._csvT = null; } else return; }
+    const wait = ev.complete ? 0 : Math.max(0, 2500 - (Date.now() - (this._csvLast || 0)));
+    this._csvT = setTimeout(() => { this._csvT = null; this._csvDue = false; this._csvLast = Date.now(); this.softReload(); }, wait);
+  }
+  async softReload() {
+    const D = this.D; if (!D || !this.state.index) return;
+    try {
+      const index = await D.loadIndex();
+      this.stale = new Set(Object.keys(this.state.data).filter(k => k !== 'map'));
+      this.setState({ index }, () => this.load());
+    } catch (e) {}
+  }
+  isStale(k) { return !!(this.stale && this.stale.has(k)); }
+
+  componentWillUnmount() { if (this.offCsv) this.offCsv(); clearTimeout(this._csvT); window.removeEventListener('resize', this.onResize); window.removeEventListener('keydown', this.onUndoKey); document.removeEventListener('fullscreenchange', this.onFsChange); if (this.mapApi) this.mapApi.destroy(); if (this.track) this.track.stop(); clearInterval(this.playTimer); }
 
   async componentDidMount() {
     window.addEventListener('resize', this.onResize);
@@ -199,9 +228,10 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-19c'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
+      if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
       const index = await D.loadIndex();
       const current = index.periods.find(p => p.sort <= index.nowKey);
       const period = current ? current.key : 'all';
@@ -232,7 +262,9 @@ class Component extends DCLogic {
   async load() {
     const { view } = this.state;
     const k = this.key(view);
-    if (this.state.data[k]) { this.setState({ busy: false }); this.ensureTrends(view); this.ensureAgents(view); return; }
+    const soft = this.isStale(k);
+    if (this.state.data[k] && !soft) { this.setState({ busy: false }); this.ensureTrends(view); this.ensureAgents(view); return; }
+    if (soft) this.stale.delete(k);
     this.setState({ busy: true, error: null });
     const D = this.D, p = this.state.period, b = this.state.branch;
     const jobs = {
@@ -261,8 +293,8 @@ class Component extends DCLogic {
         this.ensureAgents(view);
         // Overview's growth flash loads only after its ticket panels have painted.
         if (view !== 'overview') return;
-        if (!this.state.data.growth && !this.growthLoading) {
-          this.growthLoading = true;
+        if ((!this.state.data.growth || this.isStale('growth')) && !this.growthLoading) {
+          this.growthLoading = true; if (this.stale) this.stale.delete('growth');
           D.loadGrowth('retail').then(gr => this.setState(s => ({ data: { ...s.data, growth: gr } })))
             .catch(() => {}).finally(() => { this.growthLoading = false; });
         }
@@ -286,8 +318,8 @@ class Component extends DCLogic {
   ensureAgents(view) {
     if (view !== 'chat') return;
     const k = 'agents|' + this.state.period + '|' + this.state.branch;
-    if (this.state.data[k] || this.agentsLoading === k) return;
-    this.agentsLoading = k;
+    if ((this.state.data[k] && !this.isStale(k)) || this.agentsLoading === k) return;
+    this.agentsLoading = k; if (this.stale) this.stale.delete(k);
     const put = v => this.setState(s => ({ data: { ...s.data, [k]: v } }));
     this.D.loadAgents(this.state.period, this.state.branch).then(put).catch(e => put({ error: e.message }))
       .finally(() => { if (this.agentsLoading === k) this.agentsLoading = null; });
@@ -308,8 +340,8 @@ class Component extends DCLogic {
   ensureTrends(view) {
     if (!['overview', 'tickets', 'csat'].includes(view)) return;
     const k = 'trends|' + this.state.branch;
-    if (this.state.data[k] || this.trendsLoading === k) return;
-    this.trendsLoading = k;
+    if ((this.state.data[k] && !this.isStale(k)) || this.trendsLoading === k) return;
+    this.trendsLoading = k; if (this.stale) this.stale.delete(k);
     const put = v => this.setState(s => ({ data: { ...s.data, [k]: v } }));
     this.D.loadTrends(this.state.branch).then(put).catch(e => put({ error: e.message }))
       .finally(() => { if (this.trendsLoading === k) this.trendsLoading = null; });
@@ -1033,7 +1065,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-19b'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -2292,6 +2324,14 @@ class Component extends DCLogic {
       branchOptions: idx ? idx.branches.map(b => ({ key: b.key, label: b.label })) : [],
       onPeriod: this.setPeriod, onBranch: this.setBranch, onRefresh: this.refresh,
       busy: S.busy, error: S.error,
+      ...(() => {
+        const ci = D && D.csvInfo, on = !!(ci && ci.loading), p = ci && ci.pct != null ? ci.pct : 1;
+        const cur = on ? Object.entries(ci.sets).find(([, v]) => v.total && !v.done) : null;
+        const nm = { tickets: 'tickets', customers: 'customers', wo: 'work orders', csat: 'CSAT' };
+        return { csvLoading: on, csvPctW: Math.round(p * 100) + '%',
+          csvLabel: Math.round(p * 100) + '%' + (cur ? ' · ' + nm[cur[0]] + ' ' + cur[1].files + '/' + cur[1].total : ''),
+          csvTitle: ci ? ci.text + ' · figures update as each file arrives' : '' };
+      })(),
       dateWarn: !!(idx && (idx.unreadable || idx.future)),
       dateWarnText: idx ? [
         idx.unreadable ? D.fmtInt(idx.unreadable) + ' tickets have a date the dashboard cannot read and are missing from every chart.' : '',

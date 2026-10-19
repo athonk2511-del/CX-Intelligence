@@ -238,9 +238,41 @@ export async function listSets(rootId, apiKey) {
   Object.values(sets).forEach(l => l.sort((a, b) => a.name.localeCompare(b.name)));
   return sets;
 }
-// Download (or read from the browser cache) and stack the files of one dataset.
-export async function loadSet(files, apiKey, onProgress) {
-  let done = 0;
+// Parses one file into T.rows, yielding to the browser every ~300k characters so the page stays responsive.
+const tick = () => new Promise(r => setTimeout(r, 0));
+async function parseInto(text, T) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const nl = text.indexOf('\n'), head = text.slice(0, nl < 0 ? text.length : nl);
+  const cnt = ch => head.split(ch).length;
+  const sep = cnt(';') > cnt(',') ? (cnt(';') > cnt('\t') ? ';' : '\t') : (cnt('\t') > cnt(',') ? '\t' : ',');
+  let row = [], f = '', q = false, i = 0, first = true, budget = 300000; const n = text.length;
+  const end = () => {
+    if (first) { first = false; if (!T.header) T.header = row; return; }
+    if (row.length === 1 && row[0] === '') return;
+    T.rows.push(row); if (row.length > T.width) T.width = row.length;
+  };
+  while (i < n) {
+    if (--budget <= 0) { budget = 300000; await tick(); }
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { f += '"'; i += 2; continue; } q = false; i++; continue; }
+      f += c; i++; continue;
+    }
+    if (c === '"' && f === '') { q = true; i++; continue; }
+    if (c === sep) { row.push(f); f = ''; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(f); end(); row = []; f = ''; i++; continue; }
+    f += c; i++;
+  }
+  if (f !== '' || row.length) { row.push(f); end(); }
+}
+
+// Download (or read from the browser cache) and stack the files of one dataset, one file at a time.
+// Newest file (last by name) first, so the current period is usable after the first batch.
+// onBatch(T) fires after every file with the table so far; T.complete turns true after the last one.
+export async function loadSet(files, apiKey, onProgress, onBatch) {
+  const order = files.slice().reverse(), n = order.length;
+  const T = { header: null, rows: [], width: 0, files, done: 0, total: n, complete: false };
   const getText = async f => {
     const ck = f.id + '|' + f.updated + '|' + f.size;
     let text = await cacheGet(ck);
@@ -250,18 +282,29 @@ export async function loadSet(files, apiKey, onProgress) {
       text = await r.text();
       cachePut(ck, text);
     }
-    done++; onProgress && onProgress(done, files.length);
     return text;
   };
-  const texts = new Array(files.length); let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, files.length) }, async () => { while (next < files.length) { const i = next++; texts[i] = await getText(files[i]); } }));
-  const rows = []; let width = 0, header = null;
-  for (let i = 0; i < files.length; i++) {
-    const r = parseCSV(texts[i]); texts[i] = null;
-    if (!r.length) continue;
-    if (!header) header = r[0];
-    for (let k = 1; k < r.length; k++) { const x = r[k]; if (x.length === 1 && x[0] === '') continue; rows.push(x); if (x.length > width) width = x.length; }
+  // Two downloads in flight, at most two files ahead of the parser, so memory stays flat.
+  const slot = order.map(() => { let res; const p = new Promise(r => { res = r; }); return { p, res }; });
+  let next = 0;
+  const worker = async () => {
+    while (next < n) {
+      while (next - T.done > 2) await new Promise(r => setTimeout(r, 60));
+      const i = next++;
+      try { slot[i].res({ text: await getText(order[i]) }); } catch (e) { slot[i].res({ err: e }); }
+    }
+  };
+  Array.from({ length: Math.min(2, n) }, worker);
+  for (let i = 0; i < n; i++) {
+    const x = await slot[i].p; slot[i].p = null;
+    if (x.err) { next = n; throw x.err; }
+    await parseInto(x.text, T);
+    T.done = i + 1; T.complete = T.done === n;
+    onProgress && onProgress(T.done, n);
+    onBatch && onBatch(T);
+    await tick();
   }
-  return { header, rows, width, files };
+  T.complete = true;
+  return T;
 }
 export function pruneCache(allFiles) { cachePrune(new Set(allFiles.map(f => f.id + '|' + f.updated + '|' + f.size))); }

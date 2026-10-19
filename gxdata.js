@@ -23,7 +23,7 @@ export function setSheetUrl(url) {
 export function sheetId() { return SHEET_ID; }
 
 const cache = new Map();
-export function clearCache() { cache.clear(); setP = {}; setsP = null; csvFailed = {}; }
+export function clearCache() { cache.clear(); setP = {}; fullP = {}; setsP = null; csvFailed = {}; csvInfo.sets = {}; csvSummary(); }
 
 /* ---------- CSV files in Google Drive ----------
    Tickets, Customers and Work Orders are read from the CSV files in one Drive folder
@@ -90,32 +90,60 @@ const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders
 let CSV = null, setsP = null, setP = {}, csvFailed = {};
 export const csvInfo = { on: !!CSV_FOLDER, folder: CSV_FOLDER, files: 0, rows: 0, phase: '', error: null, sets: {}, text: '' };
 function csvSummary() {
-  const parts = Object.entries(csvInfo.sets).filter(([, v]) => v.rows != null).map(([k, v]) => SET_LABEL[k] + ' ' + v.files + ' files (' + v.rows.toLocaleString('en-US') + ' rows)');
+  const S = Object.entries(csvInfo.sets).filter(([, v]) => v.total);
+  const parts = S.map(([k, v]) => SET_LABEL[k] + ' ' + (v.done ? v.files + ' files (' + v.rows.toLocaleString('en-US') + ' rows)' : v.files + '/' + v.total + ' files, ' + v.rows.toLocaleString('en-US') + ' rows so far'));
   csvInfo.text = parts.length ? 'Drive CSV: ' + parts.join(' \u00b7 ') : '';
-  const t = csvInfo.sets.tickets; if (t && t.rows != null) { csvInfo.files = t.files; csvInfo.rows = t.rows; csvInfo.phase = 'ready'; }
+  const tf = S.reduce((a, [, v]) => a + v.files, 0), tt = S.reduce((a, [, v]) => a + v.total, 0);
+  csvInfo.pct = tt ? tf / tt : 1; csvInfo.loading = S.some(([, v]) => !v.done);
+  const t = csvInfo.sets.tickets; if (t && t.done) { csvInfo.files = t.files; csvInfo.rows = t.rows; csvInfo.phase = 'ready'; }
+}
+// Batch events: { name, done, total, rows, complete } after every file, or { name, error }.
+const csvListeners = new Set();
+export function onCsvProgress(fn) { csvListeners.add(fn); return () => csvListeners.delete(fn); }
+const csvEmit = x => csvListeners.forEach(f => { try { f(x); } catch (e) {} });
+const GID_OF = { tickets: TABS.tickets, customers: TABS.customers, csat: TABS.csat };
+// Partial-table answers go stale after every batch; full-table answers (key ends in |F) stay.
+function dropPartial(name) {
+  const pre = SHEET_ID + '|' + GID_OF[name] + '|';
+  [...cache.keys()].forEach(k => { if (k.startsWith(pre) && !k.endsWith('|F')) cache.delete(k); });
 }
 function driveSets() {
-  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat)); return s; })()
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-19c'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat)); return s; })()
     .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
   return setsP;
 }
-// Table for one dataset, or null when the folder has no files for it.
-function csvSet(name) {
-  if (!setP[name]) setP[name] = (async () => {
-    const sets = await driveSets(), files = sets[name];
-    if (!files.length) return null;
-    csvInfo.sets[name] = { files: 0, total: files.length, rows: null };
-    const t = await CSV.loadSet(files, DRIVE_AUTH, (d, n) => { csvInfo.sets[name].files = d; csvInfo.phase = 'downloaded ' + d + '/' + n + ' ' + SET_LABEL[name]; });
-    csvInfo.sets[name] = { files: files.length, rows: t.rows.length };
-    csvSummary();
-    return t;
-  })().catch(e => { delete setP[name]; csvInfo.error = e.message; throw e; });
-  return setP[name];
+// Table for one dataset, or null when the folder has no files for it. Files load one at a time:
+// the default promise resolves after the first file (the table keeps growing in place);
+// full = true waits for every file.
+let fullP = {};
+function csvSet(name, full) {
+  if (!setP[name]) {
+    let first, fail;
+    const fp = new Promise((a, b) => { first = a; fail = b; });
+    fp.catch(() => {});
+    const all = (async () => {
+      const sets = await driveSets(), files = sets[name];
+      if (!files.length) { first(null); return null; }
+      csvInfo.sets[name] = { files: 0, total: files.length, rows: 0, done: false };
+      csvSummary();
+      csvEmit({ name, done: 0, total: files.length, rows: 0, complete: false });
+      return CSV.loadSet(files, DRIVE_AUTH, null, T => {
+        csvInfo.sets[name] = { files: T.done, total: T.total, rows: T.rows.length, done: T.complete };
+        csvInfo.phase = 'loaded ' + T.done + '/' + T.total + ' ' + SET_LABEL[name];
+        dropPartial(name); csvSummary();
+        first(T);
+        csvEmit({ name, done: T.done, total: T.total, rows: T.rows.length, complete: T.complete });
+      });
+    })();
+    all.catch(e => { fail(e); if (setP[name] === fp) { delete setP[name]; delete fullP[name]; } csvInfo.error = e.message; csvEmit({ name, error: e.message }); });
+    setP[name] = fp; fullP[name] = all;
+  }
+  return full ? fullP[name] : setP[name];
 }
 // Work-order CSV table, or null (no files / unreachable) so callers use ticket column AC.
 export async function woTable() {
   if (!CSV_FOLDER || csvFailed.wo) return null;
-  try { return await csvSet('wo'); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }
+  try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }
 }
 export async function woQuery(tq) {
   const t = await woTable(); if (!t) return null;
@@ -185,13 +213,14 @@ async function fetchProxy(gid, tq, retry = true) {
   return text;
 }
 
-export async function gviz(gid, tq) {
-  const key = SHEET_ID + '|' + gid + '|' + tq;
+// full = true answers from the complete dataset (waits for every CSV file); otherwise from what has loaded so far.
+export async function gviz(gid, tq, full) {
+  const key = SHEET_ID + '|' + gid + '|' + tq + (full ? '|F' : '');
   if (cache.has(key)) return cache.get(key);
   const setName = SET_OF[String(gid)];
   if (CSV_FOLDER && setName && setName !== 'wo' && !csvFailed[setName]) {
     let t = null;
-    try { t = await csvSet(setName); }
+    try { t = await csvSet(setName, full); }
     catch (e) { csvFailed[setName] = true; console.warn(setName + ' CSV unavailable, reading the sheet instead:', e.message); }
     if (t) {
       stats.queries++;
@@ -945,7 +974,7 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
   const rows = [];
   let scanned = 0;
   for (let offset = 0; ; offset += CHUNK) {
-    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L, N, K limit ${CHUNK} offset ${offset}`);
+    const r = await gviz(TABS.customers, `select I, G, A, W, C, J, L, N, K limit ${CHUNK} offset ${offset}`, true);
     rows.push(...r.rows.filter(x => inSeg(seg, x[7])));
     scanned += r.rows.length;
     if (onProgress) onProgress(scanned);
@@ -1171,7 +1200,7 @@ const PRODUCT_EXTRA = ['#8A6D3B', '#5F7F2E', '#A03E6E', '#6B6B66'];
 export async function loadMap() {
   const where = " where G = 'Active' or G = 'Blocked' or G = 'Termination' or G = 'Termination in Progress'";
   const STEP = 20000;
-  const get = k => gviz(TABS.customers, `select F, G, I, M, C, E, A, H, N, J, K, L, O, P${where} limit ${STEP} offset ${k * STEP}`).then(r => r.rows);
+  const get = k => gviz(TABS.customers, `select F, G, I, M, C, E, A, H, N, J, K, L, O, P${where} limit ${STEP} offset ${k * STEP}`, true).then(r => r.rows);
   const wdP = loadWiredown();
   const chunks = await Promise.all([0, 1, 2, 3, 4, 5].map(get));
   for (let k = chunks.length; chunks[k - 1].length === STEP; k++) chunks.push(await get(k));

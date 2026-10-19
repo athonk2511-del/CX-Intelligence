@@ -989,12 +989,17 @@ class Dispatch {
       rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt),
       dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean(d.dur[k], 10, 720, CATS[k].d)])),
     });
-    this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null;
+    this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null; this._layer = null;
     const { m, bi } = this._ctx;
-    const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0], P = this.st.plans[m.branches[bi]];
-    this.ensureRoad(J, B);
-    if (P) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
-    this.changed('Settings changed and the plan was re-run.');
+    try {
+      const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0], P = this.st.plans[m.branches[bi]];
+      this.ensureRoad(J, B);
+      if (P) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
+      this.changed('Settings changed and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, anchor ' + c.anchorH + ' h).');
+    } catch (err) {
+      console.error('IDS re-plan failed', err);
+      this.changed('Settings saved, but the re-plan failed: ' + (err && err.message || err) + '. Press Re-plan automatically or reload.');
+    }
   }
 
   /* ---------- map layer ---------- */
