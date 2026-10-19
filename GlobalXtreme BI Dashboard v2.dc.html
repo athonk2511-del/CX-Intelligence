@@ -1,0 +1,2309 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #F4F4F2; color: #1F1F1D; -webkit-font-smoothing: antialiased; }
+  a { color: #7A5E00; text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: #1F1F1D; }
+  ::selection { background: rgba(232,180,0,0.30); }
+  * { scrollbar-width: thin; scrollbar-color: #C9C9C4 transparent; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: #C9C9C4; border-radius: 0; }
+  select option { background: #FFFFFF; color: #1F1F1D; }
+  @keyframes gxpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+  @keyframes gxspin { to { transform: rotate(360deg); } }
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;min-height:100vh;background:#F4F4F2;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D">
+
+  <header style="position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:14px;height:48px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #DCDCD8">
+    <img src="gx-wordmark.png" alt="GlobalXtreme" style="height:15px;display:block" />
+    <span style="font:500 13px 'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D">CX Intelligence</span>
+    <span style="font:400 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">live sheet</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <sc-if value="{{ busy }}" hint-placeholder-val="{{ true }}">
+        <span style="display:flex;align-items:center;gap:7px;font:500 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">
+          <span style="width:10px;height:10px;border-radius:50%;border:1.5px solid #DCDCD8;border-top-color:#1F1F1D;animation:gxspin 0.8s linear infinite"></span>
+          querying
+        </span>
+      </sc-if>
+      <span style="display:flex;align-items:center;gap:7px;padding:4px 9px;border:1px solid #DCDCD8;border-radius:3px;background:#F4F4F2;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;color:#1F1F1D;white-space:nowrap">
+        <span style="width:6px;height:6px;border-radius:50%;background:#2E6B34;animation:gxpulse 2.4s ease-in-out infinite"></span>
+        {{ syncLine }}
+      </span>
+      <button type="button" onClick="{{ onRefresh }}" style="padding:5px 11px;border:1px solid #1F1F1D;border-radius:3px;background:#1F1F1D;color:#FFFFFF;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;cursor:pointer;white-space:nowrap" style-hover="background:#3A3A37">Re-sync data</button>
+    </div>
+  </header>
+
+  <div style="display:flex;align-items:stretch;flex:1;min-width:0">
+    <aside onMouseEnter="{{ navEnter }}" onMouseLeave="{{ navLeave }}" style="position:fixed;left:0;top:48px;z-index:20;width:210px;height:calc(100vh - 48px);display:flex;flex-direction:column;gap:2px;padding:12px 22px 12px 8px;background:#F4F4F2;border-right:1px solid #DCDCD8;box-sizing:border-box;transform:{{ navX }};box-shadow:{{ navShadow }};transition:transform 0.28s ease, box-shadow 0.28s ease">
+      <div style="position:absolute;top:0;right:0;bottom:0;width:14px;display:flex;align-items:center;justify-content:center;background:#FFFFFF;border-left:1px solid #DCDCD8;cursor:pointer">
+        <span style="writing-mode:vertical-rl;font:600 9.5px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.18em;color:#5F5F5B">MENU</span>
+      </div>
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="8">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <button type="button" onClick="{{ n.onClick }}" style="position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 13px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
+            <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}">
+              <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+            </sc-if>
+            <span style="position:relative;flex:0 0 18px;font:400 10.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.tag }}</span>
+            <span style="position:relative;flex:1;min-width:0;line-height:1.3;overflow-wrap:break-word">{{ n.label }}</span>
+            <sc-if value="{{ n.isGroup }}" hint-placeholder-val="{{ false }}">
+              <span style="position:relative;flex:none;font:400 11px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ n.chev }}</span>
+            </sc-if>
+          </button>
+          <sc-if value="{{ n.open }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:2px;margin-left:19px;padding-left:9px;border-left:1px solid #DCDCD8">
+              <sc-for list="{{ n.kids }}" as="c" hint-placeholder-count="2">
+                <button type="button" onClick="{{ c.onClick }}" style="position:relative;display:flex;align-items:center;width:100%;padding:6px 10px;border:0;border-radius:3px;background:transparent;color:#1F1F1D;cursor:pointer;font:400 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-align:left" style-hover="background:#EAEAE6">
+                  <sc-if value="{{ c.active }}" hint-placeholder-val="{{ false }}">
+                    <span style="position:absolute;inset:0;border-radius:3px;background:#E4E4DF;box-shadow:inset 2px 0 0 #E8B400"></span>
+                  </sc-if>
+                  <span style="position:relative;flex:1;min-width:0;line-height:1.3;overflow-wrap:break-word">{{ c.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+      <div style="margin-top:auto;padding:10px;font:400 11px/1.6 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">Reads live from the operations Google Sheet. No local cache.</div>
+    </aside>
+
+    <main style="flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:14px;padding:16px 20px 60px;margin-left:14px">
+
+      <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+          <span style="font:500 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.08em;text-transform:uppercase;color:#5F5F5B">{{ viewKicker }}</span>
+          <h1 style="margin:0;font:500 18px/1.3 'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D;text-wrap:pretty">{{ viewTitle }}</h1>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 8px;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px">
+          <span style="font:600 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;color:#1F1F1D">PERIOD</span>
+          <select value="{{ period }}" onChange="{{ onPeriod }}" style="padding:3px 6px;border:1px solid #DCDCD8;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;outline:none;cursor:pointer">
+            <option value="all">All time</option>
+            <sc-for list="{{ periodOptions }}" as="p" hint-placeholder-count="3">
+              <option value="{{ p.key }}">{{ p.label }}</option>
+            </sc-for>
+          </select>
+          <span style="width:1px;height:18px;background:#DCDCD8"></span>
+          <span style="font:600 11px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;color:#1F1F1D">BRANCH</span>
+          <select value="{{ branch }}" onChange="{{ onBranch }}" style="padding:3px 6px;border:1px solid #DCDCD8;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;outline:none;cursor:pointer">
+            <option value="all">All branches</option>
+            <sc-for list="{{ branchOptions }}" as="b" hint-placeholder-count="3">
+              <option value="{{ b.key }}">{{ b.label }}</option>
+            </sc-for>
+          </select>
+        </div>
+      </section>
+
+      <p style="margin:-4px 0 0;max-width:84ch;font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46;text-wrap:pretty">{{ viewSub }}</p>
+
+      <sc-if value="{{ error }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:12px 14px;border-radius:4px;background:#FBF1EF;border:1px solid #E2B8B1">
+          <div style="font:600 13px 'IBM Plex Sans',system-ui,sans-serif;color:#9B2C1F;margin-bottom:4px">Could not read the spreadsheet</div>
+          <div style="font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#3A3A37">{{ error }}</div>
+          <div style="margin-top:6px;font:400 12px/1.6 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">Share the file as “Anyone with the link — Viewer”, then press Re-sync data.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ dateWarn }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:12px 14px;border-radius:4px;background:#FBF5E6;border:1px solid #E3CF96">
+          <div style="font:600 13px 'IBM Plex Sans',system-ui,sans-serif;color:#7A4A10;margin-bottom:4px">Date format problem in the Tickets sheet</div>
+          <div style="font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#3A3A37">{{ dateWarnText }}</div>
+          <div style="margin-top:6px;font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46">To fix it, select the date and time columns (Date, Created, Send to CTSO, Solved, Solved by CSO and the rest), choose Format → Number → Plain text, paste the data again, then press Re-sync data.</div>
+        </div>
+      </sc-if>
+
+      <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px;overflow:hidden">
+        <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:12px 14px;background:#FFFFFF;box-shadow:1px 0 0 #DCDCD8, 0 1px 0 #DCDCD8">
+            <span style="font:500 10.5px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5F5F5B">{{ k.label }}</span>
+            <span style="font:500 22px/1.1 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:-0.02em;color:#1F1F1D">{{ k.value }}</span>
+            <span style="font:400 12px/1.45 'IBM Plex Sans',system-ui,sans-serif;color:#5F5F5B;text-wrap:pretty">{{ k.sub }}</span>
+          </div>
+        </sc-for>
+      </section>
+
+      <section style="display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:start">
+        <sc-for list="{{ cards }}" as="c" hint-placeholder-count="4">
+          <div style="{{ c.grid }}">
+            <div style="display:flex;flex-direction:column;gap:12px;padding:14px 16px 16px;background:#FFFFFF;border:1px solid #DCDCD8;border-radius:4px">
+              <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px">
+                <h2 style="margin:0;padding-bottom:3px;border-bottom:2px solid #E8B400;font:600 11.5px/1.3 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.1em;text-transform:uppercase;color:#1F1F1D">{{ c.title }}</h2>
+                <span style="font:400 11.5px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">{{ c.meta }}</span>
+              </div>
+              <sc-if value="{{ c.sub }}" hint-placeholder-val="{{ false }}">
+                <p style="margin:0;font:400 12.5px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46;text-wrap:pretty">{{ c.sub }}</p>
+              </sc-if>
+              <div style="min-width:0">{{ c.body }}</div>
+              <sc-if value="{{ c.note }}" hint-placeholder-val="{{ false }}">
+                <p style="margin:0;padding-top:10px;border-top:1px solid #EBEBE7;font:400 12px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#5F5F5B;text-wrap:pretty">{{ c.note }}</p>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </section>
+
+      <footer style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:4px;font:400 11px 'IBM Plex Mono',ui-monospace,monospace;color:#5F5F5B">
+        <span>GlobalXtreme · PT. Internet Madju Abad Milenindo — Customer Service &amp; Customer Experience</span>
+        <span>{{ engineLine }}</span>
+      </footer>
+    </main>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;sheetUrl&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;https://docs.google.com/spreadsheets/d/16_wxt9NtC61vaww_7HIW15PNrY6E-iPQDfBbllM-jg4/edit&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Data source&quot;},&quot;frtSla&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:5,&quot;min&quot;:1,&quot;max&quot;:30,&quot;step&quot;:1,&quot;unit&quot;:&quot; min&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Service levels&quot;},&quot;rtSla&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:2,&quot;min&quot;:1,&quot;max&quot;:15,&quot;step&quot;:1,&quot;unit&quot;:&quot; min&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Service levels&quot;},&quot;topN&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:12,&quot;min&quot;:5,&quot;max&quot;:40,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Display&quot;}}">
+class Component extends DCLogic {
+  state = {
+    view: 'overview', period: 'all', branch: 'all', navOpen: true, mapShowF: false,
+    dspTick: 0,
+    index: null, data: {}, busy: true, error: null,
+    trk: { sel: null, day: 0, t: null, playing: false, speed: 180, show: true }, tDraft: null, tMsg: null,
+    adm: { path: [], show: true, legend: true, p: { mode: 'all', y: new Date().getFullYear(), m: new Date().getMonth(), d: new Date().getDate() } },
+    mapF: { colorBy: 'status', status: [true, true, true], hide: {}, wd: [true, true, false], wdOnly: false, display: 'points', heatCat: 'all', heatR: 20, ptA: 1, heatA: 0.8, areaA: 1 },
+    grid: (() => { try { const g = JSON.parse(localStorage.getItem('gx.workAreas.v1')); if (g && g.size && Array.isArray(g.teams) && g.cells) return g; } catch (e) {} return { size: 1000, teams: [], cells: {} }; })(),
+    gridUI: { show: true, edit: false, team: null, brush: 3, erase: false }, gridMsg: null, splitN: 20, splitCover: 'buffer', splitZone: 'ubud', splitMax: 60, splitSpeed: 30, splitBal: 'size',
+    splitBasis: { mode: 'cust', st: [true, false, false], wo: { WWR: true, WCM: true }, ws: [true, true, false] },
+    swapBy: {}, blockedBy: {}, swapBusy: false, swapProgress: 0, tick: 0,
+    w: typeof window !== 'undefined' ? window.innerWidth : 1400,
+  };
+
+  onResize = () => {
+    const w = window.innerWidth;
+    if (Math.abs(w - this.state.w) > 40) this.setState({ w });
+  };
+
+  componentWillUnmount() { window.removeEventListener('resize', this.onResize); window.removeEventListener('keydown', this.onUndoKey); document.removeEventListener('fullscreenchange', this.onFsChange); if (this.mapApi) this.mapApi.destroy(); if (this.track) this.track.stop(); clearInterval(this.playTimer); }
+
+  async componentDidMount() {
+    window.addEventListener('resize', this.onResize);
+    this.navTimer = setTimeout(() => this.setState({ navOpen: false }), 3000);
+    this.onUndoKey = ev => {
+      if (this.state.view !== 'map' || !(ev.ctrlKey || ev.metaKey) || ev.shiftKey || String(ev.key).toLowerCase() !== 'z') return;
+      if (/^(INPUT|TEXTAREA)$/.test((ev.target && ev.target.tagName) || '')) return;
+      ev.preventDefault(); this.undoGrid();
+    };
+    this.onEscFull = ev => { if (ev.key === 'Escape' && this.state.mapFull && !document.fullscreenElement) this.toggleMapFull(); };
+    window.addEventListener('keydown', this.onEscFull);
+    window.addEventListener('keydown', this.onUndoKey);
+    document.addEventListener('fullscreenchange', this.onFsChange);
+    try {
+      const [D, C] = await Promise.all([import('./gxdata.js'), import('./gxcharts-v2.js')]);
+      this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
+      D.setSheetUrl(this.props.sheetUrl);
+      const index = await D.loadIndex();
+      const current = index.periods.find(p => p.sort <= index.nowKey);
+      const period = current ? current.key : 'all';
+      this.setState({ index, period }, () => this.load());
+    } catch (e) { this.setState({ busy: false, error: e.message }); }
+  }
+
+  componentDidUpdate(prev) {
+    if (prev.sheetUrl !== this.props.sheetUrl && this.D) {
+      this.D.setSheetUrl(this.props.sheetUrl); this.refresh();
+    }
+    if (prev.frtSla !== this.props.frtSla || prev.rtSla !== this.props.rtSla) {
+      const data = { ...this.state.data }; delete data.chat;
+      this.setState({ data }, () => this.load());
+    }
+    this.syncMap();
+    this.syncGrid();
+    this.syncTrack();
+    this.syncAdmin();
+    this.syncPlan();
+  }
+
+  key(view) {
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map' };
+    return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
+  }
+
+  async load() {
+    const { view } = this.state;
+    const k = this.key(view);
+    if (this.state.data[k]) { this.setState({ busy: false }); this.ensureTrends(view); this.ensureAgents(view); return; }
+    this.setState({ busy: true, error: null });
+    const D = this.D, p = this.state.period, b = this.state.branch;
+    const jobs = {
+      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadChat(this.sla(), this.rtSla()), D.loadCsat(p), D.loadRepeat(p, b), D.loadComplaintTop(p, b)])
+        .then(([tickets, esc, chat, csat, repeat, complaints]) => ({ tickets, esc, chat, csat, repeat, complaints })),
+      tickets: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadResolution(p, b), D.loadRepeat(p, b)])
+        .then(([tickets, esc, res, repeat]) => ({ tickets, esc, res, repeat })),
+      escalation: () => D.loadEscalation(p, b),
+      resolution: () => D.loadResolution(p, b),
+      agents: () => D.loadAgents(p, b),
+      customers: () => D.loadRepeat(p, b),
+      chat: () => D.loadChat(this.sla(), this.rtSla()),
+      csat: () => D.loadCsat(p),
+      growth: () => D.loadGrowth('retail'),
+      intracity: () => D.loadGrowth('intracity'),
+      map: () => D.loadMap(),
+      dispatch: () => D.loadMap(),
+      dispatchWcm: () => D.loadMap(),
+    };
+    try {
+      const seg = this.seg(view);
+      if (seg) this.startCustomerJobs(seg);
+      const res = await (jobs[view] || (() => Promise.resolve({})))();
+      this.setState(s => ({ data: { ...s.data, [k]: res }, busy: false, tick: s.tick + 1 }), () => {
+        this.ensureTrends(view);
+        this.ensureAgents(view);
+        // Overview's growth flash loads only after its ticket panels have painted.
+        if (view !== 'overview') return;
+        if (!this.state.data.growth && !this.growthLoading) {
+          this.growthLoading = true;
+          D.loadGrowth('retail').then(gr => this.setState(s => ({ data: { ...s.data, growth: gr } })))
+            .catch(() => {}).finally(() => { this.growthLoading = false; });
+        }
+        this.startCustomerJobs('retail');
+      });
+    } catch (e) { this.setState({ busy: false, error: e.message }); }
+  }
+
+  startCustomerJobs(seg) {
+    const D = this.D;
+    this.blockedLoading = this.blockedLoading || {};
+    if (!this.state.swapBy[seg] && !this.state.swapBusy) this.runSwap(seg);
+    if (!this.state.blockedBy[seg] && !this.blockedLoading[seg]) {
+      this.blockedLoading[seg] = true;
+      const put = v => this.setState(s => ({ blockedBy: { ...s.blockedBy, [seg]: v } }));
+      D.loadBlocked(seg).then(put).catch(e => put({ error: e.message }))
+        .finally(() => { this.blockedLoading[seg] = false; });
+    }
+  }
+  // CSO workload lives on the Chat page but follows period and branch, so it loads under its own key.
+  ensureAgents(view) {
+    if (view !== 'chat') return;
+    const k = 'agents|' + this.state.period + '|' + this.state.branch;
+    if (this.state.data[k] || this.agentsLoading === k) return;
+    this.agentsLoading = k;
+    const put = v => this.setState(s => ({ data: { ...s.data, [k]: v } }));
+    this.D.loadAgents(this.state.period, this.state.branch).then(put).catch(e => put({ error: e.message }))
+      .finally(() => { if (this.agentsLoading === k) this.agentsLoading = null; });
+  }
+  // Stacks several former pages on one: the first keeps the page KPIs, later ones get a header card with their KPIs.
+  mergedView(sections) {
+    const out = { kpis: [], cards: [] };
+    sections.forEach(([title, sub, v], n) => {
+      if (!n) { out.kpis = v.kpis || []; out.cards.push(...(v.cards || [])); return; }
+      out.cards.push(this.card(title, {
+        span: 12, sub,
+        body: (v.kpis || []).length ? this.statRow(v.kpis) : null,
+      }));
+      out.cards.push(...(v.cards || []));
+    });
+    return out;
+  }
+  ensureTrends(view) {
+    if (!['overview', 'tickets', 'csat'].includes(view)) return;
+    const k = 'trends|' + this.state.branch;
+    if (this.state.data[k] || this.trendsLoading === k) return;
+    this.trendsLoading = k;
+    const put = v => this.setState(s => ({ data: { ...s.data, [k]: v } }));
+    this.D.loadTrends(this.state.branch).then(put).catch(e => put({ error: e.message }))
+      .finally(() => { if (this.trendsLoading === k) this.trendsLoading = null; });
+  }
+
+  /* ---------- week / month / year comparison ---------- */
+
+  h(tag, style, ...kids) { return React.createElement(tag, { style }, ...kids); }
+
+  chip(cur, prev, m, vs, covered) {
+    const h = this.h.bind(this), D = this.D;
+    const mono = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
+    const muted = { font: mono, color: '#5F5F5B', whiteSpace: 'nowrap' };
+    if (!covered || cur == null || prev == null) return h('span', muted, 'no data ' + vs);
+    let dir, txt;
+    if (m.mode === 'pp') { const dv = (cur - prev) * 100; dir = Math.abs(dv) < 0.05 ? 0 : Math.sign(dv); txt = (dv >= 0 ? '+' : '') + dv.toFixed(1) + ' pp'; }
+    else if (m.mode === 'abs') { const dv = cur - prev; dir = Math.sign(dv); txt = (dv >= 0 ? '+' : '') + D.fmtInt(dv); }
+    else {
+      if (!prev) return h('span', muted, (cur ? 'new ' : '– ') + vs);
+      const r = (cur - prev) / prev; dir = Math.abs(r) < 0.005 ? 0 : Math.sign(r); txt = (r >= 0 ? '+' : '') + (r * 100).toFixed(1) + '%';
+    }
+    const good = m.better === 'up' ? dir > 0 : dir < 0;
+    const color = !dir || !m.better ? '#5F5F5B' : good ? '#2E6B34' : '#9B2C1F';
+    return h('span', { font: mono, whiteSpace: 'nowrap', color: '#5F5F5B' },
+      h('span', { color, fontWeight: 600 }, (dir > 0 ? '▲ ' : dir < 0 ? '▼ ' : '■ ') + txt), ' ' + vs);
+  }
+
+  cmpCell(value, ...chips) {
+    const h = this.h.bind(this);
+    return h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 },
+      h('span', { font: "500 14px 'IBM Plex Mono',ui-monospace,monospace", color: '#1F1F1D' }, value), ...chips);
+  }
+
+  thLabel(title, range) {
+    const h = this.h.bind(this);
+    return h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 },
+      h('span', null, title), h('span', { textTransform: 'none', letterSpacing: 0, fontWeight: 400 }, range));
+  }
+
+  opsCompareCard(view, span) {
+    const D = this.D, T = this.state.data['trends|' + this.state.branch];
+    const title = 'Week, month and year comparison';
+    if (!T) return this.card(title, { span, meta: 'loading', body: this.h('div', { height: 120, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) });
+    if (T.error || T.empty) return this.card(title, { span, body: this.h('p', { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B' }, T.error || 'No dated tickets yet.') });
+    const pct = v => v == null ? '—' : D.fmtPct(v);
+    const all = [
+      { id: 't', label: 'Trouble tickets', get: x => x.tickets, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Complaints', get: x => x.complaints, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Complaint share', get: x => x.tickets ? x.complaints / x.tickets : null, fmt: pct, better: 'down', mode: 'pp' },
+      { id: 't', label: 'Mass-problem tickets', get: x => x.mass, fmt: D.fmtInt, better: 'down' },
+      { id: 't', label: 'Work orders raised', get: x => x.wo, fmt: D.fmtInt },
+      { id: 'c', label: 'CSAT (rated 4–5)', get: x => x.csatN ? x.csatTop2 / x.csatN : null, fmt: pct, better: 'up', mode: 'pp' },
+      { id: 'c', label: 'CSAT average', get: x => x.csatN ? x.csatScore / x.csatN : null, fmt: v => v == null ? '—' : v.toFixed(2), better: 'up', mode: 'score' },
+      { id: 'c', label: 'CSAT responses', get: x => x.csatN, fmt: D.fmtInt },
+    ];
+    const keep = { overview: ['t', 'c'], tickets: ['t'], csat: ['c'] }[view];
+    const rows = all.filter(m => keep.includes(m.id) && !(view === 'overview' && m.mode === 'score'));
+    rows.forEach(m => { if (m.mode === 'score') m.mode = 'scoreAbs'; });
+    const ch = (m, a, b, vs) => {
+      const cur = m.get(a), prev = m.get(b);
+      if (m.mode === 'scoreAbs') {
+        if (!b.covered || cur == null || prev == null) return this.chip(null, null, m, vs, false);
+        const dv = cur - prev, dir = Math.abs(dv) < 0.005 ? 0 : Math.sign(dv);
+        const color = !dir ? '#5F5F5B' : dir > 0 ? '#2E6B34' : '#9B2C1F';
+        return this.h('span', { font: "500 11px 'IBM Plex Mono',ui-monospace,monospace", whiteSpace: 'nowrap', color: '#5F5F5B' },
+          this.h('span', { color, fontWeight: 600 }, (dir > 0 ? '▲ ' : dir < 0 ? '▼ ' : '■ ') + (dv >= 0 ? '+' : '') + dv.toFixed(2)), ' ' + vs);
+      }
+      return this.chip(cur, prev, m, vs, b.covered);
+    };
+    const fd = d => d.getDate() + ' ' + D.MON3[d.getMonth()];
+    const body = this.table(
+      ['Metric', this.thLabel('Last 7 days', fd(T.week.from) + ' – ' + fd(T.week.to)), this.thLabel('Month to date', fd(T.mtd.from) + ' – ' + fd(T.mtd.to)), this.thLabel('Year to date', fd(T.ytd.from) + ' – ' + fd(T.ytd.to) + ' ' + T.ref.getFullYear())],
+      rows.map(m => [m.label,
+        this.cmpCell(m.fmt(m.get(T.week)), ch(m, T.week, T.prevWeek, 'vs prior week')),
+        this.cmpCell(m.fmt(m.get(T.mtd)), ch(m, T.mtd, T.prevMtd, 'vs last month'), ch(m, T.mtd, T.lyMtd, 'vs last year')),
+        this.cmpCell(m.fmt(m.get(T.ytd)), ch(m, T.ytd, T.lyYtd, 'vs last year'))]),
+      { minWidth: 560 });
+    return this.card(title, {
+      span, meta: 'complete days up to ' + fd(T.ref) + ' ' + T.ref.getFullYear(),
+      body,
+      note: 'Each period is compared with the same number of calendar days before it: last month and last year use days 1–' + T.ref.getDate() + ' only. Green means the change is favourable, red unfavourable, grey neutral.' + (keep.includes('c') ? ' CSAT is not split by branch.' : '') + ' Data starts ' + fd(T.first) + ' ' + T.first.getFullYear() + '; comparisons before that show "no data".',
+    });
+  }
+
+  growthCompareCard(g, seg, span) {
+    const D = this.D, title = 'Month-on-month and year-on-year accounts';
+    if (!g || !g.monthlySeries) return this.card(title, { span, meta: 'loading', body: this.h('div', { height: 120, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) });
+    const sw = this.state.swapBy[seg], s = sw && !sw.error ? sw : null;
+    const bR = this.state.blockedBy[seg], bl = bR && !bR.error ? bR : null;
+    const now = new Date(), L = now.getFullYear() * 12 + now.getMonth() - 1;
+    const by = new Map(g.monthlySeries.map(x => [x.mk, x]));
+    const minMk = Math.min(...g.monthlySeries.map(x => x.mk));
+    const lab = mk => D.MON3[mk % 12] + " '" + String(Math.floor(mk / 12)).slice(2);
+    const fromSeries = f => mk => mk < minMk ? null : f(by.get(mk) || { added: 0, lost: 0 });
+    const fromMap = (src, ready) => mk => ready ? (src[mk] || 0) : null;
+    const rows = [
+      { label: 'New activations', get: fromSeries(x => x.added), better: 'up' },
+      { label: 'Terminations', get: fromSeries(x => x.lost), better: 'down' },
+      { label: 'Net change', get: fromSeries(x => x.added - x.lost), better: 'up', mode: 'abs', sign: true },
+      { label: 'True churn', get: fromMap(s && s.realByMonth || {}, !!(s && s.realByMonth)), better: 'down', pending: this.state.swapBusy ? 'scanning…' : '—' },
+      { label: 'Blocked accounts', get: fromMap(bl && bl.byMonth || {}, !!(bl && bl.byMonth)), better: 'down', pending: 'loading' },
+    ];
+    const fv = (m, v) => v == null ? (m.pending || '—') : (m.sign && v > 0 ? '+' : '') + D.fmtInt(v);
+    const was = v => this.h('span', { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#5F5F5B' }, 'was ' + v);
+    const vsCell = (m, mk, tag) => {
+      const cur = m.get(L), prev = m.get(mk);
+      if (cur == null || prev == null) return this.cmpCell(fv(m, prev), this.chip(null, null, m, tag, false));
+      return this.h('div', { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }, this.chip(cur, prev, m, tag, true), was(fv(m, prev)));
+    };
+    return this.card(title, {
+      span, meta: 'last complete month · ' + lab(L),
+      body: this.table(['Metric', lab(L), 'vs ' + lab(L - 1), 'vs ' + lab(L - 12)],
+        rows.map(m => [m.label, this.cmpCell(fv(m, m.get(L))), vsCell(m, L - 1, 'MoM'), vsCell(m, L - 12, 'YoY')]), { minWidth: 420 }),
+      note: lab(L + 1) + ' is still running, so the latest complete month is compared. ' + (seg === 'intracity' ? 'Intracity plans only.' : 'Retail only; Intracity plans excluded.'),
+    });
+  }
+
+  /* ---------- customer map ---------- */
+
+  mapBranchIdx(m) {
+    if (!m || this.state.branch === 'all') return -1;
+    const norm = s => String(s).replace(/^GlobalXtreme\s*/i, '').trim().toLowerCase();
+    return m.branches.findIndex(b => norm(b) === norm(this.state.branch));
+  }
+
+  mapCounts(m, bi) {
+    const ck = bi + '|' + m.count;
+    if (this._mapCnt && this._mapCnt.m === m && this._mapCnt.k === ck) return this._mapCnt.v;
+    const st = [0, 0, 0], prod = m.products.map(() => [0, 0, 0]), none = [0, 0, 0], wd = [0, 0, 0];
+    for (let i = 0; i < m.count; i++) { if (bi >= 0 && m.branch[i] !== bi) continue; st[m.status[i]]++; prod[m.product[i]][m.status[i]]++; if (m.wd[i] >= 0) wd[m.wd[i]]++; }
+    m.noCoord.forEach(([s, , b]) => { if (bi < 0 || b === bi) none[s]++; });
+    const v = { st, prod, none, wd };
+    this._mapCnt = { m, k: ck, v };
+    return v;
+  }
+
+  mapRef = el => {
+    if (el === this.mapEl) return;
+    if (this.mapApi) { this.mapApi.destroy(); this.mapApi = null; }
+    this.mapEl = el; this.mapSig = null;
+    const data = this.state.data.map;
+    if (!el || !data) return;
+    this._gSent = null;
+    import('./gxmap.js').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
+      .then(api => { if (this.mapEl !== el) { api.destroy(); return; } this.mapApi = api; this.routeFit = null; this._admFit = null; this.syncMap(); this.syncGrid(); this.syncTrack(); this.syncAdmin(); this._planSent = undefined; this.syncPlan(); this.forceUpdate(); })
+      .catch(e => { el.textContent = e.message; });
+  };
+
+  syncMap() {
+    const m = this.state.data.map;
+    if (!this.mapApi || !m) return;
+    const bi = this.mapBranchIdx(m), dsp = this.isDsp();
+    // Dispatch planner: keep customers as a faint backdrop so the routes read clearly.
+    const F = dsp ? { ...this.state.mapF, display: 'points', ptA: Math.min(this.state.mapF.ptA, 0.25), wdOnly: false } : this.state.mapF;
+    const sig = JSON.stringify([F, bi]);
+    if (sig === this.mapSig) return;
+    const fit = !this.mapSig || JSON.parse(this.mapSig)[1] !== bi;
+    this.mapSig = sig;
+    this.mapApi.set({ ...F, branch: bi, fit });
+  }
+
+  searchMap = async () => {
+    const q = (this.mapQ || '').trim();
+    if (!q || !this.mapApi) return;
+    const i = this.mapApi.find(q);
+    if (i >= 0) {
+      this.mapApi.focus(i);
+      const m = this.state.data.map, F = this.state.mapF, bi = this.mapBranchIdx(m);
+      const hidden = !F.status[m.status[i]] || F.hide[m.product[i]] || (bi >= 0 && m.branch[i] !== bi);
+      this.setState({ mapMsg: { ok: true, text: 'Found ' + q + (hidden ? ' — hidden by the current filters, marked with a ring' : '') } });
+      return;
+    }
+    this.setState({ mapMsg: { ok: false, text: 'Searching the sheet…' } });
+    try {
+      const r = await this.D.findCustomer(q);
+      this.setState({ mapMsg: { ok: false, text: !r ? 'No account with CID or UID "' + q + '".'
+        : (r.name || q) + ' (' + r.status + ') is not on the map: ' + (/^(Active|Blocked|Termination|Termination in Progress)$/.test(r.status) ? 'coordinates missing or unreadable' + (r.coord ? ' ("' + r.coord + '")' : '') : 'status ' + r.status + ' is not plotted') + '.' } });
+    } catch (e) { this.setState({ mapMsg: { ok: false, text: e.message } }); }
+  };
+
+  setMapF(patch) { this.setState(s => ({ mapF: { ...s.mapF, ...patch } })); }
+  toggleMapFull = () => {
+    const on = !this.state.mapFull, el = this.mapFrameEl;
+    this.setState({ mapFull: on }, () => setTimeout(() => this.mapApi && this.mapApi.resize(), 60));
+    try {
+      if (on && el && el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {});
+      if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch (e) {}
+  };
+  onFsChange = () => {
+    if (!document.fullscreenElement && this.state.mapFull) this.setState({ mapFull: false }, () => setTimeout(() => this.mapApi && this.mapApi.resize(), 60));
+    else setTimeout(() => this.mapApi && this.mapApi.resize(), 60);
+  };
+  /* ---------- administrative areas ---------- */
+
+  setAdm(p) { this.setState(s => ({ adm: { ...s.adm, ...p } })); }
+  setAdmPeriod(p) { this.setState(s => ({ adm: { ...s.adm, p: { ...s.adm.p, ...p } } })); }
+  admPick(level, code) {
+    const path = this.state.adm.path.slice(0, level);
+    if (code) path[level] = code;
+    this.setState({ admHi: null }); this.setAdm({ path });
+  }
+  admProv() { return this.bpsProv || (this.AD && this.AD.online); }
+  applyBps = async (files, save) => {
+    if (!files || !files.length) return;
+    this.setState({ bpsMsg: { ok: true, text: 'Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '\u2026' } });
+    try {
+      const A = this.AD, feats = [];
+      for (const f of files) feats.push(...await A.readBoundaryFile(f));
+      const prov = A.buildBps(feats, files.map(f => f.name).join(', '));
+      if (save) await A.saveFiles(files).catch(() => {});
+      this.bpsProv = prov; this._admInfo = null;
+      this.setState({ bpsMsg: { ok: true, text: prov.desaCount.toLocaleString('en-US') + ' desa/kelurahan loaded' + (prov.skipped ? ' \u00b7 ' + prov.skipped + ' features without a BPS code skipped' : '') } });
+      this.setAdm({ path: prov.provinces.length === 1 ? [prov.provinces[0].code] : [] });
+    } catch (e) { this.setState({ bpsMsg: { ok: false, text: e.message } }); }
+  };
+  clearBps = () => { this.bpsProv = null; this._admInfo = null; this.AD && this.AD.clearSaved(); this.setState({ bpsMsg: null }); this.setAdm({ path: [] }); };
+  // Load boundary files down the selected path and split mapped points among them.
+  admLevels(m) {
+    if (!this.AD) {
+      if (!this._admImp) this._admImp = import('./gxadmin.js').then(A => { this.AD = A; A.loadSaved().then(f => { if (f.length) this.applyBps(f, false); }).catch(() => {}); this.forceUpdate(); }).catch(e => { this._admErr = e.message; this.forceUpdate(); });
+      return null;
+    }
+    const A = this.AD, P = this.admProv(), path = this.state.adm.path, C = this._admC || (this._admC = {});
+    if (this._admM !== m) { this._admM = m; for (const k in C) delete C[k]; }
+    const out = [];
+    let parentMembers = null;
+    for (let lv = 1; lv <= 3 && path[lv - 1]; lv++) {
+      const key = P.key + '|' + lv + '|' + path[lv - 1], e = C[key];
+      if (!e) {
+        C[key] = { loading: true };
+        const pm = parentMembers;
+        P.children(lv, path[lv - 1]).then(areas => { C[key] = { areas, members: A.assign(areas, m, pm) }; this.forceUpdate(); })
+          .catch(err => { C[key] = { error: err.message }; this.forceUpdate(); });
+        out.push(C[key]); break;
+      }
+      out.push(e);
+      if (!e.areas) break;
+      const ix = e.areas.findIndex(a => a.code === path[lv]);
+      parentMembers = ix >= 0 ? e.members[ix] : null;
+      if (!parentMembers) break;
+    }
+    return out;
+  }
+  admInfo(m) {
+    const A = this.AD, lvls = this.admLevels(m), path = this.state.adm.path;
+    if (!A || !lvls) return { loading: true, path, lvls: [], names: [] };
+    const R = A.periodRange(this.state.adm.p);
+    const sig = [this.admProv().key, path.join('/'), JSON.stringify(this.state.adm.p), lvls.map(l => l.areas ? 'a' : 'x').join('')].join('|');
+    if (this._admInfo && this._admInfo.sig === sig && this._admInfo.m === m) return this._admInfo.v;
+    const last = lvls[lvls.length - 1], ready = lvls.length && last.areas;
+    let members = null, names = [], view = null;
+    if (!path[0]) { members = this._allIdx && this._allIdx.length === m.count ? this._allIdx : (this._allIdx = Int32Array.from({ length: m.count }, (x, i) => i)); }
+    else {
+      const prov = this.admProv().provinces.find(p => p.code === path[0]); names.push(prov ? prov.name : path[0]);
+      if (lvls[0] && lvls[0].areas) members = A.concat(lvls[0].members);
+      for (let lv = 1; lv < path.length; lv++) {
+        const e = lvls[lv - 1]; if (!e || !e.areas) { members = null; break; }
+        const ix = e.areas.findIndex(a => a.code === path[lv]); if (ix < 0) break;
+        names.push(e.areas[ix].name); members = e.members[ix];
+      }
+    }
+    if (ready) {
+      const deepest = path.length >= 4;
+      const e = deepest ? lvls[2] : last;
+      const parentLv = deepest ? 2 : lvls.length - 1;
+      const pe = parentLv >= 1 ? lvls[parentLv - 1] : null, pArea = pe && pe.areas ? pe.areas.find(a => a.code === path[parentLv]) : null;
+      view = { key: e.areas.map(a => a.code)[0] + '|' + e.areas.length, areas: e.areas, members: e.members, sel: deepest ? path[3] : null, parent: pArea ? pArea.geometry : null, level: deepest ? 3 : lvls.length };
+      view.rows = e.areas.map((a, i) => ({ code: a.code, name: a.name, s: A.stats(m, e.members[i], R) }));
+    }
+    const v = { path, lvls, names, view, R, s: members ? A.stats(m, members, R) : null, loading: lvls.some(l => l.loading), error: (lvls.find(l => l.error) || {}).error };
+    this._admInfo = { sig, m, v };
+    return v;
+  }
+  syncAdmin() {
+    const api = this.mapApi, m = this.state.data.map;
+    if (!api || !api.setAdmin || !m || this.state.view !== 'map') return;
+    const info = this.admInfo(m), a = this.state.adm, vw = info.view;
+    if (!vw) { api.setAdmin(null); return; }
+    const fitSig = a.path.join('/');
+    const fit = this._admFit !== fitSig; this._admFit = fitSig;
+    api.setAdmin({ key: this.admProv().key + '|' + vw.key, areas: vw.areas, sel: vw.sel, hi: this.state.admHi, parent: vw.parent, show: a.show, fit, contains: this.AD.contains,
+      onClick: (code, ll) => this.admPopup(code, ll) });
+  }
+  admPopup(code, ll) {
+    const m = this.state.data.map, info = this.admInfo(m), vw = info.view, r = vw && vw.rows.find(x => x.code === code);
+    if (!r || !this.mapApi) return;
+    this.setState({ admHi: code });
+    const D = this.D, esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const St = m.statuses, s = r.s, R = info.R;
+    const crumbs = (vw.level === 3 ? info.names.slice(0, 3) : info.names).join(' \u203a ');
+    const ln = (label, color, v) => '<div style="display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:' + color + '"></span><span style="color:#3A3A37">' + label + '</span><span style="font:500 12px \'IBM Plex Mono\',ui-monospace,monospace;color:#1F1F1D;text-align:right">' + v + '</span></div>';
+    const hd = t => '<div style="font:600 9.5px \'IBM Plex Mono\',ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:#8A8A85;margin-top:6px">' + t + '</div>';
+    const labels = R ? ['Active at period end', 'Blocked at period end', 'Terminated in period'] : ['Active', 'Blocked', 'Terminated'];
+    const next = vw.level < 3 ? this.AD.LEVELS[vw.level + 1] : null;
+    const html = '<div style="font:400 12px \'IBM Plex Sans\',system-ui,sans-serif;color:#1F1F1D;display:flex;flex-direction:column;gap:3px">'
+      + (crumbs ? '<div style="font-size:10.5px;color:#8A8A85">' + esc(crumbs) + '</div>' : '')
+      + '<div style="font-weight:600;font-size:14px">' + esc(r.name) + '</div>'
+      + '<div style="font:500 10.5px \'IBM Plex Mono\',ui-monospace,monospace;color:#5F5F5B">' + esc(this.AD.LEVELS[vw.level]) + ' \u00b7 ' + esc(this.admPeriodLabel()) + '</div>'
+      + hd('Customers') + St.map((x, i) => ln(labels[i], x.color, D.fmtInt(s.n[i]))).join('')
+      + hd('Revenue \u00b7 MRC') + ln('Revenue in', St[0].color, D.fmtRp(s.rev[0])) + ln('Revenue lost', St[2].color, D.fmtRp(s.rev[2])) + ln('Pending (blocked)', St[1].color, D.fmtRp(s.rev[1]))
+      + hd('Work orders' + (R ? ' in period' : '')) + ln('WWR \u00b7 wiredown', '#D9480F', D.fmtInt(s.wwr)) + ln('WCM \u00b7 maintenance', '#1C64B4', D.fmtInt(s.wcm))
+      + (next ? '<button type="button" data-adm-act="drill" style="margin-top:8px;padding:6px 10px;border:1px solid #1F1F1D;border-radius:3px;background:#1F1F1D;color:#FFFFFF;font:500 12px \'IBM Plex Sans\',system-ui,sans-serif;cursor:pointer">Open ' + esc(next.toLowerCase()) + ' \u203a</button>' : '')
+      + '</div>';
+    this.mapApi.adminPopup(ll, html, act => { if (act === 'drill') this.admPick(vw.level, code); });
+  }
+  admPeriodLabel() {
+    const p = this.state.adm.p, D = this.D;
+    if (p.mode === 'all') return 'All time · current status';
+    if (p.mode === 'year') return String(p.y);
+    if (p.mode === 'month') return D.MON3[p.m] + ' ' + p.y;
+    return p.d + ' ' + D.MON3[p.m] + ' ' + p.y;
+  }
+  admControls(m, row, chip, sans, mono) {
+    const e = React.createElement, A = this.AD, info = this.admInfo(m), a = this.state.adm, p = a.p;
+    const sel = (key, value, ph, opts, onChange, disabled) => e('select', { key, value: value || '', disabled, onChange: ev => onChange(ev.target.value),
+      style: { padding: '5px 8px', border: '1px solid ' + (value ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: disabled ? '#F4F4F2' : '#FFFFFF', color: '#1F1F1D', font: sans, cursor: disabled ? 'default' : 'pointer', maxWidth: 220 } },
+      e('option', { value: '' }, ph), ...opts.map(o => e('option', { key: o.code, value: o.code }, o.name)));
+    const lv = info.lvls || [];
+    const opt = i => (lv[i] && lv[i].areas) || [];
+    const area = row('Area', [
+      sel('ap', a.path[0], this.bpsProv ? 'All provinces in file' : 'Indonesia — all provinces', A ? this.admProv().provinces : [], v => this.admPick(0, v), !A),
+      sel('ak', a.path[1], 'All kabupaten/kota', opt(0), v => this.admPick(1, v), !opt(0).length),
+      sel('ac', a.path[2], 'All kecamatan', opt(1), v => this.admPick(2, v), !a.path[1] || !opt(1).length),
+      sel('al', a.path[3], 'All kelurahan/desa', opt(2), v => this.admPick(3, v), !a.path[2] || !opt(2).length),
+      chip('ab', a.show, 'Boundaries', '#1F1F1D', null, () => this.setAdm({ show: !a.show })),
+      info.loading ? e('span', { key: 'al2', style: { font: sans, color: '#5F5F5B' } }, 'Loading boundaries…') : null,
+      info.error ? e('span', { key: 'ae', style: { font: sans, color: '#B23A2E' } }, info.error) : null,
+    ]);
+    const now = new Date(), y0 = this._admY0 || (this._admY0 = (() => { let mn = now.getFullYear(); for (let i = 0; i < m.count; i++) { const s = m.start[i]; if (s > 0) { const y = new Date(s).getFullYear(); if (y < mn && y > 1990) mn = y; } } return mn; })());
+    const years = []; for (let y = now.getFullYear(); y >= y0; y--) years.push({ code: String(y), name: String(y) });
+    const dim = new Date(p.y, +p.m + 1, 0).getDate(), days = Array.from({ length: dim }, (x, i) => ({ code: String(i + 1), name: String(i + 1) }));
+    const plain = (key, value, opts, onChange) => e('select', { key, value: String(value), onChange: ev => onChange(ev.target.value),
+      style: { padding: '5px 8px', border: '1px solid #1F1F1D', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer' } }, ...opts.map(o => e('option', { key: o.code, value: o.code }, o.name)));
+    const period = row('Period', [
+      chip('pa', p.mode === 'all', 'All time', null, null, () => this.setAdmPeriod({ mode: 'all' })),
+      chip('py', p.mode === 'year', 'Year', null, null, () => this.setAdmPeriod({ mode: 'year' })),
+      chip('pm', p.mode === 'month', 'Month', null, null, () => this.setAdmPeriod({ mode: 'month' })),
+      chip('pd', p.mode === 'day', 'Day', null, null, () => this.setAdmPeriod({ mode: 'day' })),
+      p.mode === 'day' ? plain('sd', Math.min(p.d, dim), days, v => this.setAdmPeriod({ d: +v })) : null,
+      p.mode === 'day' || p.mode === 'month' ? plain('sm', p.m, this.D.MON3.map((n, i) => ({ code: String(i), name: n })), v => this.setAdmPeriod({ m: +v, d: Math.min(p.d, new Date(p.y, +v + 1, 0).getDate()) })) : null,
+      p.mode !== 'all' ? plain('sy', p.y, years, v => this.setAdmPeriod({ y: +v })) : null,
+    ]);
+    const bm = this.state.bpsMsg, btn = (key, label, onClick, dark) => e('button', { key, type: 'button', onClick, style: { padding: '5px 10px', border: '1px solid #1F1F1D', borderRadius: 3, background: dark ? '#1F1F1D' : '#FFFFFF', color: dark ? '#FFFFFF' : '#1F1F1D', font: sans, cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const source = row('Boundary', [
+      e('span', { key: 'bs', style: { font: sans, color: this.bpsProv ? '#1F1F1D' : '#B23A2E' } }, this.bpsProv ? 'BPS file \u00b7 ' + this.bpsProv.label : 'No BPS file loaded \u2014 showing ' + (A ? A.online.label : 'online fallback')),
+      e('input', { key: 'bf', type: 'file', multiple: true, accept: '.geojson,.json,.zip', style: { display: 'none' }, ref: el => { this.bpsInput = el; }, onChange: ev => { const f = [...ev.target.files]; ev.target.value = ''; this.applyBps(f, true); } }),
+      A ? btn('bl', this.bpsProv ? 'Replace BPS file\u2026' : 'Load BPS 2026 file\u2026', () => this.bpsInput && this.bpsInput.click(), !this.bpsProv) : null,
+      this.bpsProv ? btn('bc', 'Remove', this.clearBps) : null,
+      bm ? e('span', { key: 'bm', style: { font: sans, color: bm.ok ? '#2E6B34' : '#B23A2E' } }, bm.text) : null,
+    ]);
+    return [source, area, period];
+  }
+  admCard(m) {
+    const D = this.D, info = this.admInfo(m), vw = info.view, A = this.AD;
+    const lvName = vw && A ? A.LEVELS[vw.level] : 'Area';
+    const mono = v => React.createElement('span', { style: { font: "500 12.5px 'IBM Plex Mono',ui-monospace,monospace" } }, v);
+    const link = r => React.createElement('button', { type: 'button', onClick: () => this.admPick(vw.level, r.code), style: { border: 0, background: 'none', padding: 0, cursor: 'pointer', font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: r.code === vw.sel ? '#1F1F1D' : '#2F5D8A', textDecoration: r.code === vw.sel ? 'none' : 'underline', textUnderlineOffset: 2, fontWeight: r.code === vw.sel ? 600 : 500, textAlign: 'left' } }, r.name);
+    const rows = vw ? vw.rows.slice().sort((a, b) => (b.s.n[0] + b.s.n[1] + b.s.n[2]) - (a.s.n[0] + a.s.n[1] + a.s.n[2])) : [];
+    const body = !info.path[0] ? React.createElement('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B' } }, 'Pick a province in the Area filter above the map to break customers down by kabupaten/kota, kecamatan and kelurahan/desa.')
+      : !vw ? React.createElement('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: info.error ? '#B23A2E' : '#5F5F5B' } }, info.error || 'Loading boundaries…')
+      : this.table([lvName, 'Active', 'Blocked', 'Terminated', 'Revenue in', 'Revenue lost', 'Pending (blocked)', 'WWR', 'WCM'],
+          rows.map(r => [link(r), mono(D.fmtInt(r.s.n[0])), mono(D.fmtInt(r.s.n[1])), mono(D.fmtInt(r.s.n[2])), mono(D.fmtRp(r.s.rev[0])), mono(D.fmtRp(r.s.rev[2])), mono(D.fmtRp(r.s.rev[1])), mono(D.fmtInt(r.s.wwr)), mono(D.fmtInt(r.s.wcm))]),
+          { minWidth: 920, maxHeight: 460 });
+    return this.card('By administrative area', {
+      span: 12, meta: (info.names.length ? info.names.join(' › ') : 'Indonesia') + ' · ' + this.admPeriodLabel(),
+      body,
+      note: 'Accounts are placed in an area by their coordinates. All time uses current status. For a year, month or day: Active and Blocked are the state at the end of the period, rebuilt from start date (J), blocked date (grace end K, else expiry L) and termination date (L); Terminated counts accounts terminated inside the period. Revenue is monthly recurring charge, Monthly Fee (O) − Discount (P), before PPN: in = active, lost = terminated, pending = blocked. WWR / WCM count work orders dated in the period (cancelled excluded) for mapped customers in the area. Boundaries: the BPS Wilkerstat file loaded in the Boundary row (desa/kelurahan or SLS polygons, grouped up to kecamatan and kabupaten/kota by BPS code); without one, an online GADM 4.1 / cahyadsn fallback is used. Click an area on the map to see its figures.',
+    });
+  }
+  mapFrame(controls, mapBox, full, hideF, sans, overlay) {
+    const e = React.createElement;
+    const fsBtn = (label, onClick, key) => e('button', { key, type: 'button', onClick, title: label,
+      style: { padding: '6px 11px', border: '1px solid #1F1F1D', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,.2)', whiteSpace: 'nowrap' } }, label);
+    return e('div', { ref: el => { this.mapFrameEl = el; },
+      style: full ? { position: 'fixed', inset: 0, zIndex: 9999, background: '#FFFFFF', padding: 12, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 0 } : { position: 'relative' } },
+      hideF ? null : e('div', { style: full ? { maxHeight: '42vh', overflowY: 'auto', flex: 'none' } : null }, controls),
+      e('div', { style: { position: 'relative', flex: full ? '1 1 auto' : 'none', minHeight: 0 } },
+        mapBox,
+        overlay || null,
+        e('div', { style: { position: 'absolute', top: 10, right: 10, zIndex: 1000, display: 'flex', gap: 6 } },
+          full ? fsBtn(hideF ? 'Show filters' : 'Hide filters', () => this.setState({ mapHideF: !hideF }, () => setTimeout(() => this.mapApi && this.mapApi.resize(), 60)), 'hf') : null,
+          fsBtn(full ? 'Exit full screen' : 'Full screen', this.toggleMapFull, 'fs'))));
+  }
+  mapSlider(k, label, val, min, max, step, fmt, sans, mono) {
+    const e = React.createElement;
+    return e('label', { key: 'sl' + k, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', font: sans, color: '#1F1F1D', flex: 'none' } },
+      label,
+      e('input', { type: 'range', min, max, step, value: val, onChange: ev => this.setMapF({ [k]: +ev.target.value }), style: { width: 96, accentColor: '#1F1F1D', cursor: 'pointer' } }),
+      e('span', { style: { font: mono, color: '#5F5F5B', minWidth: 36, textAlign: 'right' } }, fmt(val)));
+  }
+  heatLegend(m, cat, sans) {
+    const e = React.createElement, n = +String(cat).slice(1);
+    const col = cat[0] === 's' ? m.statuses[n] && m.statuses[n].color : cat[0] === 'w' ? m.wdStatuses[n] && m.wdStatuses[n].color : cat[0] === 'p' ? m.products[n] && m.products[n].color : null;
+    const bg = col ? 'linear-gradient(90deg, color-mix(in srgb, ' + col + ' 40%, white), ' + col + ', color-mix(in srgb, ' + col + ' 45%, black))' : 'linear-gradient(90deg,#2F6FB3,#13A08A,#F2C230,#E8730C,#B42318)';
+    return e('span', { key: 'hl', style: { display: 'flex', alignItems: 'center', gap: 6, font: sans, color: '#5F5F5B', marginLeft: 4 } },
+      'Low', e('span', { style: { width: 90, height: 8, borderRadius: 2, background: bg } }), 'High');
+  }
+
+  /* ---------- work-area grid ---------- */
+
+  static TEAM_PAL = ['#2F6FB3', '#C2410C', '#7C3AED', '#0F766E', '#B45309', '#BE185D', '#4D7C0F', '#0E7490', '#9F1239', '#475569'];
+  setGridUI(p) { this.setState(s => ({ gridUI: { ...s.gridUI, ...p } })); }
+  setGrid(fn) {
+    this.setState(s => {
+      const g = fn(s.grid);
+      if (g === s.grid) return null;
+      this.gridHist = [...(this.gridHist || []), s.grid].slice(-50);
+      try { localStorage.setItem('gx.workAreas.v1', JSON.stringify(g)); } catch (e) {}
+      return { grid: g };
+    });
+  }
+  syncGrid() {
+    const api = this.mapApi;
+    if (!api || !api.setGrid) return;
+    const g = this.state.grid, dsp = this.isDsp(), u = dsp ? { ...this.state.gridUI, show: false, edit: false } : this.state.gridUI;
+    if (this._gSent === g && this._uSent === this.state.gridUI && this._tSent === dsp) return;
+    this._gSent = g; this._uSent = this.state.gridUI; this._tSent = dsp;
+    const teams = {}; g.teams.forEach(t => { teams[t.id] = t; });
+    const edit = u.edit && (u.erase || u.team != null) ? { team: u.team, brush: u.brush, erase: u.erase } : null;
+    api.setGrid({ size: g.size, show: u.show, cells: g.cells, teams, focus: u.team, edit }, ch => this.setGrid(gr => {
+      const cells = { ...gr.cells };
+      for (const k in ch) { if (ch[k]) cells[k] = ch[k]; else delete cells[k]; }
+      return { ...gr, cells };
+    }));
+  }
+  undoGrid = () => {
+    const hist = this.gridHist || [];
+    if (!hist.length) return;
+    const prev = hist[hist.length - 1];
+    this.gridHist = hist.slice(0, -1);
+    try { localStorage.setItem('gx.workAreas.v1', JSON.stringify(prev)); } catch (e) {}
+    const u = this.state.gridUI, keep = prev.teams.some(t => t.id === u.team);
+    this.setState({ grid: prev, gridUI: keep ? u : { ...u, team: null }, gridMsg: { ok: true, text: 'Last change undone.' } });
+  };
+  clearCells(id) {
+    const g = this.state.grid, t = id && g.teams.find(x => x.id === id);
+    const n = Object.keys(g.cells).filter(k => !id || g.cells[k] === id).length;
+    if (!n || !window.confirm((t ? 'Clear all ' + n + ' cells of ' + t.name : 'Clear all ' + n + ' painted cells for every team') + '? Teams are kept. You can undo this.')) return;
+    this.setGrid(gr => { const cells = {}; if (id) for (const k in gr.cells) if (gr.cells[k] !== id) cells[k] = gr.cells[k]; return { ...gr, cells }; });
+    this.setState({ gridMsg: { ok: true, text: 'Cleared ' + n + ' cells.' } });
+  }
+  // Auto-split: recursive bisection of the covered 1 km cells into N areas of (near) equal size,
+  // always along the longer side so areas stay compact. Each area is checked against the drive-time limit.
+  static SPLIT_ZONES = {
+    ubud: { label: 'South Bali up to Ubud', S: -8.86, N: -8.44, W: 115.05, E: 115.42 },
+    bali: { label: 'All Bali', S: -8.95, N: -8.0, W: 114.4, E: 115.75 },
+  };
+  // What the auto-split counts per customer: matching statuses, or matching latest WWR / WCM work orders.
+  basisW(m) {
+    const b = this.state.splitBasis;
+    if (b.mode === 'cust') return i => b.st[m.status[i]] ? 1 : 0;
+    return i => (b.wo.WWR && m.wd[i] >= 0 && b.ws[m.wd[i]] ? 1 : 0) + (b.wo.WCM && m.cm && m.cm[i] >= 0 && b.ws[m.cm[i]] ? 1 : 0);
+  }
+  basisLabel(m) {
+    const b = this.state.splitBasis;
+    if (b.mode === 'cust') return m.statuses.filter((s, i) => b.st[i]).map(s => s.key.toLowerCase()).join(' + ') + ' customers';
+    return ['WWR', 'WCM'].filter(t => b.wo[t]).join(' + ') + ' WOs (' + m.wdStatuses.filter((s, i) => b.ws[i]).map(s => s.key.toLowerCase()).join(', ') + ')';
+  }
+  setBasis(p) { this.setState(s => ({ splitBasis: { ...s.splitBasis, ...p } })); }
+  driveMin(wKm, hKm) { const sp = Math.max(5, +this.state.splitSpeed || 30); return Math.hypot(wKm, hKm) * 1.4 / sp * 60; }
+  autoSplit = () => {
+    const m = this.state.data.map, M = this.GM;
+    if (!m || !M) return;
+    const n = Math.max(0, Math.min(80, Math.round(+this.state.splitN || 0)));
+    if (!n) { this.setState({ gridMsg: { ok: false, text: 'Enter the number of teams.' } }); return; }
+    const size = 1000, cover = this.state.splitCover, BUF = 2, MIN = 3, Z = Component.SPLIT_ZONES[this.state.splitZone] || Component.SPLIT_ZONES.ubud;
+    const limit = Math.max(10, +this.state.splitMax || 60);
+    const act = new Map(), bw = this.basisW(m), bl = this.basisLabel(m), load = this.state.splitBal === 'load';
+    let c0 = 1e9, c1 = -1e9, r0 = 1e9, r1 = -1e9, tot = 0;
+    for (let i = 0; i < m.count; i++) {
+      const la = m.lat[i], lo = m.lng[i];
+      if (la < Z.S || la > Z.N || lo < Z.W || lo > Z.E) continue;
+      const wv = bw(i); if (!wv) continue;
+      const cr = M.cellOf(la, lo, size), k = cr[0] + ',' + cr[1];
+      act.set(k, (act.get(k) || 0) + wv); tot += wv;
+      c0 = Math.min(c0, cr[0]); c1 = Math.max(c1, cr[0]); r0 = Math.min(r0, cr[1]); r1 = Math.max(r1, cr[1]);
+    }
+    if (!tot) { this.setState({ gridMsg: { ok: false, text: 'Nothing to split: no ' + bl + ' with coordinates in ' + Z.label + '.' } }); return; }
+    // Cells to divide: around active customers (buffer) or the whole extent (full). Every cell weighs the same.
+    const covered = new Set();
+    if (cover === 'full') { for (let c = c0; c <= c1; c++) for (let r = r0; r <= r1; r++) covered.add(c + ',' + r); }
+    else act.forEach((v, k) => { const p = k.split(','), c = +p[0], r = +p[1]; for (let x = -BUF; x <= BUF; x++) for (let y = -BUF; y <= BUF; y++) covered.add((c + x) + ',' + (r + y)); });
+    const pts = [...covered].map(k => { const p = k.split(','); return [+p[0], +p[1], k, load ? (act.get(k) || 0) + 0.02 : 1]; });
+    const bb = P => P.reduce((o, p) => ({ c0: Math.min(o.c0, p[0]), c1: Math.max(o.c1, p[0]), r0: Math.min(o.r0, p[1]), r1: Math.max(o.r1, p[1]) }), { c0: 1e9, c1: -1e9, r0: 1e9, r1: -1e9 });
+    const leaves = [];
+    const split = (P, k) => {
+      const R = bb(P);
+      if (k > 1) {
+        const W = R.c1 - R.c0 + 1, H = R.r1 - R.r0 + 1, kL = Math.floor(k / 2), tgt = P.reduce((s, p) => s + p[3], 0) * kL / k;
+        for (const ax of W >= H ? [0, 1] : [1, 0]) {
+          const lo = ax ? R.r0 : R.c0, hi = ax ? R.r1 : R.c1;
+          if (hi - lo + 1 < MIN * 2) continue;
+          const pre = new Float64Array(hi - lo + 2);
+          P.forEach(p => { pre[p[ax] - lo + 1] += p[3]; });
+          for (let j = 1; j < pre.length; j++) pre[j] += pre[j - 1];
+          let best = lo + MIN, bd = Infinity;
+          for (let s = lo + MIN; s <= hi - MIN + 1; s++) { const d = Math.abs(pre[s - lo] - tgt); if (d < bd) { bd = d; best = s; } }
+          split(P.filter(p => p[ax] < best), kL);
+          split(P.filter(p => p[ax] >= best), k - kL);
+          return;
+        }
+      }
+      leaves.push({ ...R, P, k, w: P.reduce((s, p) => s + (act.get(p[2]) || 0), 0) });
+    };
+    split(pts, n);
+    this.setGrid(gr => {
+      const old = gr.teams;
+      const teams = leaves.map((L, i) => {
+        const o = old[i];
+        return { id: o ? o.id : 't' + Date.now().toString(36) + i, name: o ? o.name : 'Team ' + String(i + 1).padStart(2, '0'), color: 'hsl(' + Math.round((i * 137.508 + 210) % 360) + ', 62%, 42%)' };
+      });
+      const cells = {};
+      leaves.forEach((L, i) => L.P.forEach(p => { cells[p[2]] = teams[i].id; }));
+      return { size, teams, cells, auto: { n, cover, zone: this.state.splitZone, basis: this.state.splitBasis, balance: this.state.splitBal, at: new Date().toISOString() } };
+    });
+    const D = this.D, fmin = L => this.driveMin(L.c1 - L.c0 + 1, L.r1 - L.r0 + 1);
+    const worst = leaves.reduce((x, L) => fmin(L) > fmin(x) ? L : x, leaves[0]), wm = fmin(worst);
+    const sizes = leaves.map(L => L.P.length), ws = leaves.map(L => L.w), short = n - leaves.length;
+    const need = wm > limit ? Math.ceil(n * (wm / limit) ** 2) : 0;
+    this.setGridUI({ team: null, edit: false, erase: false });
+    this.setState({ gridMsg: { ok: !short && !need, text: leaves.length + ' areas \u00b7 ' + D.fmtInt(Math.min(...sizes)) + '\u2013' + D.fmtInt(Math.max(...sizes)) + ' km\u00b2 each \u00b7 longest corner-to-corner drive \u2248 ' + Math.round(wm) + ' min (' + (worst.c1 - worst.c0 + 1) + '\u00d7' + (worst.r1 - worst.r0 + 1) + ' km) \u00b7 ' + D.fmtInt(Math.min(...ws)) + '\u2013' + D.fmtInt(Math.max(...ws)) + ' ' + bl + ' per team'
+      + (need ? ' \u00b7 over the ' + limit + ' min limit, try about ' + need + ' teams' : '') + (short ? ' \u00b7 ' + short + ' teams could not get their own area (3\u00d73 km minimum)' : '') + '.' } });
+    setTimeout(() => { const g = this.state.grid; if (this.mapApi) this.mapApi.fitCells(Object.keys(g.cells)); }, 50);
+  };
+  setGridSize(v) {
+    const g = this.state.grid;
+    if (g.size === v) return;
+    if (Object.keys(g.cells).length && !window.confirm('Changing the cell size clears every painted work area. You can undo this. Continue?')) return;
+    this.setGrid(gr => ({ ...gr, size: v, cells: {} }));
+  }
+  addTeam(name) {
+    name = String(name || '').trim();
+    if (!name) return;
+    const id = 't' + Date.now().toString(36), pal = Component.TEAM_PAL;
+    this.setGrid(gr => {
+      const used = new Set(gr.teams.map(t => t.color));
+      const color = pal.find(c => !used.has(c)) || pal[gr.teams.length % pal.length];
+      return { ...gr, teams: [...gr.teams, { id, name, color }] };
+    });
+    this.setGridUI({ team: id, edit: true, erase: false });
+  }
+  renameTeam(id) {
+    const t = this.state.grid.teams.find(x => x.id === id);
+    const name = t && window.prompt('Team name', t.name);
+    if (name && name.trim()) this.setGrid(gr => ({ ...gr, teams: gr.teams.map(x => x.id === id ? { ...x, name: name.trim() } : x) }));
+  }
+  removeTeam(id) {
+    const t = this.state.grid.teams.find(x => x.id === id);
+    if (!t || !window.confirm('Delete ' + t.name + ' and its painted cells? You can undo this.')) return;
+    this.setGrid(gr => { const cells = {}; for (const k in gr.cells) if (gr.cells[k] !== id) cells[k] = gr.cells[k]; return { ...gr, teams: gr.teams.filter(x => x.id !== id), cells }; });
+    if (this.state.gridUI.team === id) this.setGridUI({ team: null, edit: false });
+  }
+  zoomTeam(id) {
+    const g = this.state.grid;
+    if (this.mapApi) this.mapApi.fitCells(Object.keys(g.cells).filter(k => g.cells[k] === id));
+  }
+  exportGrid = () => {
+    const g = this.state.grid, M = this.GM;
+    const out = { ...g, exported: new Date().toISOString(), labels: M ? Object.fromEntries(Object.keys(g.cells).map(k => [k, M.cellLabel(k)])) : undefined };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' }));
+    a.download = 'gx-work-areas.json'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  importGrid = ev => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!f) return;
+    f.text().then(txt => {
+      const g = JSON.parse(txt);
+      if (!g || !g.size || !Array.isArray(g.teams) || !g.cells) throw new Error('not a work-area file');
+      this.setGrid(() => ({ size: g.size, teams: g.teams, cells: g.cells }));
+      this.setState({ gridMsg: { ok: true, text: 'Imported ' + g.teams.length + ' teams, ' + Object.keys(g.cells).length + ' cells.' } });
+    }).catch(e => this.setState({ gridMsg: { ok: false, text: 'Import failed: ' + e.message } }));
+  };
+  gridKeys(m) {
+    const g = this.state.grid, M = this.GM;
+    if (!M) return null;
+    const c = this._gk;
+    if (c && c.m === m && c.size === g.size) return c.keys;
+    const keys = new Array(m.count);
+    for (let i = 0; i < m.count; i++) keys[i] = M.cellKey(m.lat[i], m.lng[i], g.size);
+    this._gk = { m, size: g.size, keys };
+    return keys;
+  }
+  gridStats(m, bi) {
+    const keys = this.gridKeys(m), g = this.state.grid;
+    if (!keys) return null;
+    const c = this._gst;
+    const sb = this.state.splitBasis, bw = this.basisW(m);
+    if (c && c.keys === keys && c.g === g && c.bi === bi && c.sb === sb) return c.v;
+    const per = {}, un = { active: 0, open: 0, prog: 0, cmOpen: 0, basis: 0 };
+    const mk = id => per[id] || (per[id] = { cells: 0, c0: 1e9, c1: -1e9, r0: 1e9, r1: -1e9, active: 0, open: 0, prog: 0, cmOpen: 0, basis: 0 });
+    for (const k in g.cells) {
+      const s = mk(g.cells[k]), p = k.split(','), cc = +p[0], rr = +p[1];
+      s.cells++; s.c0 = Math.min(s.c0, cc); s.c1 = Math.max(s.c1, cc); s.r0 = Math.min(s.r0, rr); s.r1 = Math.max(s.r1, rr);
+    }
+    for (let i = 0; i < m.count; i++) {
+      if (bi >= 0 && m.branch[i] !== bi) continue;
+      const t = g.cells[keys[i]], o = t ? mk(t) : un;
+      if (m.status[i] === 0) o.active++;
+      if (m.wd[i] === 0) o.open++; else if (m.wd[i] === 1) o.prog++;
+      if (m.cm && (m.cm[i] === 0 || m.cm[i] === 1)) o.cmOpen++;
+      o.basis += bw(i);
+    }
+    const v = { per, un };
+    this._gst = { keys, g, bi, sb, v };
+    return v;
+  }
+
+  gridView(m, bi, row, chip, sans, mono) {
+    const D = this.D, e = React.createElement, h = this.h.bind(this), g = this.state.grid, u = this.state.gridUI, gs = this.gridStats(m, bi);
+    const btn = (key, label, onClick, dark) => e('button', { key, type: 'button', onClick, style: { padding: '5px 10px', border: '1px solid ' + (dark ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: dark ? '#1F1F1D' : '#FFFFFF', color: dark ? '#FFFFFF' : '#1F1F1D', font: sans, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' } }, label);
+    const team = g.teams.find(t => t.id === u.team);
+    const hint = u.edit ? (u.erase ? 'Drag on the map to clear cells.' : team ? 'Drag on the map to give cells to ' + team.name + '. Panning is off while painting; scroll still zooms.' : 'Pick a team to paint.') : null;
+    const msg = this.state.gridMsg;
+    const controls = [
+      row('Auto-split', [
+        h('span', { font: sans, color: '#5F5F5B' }, 'Teams today'),
+        e('input', { key: 'sn', type: 'number', min: 1, max: 80, value: this.state.splitN, onChange: ev => this.setState({ splitN: ev.target.value }), onKeyDown: ev => { if (ev.key === 'Enter') this.autoSplit(); },
+          style: { width: 64, padding: '5px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: mono, outline: 'none' } }),
+        ...Object.entries(Component.SPLIT_ZONES).map(([k, z]) => chip('sz' + k, this.state.splitZone === k, z.label, null, null, () => this.setState({ splitZone: k }))),
+        chip('scb', this.state.splitCover === 'buffer', 'Customer cells + 2 km', null, null, () => this.setState({ splitCover: 'buffer' })),
+        chip('scf', this.state.splitCover === 'full', 'Full rectangles', null, null, () => this.setState({ splitCover: 'full' })),
+        h('span', { font: sans, color: '#5F5F5B' }, 'Max drive'), e('input', { key: 'sm', type: 'number', value: this.state.splitMax, onChange: ev => this.setState({ splitMax: ev.target.value }), style: { width: 58, padding: '5px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: mono, outline: 'none' } }), h('span', { font: sans, color: '#5F5F5B' }, 'min at'), e('input', { key: 'ss', type: 'number', value: this.state.splitSpeed, onChange: ev => this.setState({ splitSpeed: ev.target.value }), style: { width: 52, padding: '5px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: mono, outline: 'none' } }), h('span', { font: sans, color: '#5F5F5B' }, 'km/h'),
+        btn('sgo', 'Split Bali into ' + (Math.round(+this.state.splitN) || 0) + ' areas', this.autoSplit, true),
+      ]),
+      row('Split by', (() => {
+        const b = this.state.splitBasis, cust = b.mode === 'cust', mc = this.mapCounts(m, bi);
+        const cmc = [0, 0, 0]; if (m.cm) for (let i = 0; i < m.count; i++) if (m.cm[i] >= 0 && (bi < 0 || m.branch[i] === bi)) cmc[m.cm[i]]++;
+        const sep = k => e('span', { key: k, style: { width: 1, height: 18, background: '#DCDCD8', flex: 'none' } });
+        return [
+          chip('bmc', cust, 'Customers', null, null, () => this.setBasis({ mode: 'cust' })),
+          chip('bmw', !cust, 'Work orders', null, null, () => this.setBasis({ mode: 'wo' })),
+          sep('s1'),
+          ...(cust
+            ? m.statuses.map((s, i) => chip('bst' + i, b.st[i], s.key, s.color, mc.st[i], () => { const st = b.st.map((v, k) => k === i ? !v : v); if (st.some(Boolean)) this.setBasis({ st }); }))
+            : [
+              chip('bwr', b.wo.WWR, 'WWR wiredown', null, mc.wd[0] + mc.wd[1] + mc.wd[2], () => { const wo = { ...b.wo, WWR: !b.wo.WWR }; if (wo.WWR || wo.WCM) this.setBasis({ wo }); }),
+              chip('bwc', b.wo.WCM, 'WCM maintenance', null, cmc[0] + cmc[1] + cmc[2], () => { const wo = { ...b.wo, WCM: !b.wo.WCM }; if (wo.WWR || wo.WCM) this.setBasis({ wo }); }),
+              sep('s2'),
+              ...m.wdStatuses.map((s, i) => chip('bws' + i, b.ws[i], s.key, s.color, null, () => { const ws = b.ws.map((v, k) => k === i ? !v : v); if (ws.some(Boolean)) this.setBasis({ ws }); })),
+            ]),
+          sep('s3'),
+          chip('bbs', this.state.splitBal === 'size', 'Equal size', null, null, () => this.setState({ splitBal: 'size' })),
+          chip('bbl', this.state.splitBal === 'load', 'Equal workload', null, null, () => this.setState({ splitBal: 'load' })),
+        ];
+      })()),
+      row('Grid', [
+        chip('gs', u.show, 'Show grid', null, null, () => this.setGridUI({ show: !u.show })),
+        ...[[500, '500 m'], [1000, '1 km'], [2000, '2 km']].map(([v, l]) => chip('gz' + v, g.size === v, l + ' cells', null, null, () => this.setGridSize(v))),
+      ]),
+      row('Teams', [
+        ...g.teams.map(t => chip('gt' + t.id, u.team === t.id, t.name, t.color, gs && gs.per[t.id] ? gs.per[t.id].cells : 0, () => this.setGridUI({ team: u.team === t.id ? null : t.id, erase: false }))),
+        e('input', { key: 'gn', placeholder: 'New team name', ref: r => { this.teamInput = r; }, onKeyDown: ev => { if (ev.key === 'Enter') { this.addTeam(ev.target.value); ev.target.value = ''; } },
+          style: { flex: '0 1 180px', minWidth: 130, padding: '5px 10px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, outline: 'none' } }),
+        btn('ga', 'Add team', () => { const r = this.teamInput; if (r) { this.addTeam(r.value); r.value = ''; } }),
+      ]),
+      row('Paint', [
+        chip('ge', u.edit, u.edit ? 'Painting on' : 'Paint areas', u.edit ? '#F2C230' : null, null, () => this.setGridUI({ edit: !u.edit })),
+        ...[1, 3, 5].map(n => chip('gb' + n, u.brush === n && !u.erase, n + '×' + n + ' brush', null, null, () => this.setGridUI({ brush: n, erase: false, edit: true }))),
+        chip('gx', u.erase, 'Eraser', null, null, () => this.setGridUI({ erase: !u.erase, edit: true })),
+        e('button', { key: 'gu', type: 'button', onClick: this.undoGrid, disabled: !(this.gridHist && this.gridHist.length), title: 'Undo the last change to work areas',
+          style: { padding: '5px 10px', border: '1px solid #1F1F1D', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none', opacity: this.gridHist && this.gridHist.length ? 1 : 0.4 } },
+          'Undo' + (this.gridHist && this.gridHist.length ? ' (' + this.gridHist.length + ')' : '')),
+        team ? btn('gct', 'Clear ' + team.name + ' cells', () => this.clearCells(team.id)) : null,
+        btn('gca', 'Clear all cells', () => this.clearCells(null)),
+        btn('gexp', 'Export', this.exportGrid),
+        btn('gimp', 'Import', () => this.gridFile && this.gridFile.click()),
+        e('input', { key: 'gf', type: 'file', accept: '.json,application/json', ref: r => { this.gridFile = r; }, onChange: this.importGrid, style: { display: 'none' } }),
+        hint || msg ? h('span', { font: sans, color: msg && !hint ? (msg.ok ? '#2E6B34' : '#B42318') : '#5F5F5B' }, hint || msg.text) : null,
+      ]),
+    ];
+    const km = g.size / 1000, nf = x => String(+x.toFixed(1));
+    const num = v => h('span', { font: "500 13px 'IBM Plex Mono',ui-monospace,monospace" }, D.fmtInt(v));
+    const link = (label, fn) => e('button', { type: 'button', onClick: fn, style: { padding: 0, border: 'none', background: 'none', color: '#1F1F1D', textDecoration: 'underline', textUnderlineOffset: 2, font: sans, cursor: 'pointer' } }, label);
+    const rows = g.teams.map(t => {
+      const s = (gs && gs.per[t.id]) || { cells: 0, active: 0, open: 0, prog: 0 };
+      return [
+        h('span', { display: 'flex', alignItems: 'center', gap: 8 }, h('span', { width: 10, height: 10, borderRadius: 2, background: t.color, flex: 'none' }), t.name),
+        num(s.cells), s.cells ? nf((s.c1 - s.c0 + 1) * km) + ' × ' + nf((s.r1 - s.r0 + 1) * km) + ' km' : '—', s.cells ? (() => { const v = Math.round(this.driveMin((s.c1 - s.c0 + 1) * km, (s.r1 - s.r0 + 1) * km)), over = v > (+this.state.splitMax || 60); return h('span', { color: over ? '#B42318' : '#3A3A37', fontWeight: over ? 600 : 400 }, '≈ ' + v + ' min'); })() : '—', num(s.basis), num(s.active), num(s.open), num(s.prog), num(s.cmOpen),
+        h('span', { display: 'flex', gap: 12, justifyContent: 'flex-end' }, link('Zoom', () => this.zoomTeam(t.id)), link('Rename', () => this.renameTeam(t.id)), link('Clear cells', () => this.clearCells(t.id)), link('Delete', () => this.removeTeam(t.id))),
+      ];
+    });
+    if (gs) rows.push([h('span', { color: '#5F5F5B' }, 'Outside every area'), '—', '—', '—', num(gs.un.basis), num(gs.un.active), num(gs.un.open), num(gs.un.prog), num(gs.un.cmOpen), '']);
+    const areaCard = this.card('Work areas', {
+      span: 12, meta: g.teams.length + ' teams · ' + (g.size >= 1000 ? km + ' km' : g.size + ' m') + ' cells',
+      body: g.teams.length ? this.table(['Team', 'Cells', 'Span', 'Max drive', 'Split basis', 'Active customers', 'WWR open', 'WWR in progress', 'WCM open + in progress', ''], rows, { minWidth: 900 })
+        : h('div', { font: sans, color: '#5F5F5B', padding: '8px 0' }, 'No teams yet. Add a team above, then drag on the map to paint its cells.'),
+      note: 'The grid is fixed: cells are anchored at 95°E, 6°N and keep the same ID (column letters, row number) at every zoom level. Each cell belongs to one team at most. Span is the bounding box of a team\'s cells. Max drive estimates the corner-to-corner trip across that box: straight-line diagonal \u00d7 1.4 for road detours, at the average speed set in Auto-split; red means over the limit. Auto-split counts what is chosen under Split by (customers by status, or customers whose latest WWR / WCM work order has the chosen status), covers the cells around them, and divides those cells into areas of equal size or equal workload; South Bali up to Ubud covers 8.44\u20138.86\u00b0S, 115.05\u2013115.42\u00b0E (Ubud and Tegallalang south to Uluwatu, Tabanan east to Gianyar; Nusa islands excluded). Areas are saved in this browser; use Export / Import to share them.',
+    });
+    const cards = [areaCard];
+    if (team && gs) {
+      const keys = this.gridKeys(m), list = [];
+      for (let i = 0; i < m.count; i++) {
+        if ((bi >= 0 && m.branch[i] !== bi) || g.cells[keys[i]] !== team.id) continue;
+        if (m.wd[i] === 0 || m.wd[i] === 1) list.push({ i, type: 'WWR', s: m.wd[i], w: m.wdInfo[i] || {} });
+        if (m.cm && (m.cm[i] === 0 || m.cm[i] === 1)) list.push({ i, type: 'WCM', s: m.cm[i], w: m.cmInfo[i] || {} });
+      }
+      list.sort((x, y) => x.s - y.s || (x.w.t || 0) - (y.w.t || 0));
+      const fd = t => t ? new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '\u2014';
+      const woRows = list.slice(0, 200).map(({ i, type, s, w }) => {
+        const st = m.wdStatuses[s];
+        return [w.wo || '\u2014', type, m.name[i] || '\u2014', String(m.cid[i]), h('span', { color: st.color, fontWeight: 600 }, st.key), fd(w.t), this.GM.cellLabel(keys[i]), link('Locate', () => this.mapApi && this.mapApi.focus(i))];
+      });
+      cards.push(this.card('Open work orders in ' + team.name, {
+        span: 12, meta: D.fmtInt(list.length) + ' work orders' + (list.length > 200 ? ' \u00b7 first 200 shown' : ''),
+        body: list.length ? this.table(['Work order', 'Type', 'Customer', 'CID', 'Status', 'WO date', 'Cell', ''], woRows, { minWidth: 820, numeric: false, maxHeight: 420 })
+          : h('div', { font: sans, color: '#5F5F5B', padding: '8px 0' }, 'No open or in-progress WWR or WCM work orders inside this area.'),
+        note: 'Latest WWR and latest WCM work order per customer (cancelled excluded) whose location falls in a cell painted for this team. Open first, then oldest first.',
+      }));
+    }
+    return { controls, cards };
+  }
+
+  /* ---------- dispatch planner (IDS) ---------- */
+
+  isDsp(v) { v = v || this.state.view; return v === 'dispatch' || v === 'dispatchWcm'; }
+  get DSP() { return this.DSPS ? this.DSPS[this.state.view === 'dispatchWcm' ? 'WCM' : 'WWR'] : null; }
+  ensureDispatch() {
+    if (this.DSPS || this.dspLoading) return;
+    this.dspLoading = true;
+    Promise.all([import('./gxdispatch.js?v=2026-10-19b'), import('./gxmap.js')]).then(([X, M]) => {
+      this.GM = this.GM || M;
+      const mk = type => {
+        const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
+        d.onLocate = i => { if (this.mapApi) this.mapApi.focus(i); if (this.mapFrameEl) this.mapFrameEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+        return d;
+      };
+      this.DSPS = { WWR: mk('WWR'), WCM: mk('WCM') };
+      this.forceUpdate();
+    }).catch(e => { this.dspError = e.message; this.forceUpdate(); }).finally(() => { this.dspLoading = false; });
+  }
+  syncPlan() {
+    const api = this.mapApi;
+    if (!api || !api.setPlan) return;
+    const on = this.isDsp() && this.DSP;
+    const layer = on ? this.DSP.layer() : null;
+    if (layer === this._planSent) return;
+    this._planSent = layer;
+    api.setPlan(layer);
+  }
+  dispatchView(m) {
+    const e = React.createElement, h = this.h.bind(this);
+    const full = this.state.mapFull, hideF = full && this.state.mapHideF;
+    const mapBox = e('div', { ref: this.mapRef, style: { height: full ? '100%' : this.state.w < 760 ? 460 : 560, border: '1px solid #DCDCD8', borderRadius: 3, background: '#EDEDEA', overflow: 'hidden', position: 'relative', zIndex: 0 } });
+    if (!this.DSP) {
+      this.ensureDispatch();
+      return { kpis: [], cards: [this.card('Dispatch map', { span: 12, meta: this.dspError ? 'error' : 'loading planner',
+        body: this.mapFrame(h('div', { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 },
+          h('span', { font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", color: this.dspError ? '#9B2C1F' : '#5F5F5B' }, this.dspError || 'Loading the dispatch planner…')), mapBox, full, hideF, "500 12px 'IBM Plex Sans',system-ui,sans-serif") })] };
+    }
+    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m) });
+  }
+
+  mapView(m) {
+    const D = this.D, h = this.h.bind(this), F = this.state.mapF, e = React.createElement;
+    const bi = this.mapBranchIdx(m), c = this.mapCounts(m, bi);
+    const mapped = c.st[0] + c.st[1] + c.st[2], none = c.none[0] + c.none[1] + c.none[2];
+    const sans = "500 12px 'IBM Plex Sans',system-ui,sans-serif", mono = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
+    const chip = (key, on, label, color, count, onClick) => e('button', {
+      key, type: 'button', onClick,
+      style: { display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', border: '1px solid ' + (on ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: on ? '#FFFFFF' : '#F4F4F2', color: on ? '#1F1F1D' : '#8A8A85', font: sans, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' },
+    },
+      e('span', { style: { width: 9, height: 9, minWidth: 9, borderRadius: '50%', flex: 'none', background: color || '#B8B8B3', opacity: on ? 1 : 0.35 } }),
+      label,
+      count != null ? e('span', { style: { font: mono, color: '#5F5F5B' } }, D.fmtInt(count)) : null);
+    const row = (label, kids) => h('div', { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+      h('span', { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', minWidth: 78 }, label), ...kids);
+    const byStatus = F.colorBy === 'status';
+    const prodOrder = m.products.map((p, i) => i).sort((a, b) => (c.prod[b][0] + c.prod[b][1] + c.prod[b][2]) - (c.prod[a][0] + c.prod[a][1] + c.prod[a][2]));
+    const msg = this.state.mapMsg;
+    const search = h('div', { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+      h('span', { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', minWidth: 78 }, 'Find'),
+      e('input', {
+        key: 'q', type: 'search', placeholder: 'CID or UID', defaultValue: this.mapQ || '',
+        onChange: ev => { this.mapQ = ev.target.value; }, onKeyDown: ev => { if (ev.key === 'Enter') this.searchMap(); },
+        style: { flex: '0 1 260px', minWidth: 160, padding: '6px 10px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: "500 13px 'IBM Plex Mono',ui-monospace,monospace", outline: 'none' },
+      }),
+      e('button', { key: 'go', type: 'button', onClick: this.searchMap, style: { padding: '6px 12px', border: '1px solid #1F1F1D', borderRadius: 3, background: '#1F1F1D', color: '#FFFFFF', font: sans, cursor: 'pointer' } }, 'Locate'),
+      e('button', { key: 'ft', type: 'button', onClick: () => this.setState({ mapShowF: !this.state.mapShowF }),
+        style: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid ' + (this.state.mapShowF ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: this.state.mapShowF ? '#F4F4F2' : '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer', whiteSpace: 'nowrap' } },
+        'Filters & work areas', e('span', { style: { display: 'inline-block', transform: this.state.mapShowF ? 'rotate(180deg)' : 'none', transition: 'transform .2s', font: mono } }, '\u25BE')),
+      msg ? h('span', { font: sans, color: msg.ok ? '#2E6B34' : '#5F5F5B' }, msg.text) : null);
+    const gv = this.gridView(m, bi, row, chip, sans, mono);
+    const controls = h('div', { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 },
+      search,
+      ...this.admControls(m, row, chip, sans, mono),
+      !this.state.mapShowF ? null : h('div', { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FAFAF8' },
+      row('Display', [
+        chip('dp', F.display === 'points', 'Points', null, null, () => this.setMapF({ display: 'points' })),
+        chip('dh', F.display === 'heat', 'Heatmap', null, null, () => this.setMapF({ display: 'heat' })),
+        chip('db', F.display === 'both', 'Points + heatmap', null, null, () => this.setMapF({ display: 'both' })),
+      ]),
+      ...(F.display !== 'points' ? [row('Heat of', [
+        chip('ha', F.heatCat === 'all', 'All visible', null, null, () => this.setMapF({ heatCat: 'all' })),
+        ...m.statuses.map((s, i) => chip('hs' + i, F.heatCat === 's' + i, s.key, s.color, c.st[i], () => this.setMapF({ heatCat: 's' + i }))),
+        ...m.wdStatuses.slice(0, 2).map((s, i) => chip('hw' + i, F.heatCat === 'w' + i, 'Wiredown ' + s.key.toLowerCase(), s.color, c.wd[i], () => this.setMapF({ heatCat: 'w' + i }))),
+        e('select', { key: 'hp', value: /^p/.test(F.heatCat) ? F.heatCat : '', onChange: ev => ev.target.value && this.setMapF({ heatCat: ev.target.value }),
+          style: { padding: '5px 8px', border: '1px solid ' + (/^p/.test(F.heatCat) ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer', maxWidth: 240 } },
+          e('option', { value: '' }, 'Package…'),
+          ...prodOrder.filter(i => c.prod[i][0] + c.prod[i][1] + c.prod[i][2]).map(i => e('option', { key: i, value: 'p' + i }, m.products[i].key))),
+        this.heatLegend(m, F.heatCat, sans),
+      ])] : []),
+      row('Opacity', [
+        ...[['ptA', 'Points', F.display !== 'heat'], ['heatA', 'Heatmap', F.display !== 'points'], ['areaA', 'Work areas', true]].filter(x => x[2]).map(([k, label]) => this.mapSlider(k, label, F[k], 0, 1, 0.05, v => Math.round(v * 100) + '%', sans, mono)),
+        ...(F.display !== 'points' ? [this.mapSlider('heatR', 'Heat radius', F.heatR, 8, 48, 2, v => v + ' px', sans, mono)] : []),
+      ]),
+      row('Colour by', [
+        chip('cs', byStatus, 'Status', null, null, () => this.setMapF({ colorBy: 'status' })),
+        chip('cp', !byStatus, 'Package', null, null, () => this.setMapF({ colorBy: 'product' })),
+      ]),
+      row('Status', m.statuses.map((s, i) => chip('s' + i, F.status[i], s.key, byStatus ? s.color : null, c.st[i],
+        () => this.setMapF({ status: F.status.map((v, k) => k === i ? !v : v) })))),
+      row('Wiredown', [
+        ...m.wdStatuses.map((s, i) => e('button', {
+          key: 'w' + i, type: 'button', onClick: () => this.setMapF({ wd: F.wd.map((v, k) => k === i ? !v : v) }),
+          style: { display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', border: '1px solid ' + (F.wd[i] ? '#1F1F1D' : '#DCDCD8'), borderRadius: 3, background: F.wd[i] ? '#FFFFFF' : '#F4F4F2', color: F.wd[i] ? '#1F1F1D' : '#8A8A85', font: sans, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' },
+        },
+          e('span', { style: { width: 11, height: 11, minWidth: 11, borderRadius: '50%', flex: 'none', boxSizing: 'border-box', border: '2px solid ' + s.color, opacity: F.wd[i] ? 1 : 0.35 } }),
+          s.key, e('span', { style: { font: mono, color: '#5F5F5B' } }, D.fmtInt(c.wd[i])))),
+        chip('wo', F.wdOnly, 'Only wiredown customers', '#1F1F1D', null, () => this.setMapF({ wdOnly: !F.wdOnly })),
+      ]),
+      row('Package', prodOrder.filter(i => c.prod[i][0] + c.prod[i][1] + c.prod[i][2]).map(i => chip('p' + i, !F.hide[i], m.products[i].key, byStatus ? null : m.products[i].color,
+        c.prod[i][0] + c.prod[i][1] + c.prod[i][2], () => this.setMapF({ hide: { ...F.hide, [i]: !F.hide[i] } })))),
+      h('div', { borderTop: '1px solid #EBEBE7', margin: '4px 0 2px' }),
+      ...gv.controls));
+    const full = this.state.mapFull, hideF = full && this.state.mapHideF;
+    const mapBox = e('div', { ref: this.mapRef, style: { height: full ? '100%' : this.state.w < 760 ? 460 : 620, border: '1px solid #DCDCD8', borderRadius: 3, background: '#EDEDEA', overflow: 'hidden', position: 'relative', zIndex: 0 } });
+    const share = n => mapped ? D.fmtPct(n / mapped) + ' of mapped' : '';
+    const kpis = [
+      { label: 'Mapped accounts', value: D.fmtInt(mapped), sub: 'with readable coordinates' },
+      { label: 'Active', value: D.fmtInt(c.st[0]), sub: share(c.st[0]) },
+      { label: 'Blocked', value: D.fmtInt(c.st[1]), sub: share(c.st[1]) },
+      { label: 'Terminated', value: D.fmtInt(c.st[2]), sub: share(c.st[2]) },
+      { label: 'Without coordinates', value: D.fmtInt(none), sub: 'not shown on the map' },
+      { label: 'Wiredown open + in progress', value: D.fmtInt(c.wd[0] + c.wd[1]), sub: D.fmtInt(c.wd[0]) + ' open · ' + D.fmtInt(c.wd[1]) + ' in progress' },
+    ];
+    const cell = v => h('span', { font: "500 13px 'IBM Plex Mono',ui-monospace,monospace" }, D.fmtInt(v));
+    const cards = [
+      this.card('Customer locations', {
+        span: 12, meta: D.fmtInt(mapped) + ' accounts · OpenStreetMap',
+        body: this.mapFrame(controls, mapBox, full, hideF, sans),
+        note: 'Click a point for customer details. Active = status Active; Blocked = Blocked; Terminated = Termination and Termination in Progress. Pending, Graced, Inactive, Change Ownership and Cancel Installation accounts are not plotted. Wiredown rings show the latest WWR work order per CID (cancelled orders excluded, all dates): In progress = "WO In Progress", Closed = "Closed" or "WO Closed", Open = any other status. ' + D.fmtInt(m.wdMatched) + ' of ' + D.fmtInt(m.wdTotal) + ' customers with a wiredown WO could be placed on the map. Map data © OpenStreetMap contributors.',
+      }),
+      this.admCard(m),
+      ...gv.cards,
+      this.card('Package by status', {
+        span: 12, meta: bi >= 0 ? m.branches[bi] : 'all branches',
+        body: this.table(['Package', 'Active', 'Blocked', 'Terminated', 'Total'],
+          prodOrder.map(i => [m.products[i].key, cell(c.prod[i][0]), cell(c.prod[i][1]), cell(c.prod[i][2]), cell(c.prod[i][0] + c.prod[i][1] + c.prod[i][2])])
+            .filter(r => true), { minWidth: 460 }),
+        note: 'Mapped accounts only.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  /* ---------- field team tracking ---------- */
+
+  ensureTrack() {
+    if (this.track) { if (this.state.data.map) this.track.setMap(this.state.data.map); return; }
+    if (this.trackLoading) return;
+    this.trackLoading = true;
+    import('./gxtrack.js').then(TK => {
+      this.TK = TK; this.track = new TK.TrackStore(this.D);
+      this.track.subscribe(() => this.setState({ trkTick: Date.now() }));
+      if (this.state.data.map) this.track.setMap(this.state.data.map); else this.track.start();
+      this.forceUpdate();
+    }).catch(e => { this.trackLoading = false; console.warn('tracking', e); });
+  }
+
+  syncTrack() {
+    const v = this.state.view;
+    if (v === 'settings' || this.isDsp(v)) this.ensureTrack();
+    const T = this.track, api = this.mapApi, tr = this.state.trk;
+    if (api && v === 'map') { if (this._trkOnMap !== false) { api.setTechs([], { colors: {}, sel: null, show: false, onClick: () => {} }); api.showRoute(null); api.setReplay(null); this._trkOnMap = false; } return; }
+    this._trkOnMap = true;
+    if (T && api && this.isDsp(v)) { api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: null, show: true, onClick: () => {} }); return; }
+    if (!T || !api || v !== 'map') return;
+    api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: tr.sel, show: tr.show, onClick: id => this.selectTech(id) });
+    const dd = tr.sel != null ? T.dayData(tr.day) : null;
+    const tk = dd && dd.techs && dd.techs.find(x => x.device.id === tr.sel);
+    if (!tk) { api.showRoute(null); api.setReplay(null); return; }
+    const sig = tr.sel + '|' + tr.day, fit = this.routeFit !== sig;
+    this.routeFit = sig;
+    api.showRoute({ key: sig + '|' + tk.points.length + '|' + tk.wos.length, points: tk.points, wos: tk.wos, radius: T.cfg.arriveM, colors: this.woColors(), fit });
+    api.setReplay(tr.t != null ? this.TK.posAt(tk.points, tr.t) : null);
+  }
+
+  woColors() { return { WWR: '#D9480F', WCM: '#1C64B4', WCA: '#2E7D4F' }; }
+  setTrk(p) { this.setState(s => ({ trk: { ...s.trk, ...p } })); }
+  selectTech(id) {
+    const same = id === this.state.trk.sel;
+    this.setTrk({ sel: same ? null : id, t: null, playing: false });
+    clearInterval(this.playTimer);
+    if (same || id == null) { this.routeFit = null; return; }
+    const d = this.track && this.track.devices.find(x => x.id === id);
+    if (d && d.lat != null && this.mapApi && this.state.trk.day === 0) this.mapApi.panTo(d.lat, d.lng, 13);
+  }
+  selPoints() {
+    const T = this.track, tr = this.state.trk, dd = T && T.dayData(tr.day);
+    const tk = dd && dd.techs && dd.techs.find(x => x.device.id === tr.sel);
+    return tk ? tk.points : [];
+  }
+  togglePlay = () => {
+    const tr = this.state.trk;
+    clearInterval(this.playTimer);
+    if (tr.playing) { this.setTrk({ playing: false }); return; }
+    const P = this.selPoints(); if (!P.length) return;
+    let t = tr.t; if (t == null || t >= P[P.length - 1].t) t = P[0].t;
+    this.setTrk({ playing: true, t });
+    this.playTimer = setInterval(() => {
+      const s = this.state.trk, Q = this.selPoints();
+      if (!s.playing || !Q.length) { clearInterval(this.playTimer); return; }
+      const end = Q[Q.length - 1].t, nt = s.t + s.speed * 250;
+      if (nt >= end) { clearInterval(this.playTimer); this.setTrk({ t: end, playing: false }); } else this.setTrk({ t: nt });
+    }, 250);
+  };
+  jumpToWo(w) {
+    clearInterval(this.playTimer);
+    this.routeFit = null;
+    this.setState(s => ({ trk: { ...s.trk, sel: w.techId, t: w.arrive || w.travelFrom || w.dispatch, playing: false } }));
+    if (w.lat != null && this.mapApi) setTimeout(() => this.mapApi && this.mapApi.panTo(w.lat, w.lng, 15), 50);
+  }
+
+  dur(ms) {
+    if (ms == null || !isFinite(ms)) return '—';
+    const m = Math.round(ms / 60000);
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' m';
+  }
+  clock(t) { return t ? new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
+  ago(t) {
+    if (!t) return 'never';
+    const s = (Date.now() - t) / 1000;
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + ' h ago';
+    return new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  }
+  dayLabel(off) {
+    if (off === 0) return 'Today';
+    if (off === 1) return 'Yesterday';
+    const d = new Date(); d.setDate(d.getDate() - off);
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+  }
+
+  trackControls(row, chip, sans, mono) {
+    const T = this.track, tr = this.state.trk, e = React.createElement, h = this.h.bind(this);
+    if (!T) return [];
+    const C = this.TK.STATE_COLORS, cnt = { online: 0, stale: 0, offline: 0 };
+    T.devices.forEach(d => { cnt[d.state]++; });
+    const ctl = { padding: '5px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: sans, cursor: 'pointer' };
+    const out = [row('Technicians', [
+      chip('tk', tr.show, 'Show on map', '#1F1F1D', T.devices.length, () => this.setTrk({ show: !tr.show })),
+      ...['online', 'stale', 'offline'].map(s => e('span', { key: s, style: { display: 'flex', alignItems: 'center', gap: 6, font: sans, color: '#3A3A37', whiteSpace: 'nowrap', padding: '0 4px' } },
+        e('span', { style: { width: 9, height: 9, minWidth: 9, borderRadius: '50%', background: C[s], flex: 'none' } }),
+        s[0].toUpperCase() + s.slice(1), e('span', { style: { font: mono, color: '#5F5F5B' } }, cnt[s]))),
+      T.cfg.mode === 'demo' ? e('button', { key: 'demo', type: 'button', onClick: () => this.go('settings'), style: { font: mono, color: '#8A6A12', padding: '4px 8px', border: '1px solid #E8D9A8', borderRadius: 3, background: '#FBF6E6', whiteSpace: 'nowrap', cursor: 'pointer' } }, 'DEMO DATA · connect Traccar') : null,
+      T.cfg.mode !== 'demo' && T.link.state === 'error' ? e('span', { key: 'err', style: { font: sans, color: '#9B2C1F' } }, T.link.msg) : null,
+    ])];
+    if (tr.sel == null) return out;
+    const dd = T.dayData(tr.day), tk = dd && dd.techs && dd.techs.find(x => x.device.id === tr.sel);
+    const dev = T.devices.find(d => d.id === tr.sel) || (tk && tk.device) || {};
+    const P = tk ? tk.points : [], t0 = P.length ? P[0].t : 0, t1 = P.length ? P[P.length - 1].t : 1, tv = tr.t == null ? t1 : tr.t;
+    out.push(row('Route', [
+      e('span', { key: 'n', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D', whiteSpace: 'nowrap' } }, dev.name),
+      e('select', { key: 'd', value: tr.day, onChange: ev => { clearInterval(this.playTimer); this.setTrk({ day: +ev.target.value, t: null, playing: false }); }, style: ctl },
+        [0, 1, 2, 3, 4, 5, 6].map(o => e('option', { key: o, value: o }, this.dayLabel(o)))),
+      e('button', { key: 'p', type: 'button', disabled: !P.length, onClick: this.togglePlay, style: { ...ctl, background: '#1F1F1D', color: '#FFFFFF', borderColor: '#1F1F1D', minWidth: 64, opacity: P.length ? 1 : 0.4 } }, tr.playing ? 'Pause' : 'Replay'),
+      e('select', { key: 's', value: tr.speed, onChange: ev => this.setTrk({ speed: +ev.target.value }), style: ctl },
+        [60, 180, 600, 1800].map(v => e('option', { key: v, value: v }, v + '×'))),
+      e('input', { key: 'r', type: 'range', min: t0, max: t1, step: 15000, value: tv, disabled: !P.length, onChange: ev => { clearInterval(this.playTimer); this.setTrk({ t: +ev.target.value, playing: false }); }, style: { flex: '1 1 220px', minWidth: 160, accentColor: '#1F1F1D' } }),
+      e('span', { key: 'c', style: { font: mono, color: '#1F1F1D', whiteSpace: 'nowrap', minWidth: 40 } }, P.length ? this.clock(tv) : dd ? 'no positions' : 'loading…'),
+      tk ? e('span', { key: 'sum', style: { font: sans, color: '#5F5F5B', whiteSpace: 'nowrap' } }, tk.km.toFixed(1) + ' km · ' + this.dur(tk.movingMs) + ' moving · ' + tk.wos.length + ' WOs') : null,
+      e('button', { key: 'x', type: 'button', onClick: () => this.selectTech(null), style: { ...ctl, color: '#5F5F5B' } }, 'Clear'),
+    ]));
+    return out;
+  }
+
+  trackCards() {
+    const T = this.track, tr = this.state.trk, e = React.createElement, h = this.h.bind(this), D = this.D;
+    const sans = "500 13px 'IBM Plex Sans',system-ui,sans-serif", mono = "500 12px 'IBM Plex Mono',ui-monospace,monospace";
+    const pulse = this.h('div', { height: 120, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' });
+    if (!T) return [this.card('Field team', { span: 12, meta: 'loading', body: pulse })];
+    const C = this.TK.STATE_COLORS, demo = T.cfg.mode === 'demo';
+    const d0 = T.dayData(0), byId = new Map(((d0 && d0.techs) || []).map(t => [t.device.id, t]));
+    const stLabel = { online: 'Online', stale: 'Stale', offline: 'Offline' };
+    const teamRows = T.devices.map(d => {
+      const t = byId.get(d.id), cur = t && t.current, sel = tr.sel === d.id;
+      const now = cur ? (cur.state === 'on site' ? 'On site · ' + cur.wo : 'En route to ' + cur.wo + (cur.remainKm != null ? ' · ' + cur.remainKm.toFixed(1) + ' km left' : '')) : d.state === 'offline' ? 'No signal' : d.speed > 4 ? 'Moving' : 'Idle';
+      return [
+        e('button', { type: 'button', onClick: () => this.selectTech(d.id), style: { display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D', whiteSpace: 'nowrap', textDecoration: sel ? 'underline' : 'none', textUnderlineOffset: 3 } },
+          e('span', { style: { width: 9, height: 9, minWidth: 9, borderRadius: '50%', background: C[d.state], flex: 'none' } }), d.name),
+        e('span', { style: { color: d.state === 'online' ? '#2E6B34' : d.state === 'stale' ? '#8A6A12' : '#5F5F5B', fontWeight: 600, whiteSpace: 'nowrap' } }, stLabel[d.state]),
+        e('span', { style: { whiteSpace: 'nowrap' } }, this.ago(d.last)),
+        d.speed > 1 && d.state !== 'offline' ? Math.round(d.speed) + ' km/h' : '0 km/h',
+        d.battery != null ? d.battery + '%' : '—',
+        t ? t.km.toFixed(1) + ' km' : '—',
+        t ? t.done + ' / ' + t.wos.length : '—',
+        e('span', { style: { whiteSpace: 'nowrap' } }, now),
+      ];
+    });
+    const teamBody = T.devices.length
+      ? this.table(['Technician', 'Status', 'Last fix', 'Speed', 'Battery', 'Today', 'WOs done', 'Now'], teamRows, { minWidth: 820, numeric: false, maxHeight: 420 })
+      : h('p', { margin: 0, font: sans, color: '#5F5F5B' }, T.link.msg || 'No devices yet.');
+    const team = this.card('Field team', {
+      span: 12, meta: (demo ? 'demo · ' : '') + T.devices.length + ' technicians · ' + (T.link.state === 'live' ? 'live socket' : T.link.state === 'polling' ? 'polling' : T.link.state),
+      body: teamBody,
+      note: 'Online = position within the last ' + T.cfg.staleMin + ' min, Stale = within ' + T.cfg.offlineMin + ' min, Offline = older. Click a technician to draw their route and replay the day.' + (demo ? ' Demo data: technicians are simulated around real customer locations. Connect your server in Tracking setup.' : ''),
+    });
+    const dd = T.dayData(tr.day), R = T.cfg.arriveM;
+    const daySel = e('select', { value: tr.day, onChange: ev => { clearInterval(this.playTimer); this.setTrk({ day: +ev.target.value, t: null, playing: false }); }, style: { padding: '5px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: "500 12px 'IBM Plex Sans',system-ui,sans-serif" } },
+      [0, 1, 2, 3, 4, 5, 6].map(o => e('option', { key: o, value: o }, this.dayLabel(o))));
+    let body;
+    if (!dd) body = pulse;
+    else if (dd.error) body = h('p', { margin: 0, font: sans, color: '#9B2C1F' }, dd.error);
+    else if (!demo && !T.cfg.techCol) body = h('p', { margin: 0, font: sans, color: '#5F5F5B' }, 'Set the technician column of the Tickets sheet in Tracking setup to link work orders to devices.');
+    else {
+      const list = dd.wos, done = list.filter(w => w.state === 'done');
+      const med = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
+      const arrived = list.filter(w => w.arrive);
+      const TC = this.woColors(), TN = this.TK.WO_TYPES;
+      const stateCell = w => {
+        const map = { done: ['Completed', '#2E6B34'], 'on site': ['On site', '#1C64B4'], 'en route': ['En route', '#D9480F'], 'no fix': ['No GPS', '#5F5F5B'], 'no location': ['No customer coords', '#5F5F5B'] };
+        const [l, c] = map[w.state] || [w.state, '#5F5F5B'];
+        return e('span', { style: { color: c, fontWeight: 600, whiteSpace: 'nowrap' } }, l);
+      };
+      const rows = list.slice(0, 150).map(w => [
+        this.clock(w.dispatch),
+        e('span', { style: { whiteSpace: 'nowrap' } }, w.techName),
+        e('button', { type: 'button', onClick: () => this.jumpToWo(w), style: { display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: mono, color: '#1F1F1D', whiteSpace: 'nowrap', textDecoration: 'underline', textUnderlineOffset: 3, textDecorationColor: '#B8B8B3' } },
+          e('span', { style: { width: 9, height: 9, minWidth: 9, borderRadius: 2, background: TC[w.type] || '#5F5F5B', flex: 'none' } }), w.wo),
+        e('span', { style: { whiteSpace: 'nowrap' } }, (TN[w.type] || w.type)),
+        w.name || ('CID ' + w.cid),
+        w.state === 'en route' ? this.dur(w.travelMs) + ' so far' : this.dur(w.travelMs),
+        w.km != null ? w.km.toFixed(1) + ' km' : w.remainKm != null ? w.remainKm.toFixed(1) + ' km left' : '—',
+        this.clock(w.arrive),
+        w.state === 'on site' ? this.dur(w.onsiteMs) + ' so far' : this.dur(w.onsiteMs),
+        stateCell(w),
+      ]);
+      const totalKm = dd.techs.reduce((s, t) => s + t.km, 0);
+      body = h('div', { display: 'flex', flexDirection: 'column', gap: 16 },
+        this.statRow([
+          { label: 'Work orders', value: D.fmtInt(list.length), sub: D.fmtInt(done.length) + ' completed' },
+          { label: 'Median travel', value: this.dur(med(arrived.map(w => w.travelMs))), sub: 'dispatch to arrival' },
+          { label: 'Median distance', value: arrived.length ? med(arrived.map(w => w.km)).toFixed(1) + ' km' : '—', sub: 'per work order' },
+          { label: 'Median on site', value: this.dur(med(done.map(w => w.onsiteMs))), sub: 'completed visits' },
+          { label: 'Distance driven', value: totalKm.toFixed(0) + ' km', sub: 'all technicians' },
+        ]),
+        list.length
+          ? this.table(['Dispatched', 'Technician', 'Work order', 'Type', 'Customer', 'Travel', 'Distance', 'Arrived', 'On site', 'Tracked'], rows, { minWidth: 1040, numeric: false, maxHeight: 460 })
+          : h('p', { margin: 0, font: sans, color: '#5F5F5B' }, 'No work orders for this day.' + (dd.woTotal ? '' : '')),
+        dd.unmatched ? h('p', { margin: 0, font: "400 12px 'IBM Plex Sans',system-ui,sans-serif", color: '#8A6A12' }, D.fmtInt(dd.unmatched) + ' work orders could not be matched to a device. Check that device ' + (T.cfg.matchBy === 'phone' ? 'identifiers' : 'names') + ' match the technician column.') : null);
+    }
+    const travel = this.card('Travel time per work order', {
+      span: 12, meta: this.dayLabel(tr.day) + (demo ? ' · demo' : ''),
+      body: h('div', { display: 'flex', flexDirection: 'column', gap: 12 }, h('div', { display: 'flex', gap: 8, alignItems: 'center' }, daySel), body),
+      note: 'Travel = from dispatch, or from leaving the previous job if later, until the first GPS position within ' + R + ' m of the customer. Distance = GPS path length over that window. On site = time spent within ' + Math.round(R * 1.5) + ' m of the customer. Click a work order to replay the technician at arrival.',
+    });
+    return [team, travel];
+  }
+
+  /* ---------- tracking setup ---------- */
+
+  settingsView() {
+    const T = this.track, e = React.createElement, h = this.h.bind(this);
+    if (!T) return { kpis: [], cards: [this.card('Tracking setup', { span: 12, meta: 'loading', body: h('div', { height: 160, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) })] };
+    const dr = this.state.tDraft || T.cfg, saved = T.cfg;
+    const dirty = !!this.state.tDraft && JSON.stringify(this.state.tDraft) !== JSON.stringify(saved);
+    const setD = p => this.setState(s => ({ tDraft: { ...(s.tDraft || T.cfg), ...p } }));
+    const sans = "500 13px 'IBM Plex Sans',system-ui,sans-serif", mono = "500 12px 'IBM Plex Mono',ui-monospace,monospace";
+    const small = "400 12px/1.55 'IBM Plex Sans',system-ui,sans-serif";
+    const inputS = { width: '100%', boxSizing: 'border-box', padding: '8px 11px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', color: '#1F1F1D', font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' };
+    const lab = (t, extra) => h('span', { display: 'flex', alignItems: 'center', gap: 8, font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' }, t, extra || null);
+    const inp = (k, ph, type) => e('input', { type: type || 'text', value: dr[k] == null ? '' : dr[k], placeholder: ph || '', onChange: ev => setD({ [k]: type === 'number' ? Number(ev.target.value) : ev.target.value }), style: inputS });
+    const field = (label, control, hint, extra) => h('label', { display: 'flex', flexDirection: 'column', gap: 6 }, lab(label, extra), control, hint ? h('span', { font: small, color: '#5F5F5B' }, hint) : null);
+    const col = (...k) => h('div', { display: 'flex', flexDirection: 'column', gap: 18 }, ...k);
+    const btn = (label, onClick, dark, disabled) => e('button', { type: 'button', onClick, disabled, style: { padding: '8px 14px', borderRadius: 3, cursor: disabled ? 'default' : 'pointer', border: '1px solid #1F1F1D', background: dark ? '#1F1F1D' : '#FFFFFF', color: dark ? '#FFFFFF' : '#1F1F1D', font: "500 12.5px 'IBM Plex Mono',ui-monospace,monospace", opacity: disabled ? 0.4 : 1, whiteSpace: 'nowrap' } }, label);
+    const badge = (t, c, bg) => e('span', { style: { font: "600 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 3, color: c, background: bg, textTransform: 'uppercase' } }, t);
+    const seg = (k, opts) => h('div', { display: 'flex', border: '1px solid #DCDCD8', borderRadius: 3, overflow: 'hidden', alignSelf: 'flex-start' },
+      ...opts.map(([v, l], i) => e('button', { key: v, type: 'button', onClick: () => setD({ [k]: v }), style: { padding: '7px 14px', border: 'none', borderLeft: i ? '1px solid #DCDCD8' : 'none', background: dr[k] === v ? '#1F1F1D' : '#FFFFFF', color: dr[k] === v ? '#FFFFFF' : '#1F1F1D', font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, l)));
+    const check = (k, strong, rest) => e('label', { style: { display: 'flex', gap: 9, alignItems: 'flex-start', font: sans, color: '#1F1F1D', cursor: 'pointer' } },
+      e('input', { type: 'checkbox', checked: !!dr[k], onChange: ev => setD({ [k]: ev.target.checked }), style: { accentColor: '#1F1F1D', marginTop: 3 } }),
+      e('span', null, e('strong', { style: { fontWeight: 600 } }, strong), ' — ' + rest));
+    const msg = this.state.tMsg;
+    const save = () => { T.saveConfig(dr); this.setState({ tDraft: null, tMsg: { ok: true, text: dr.mode === 'demo' ? 'Saved. Demo data is running.' : 'Saved. Connecting to ' + dr.server + '…' } }); };
+    const test = async () => {
+      if (dr.mode === 'demo') { this.setState({ tMsg: { ok: false, text: 'Switch the mode to Live Traccar to test a server.' } }); return; }
+      if (!dr.server || !dr.token) { this.setState({ tMsg: { ok: false, text: 'Fill in the server URL and token first.' } }); return; }
+      this.setState({ tMsg: { ok: true, text: 'Testing…' } });
+      this.setState({ tMsg: await T.test(dr) });
+    };
+    const connection = this.card('Traccar connection', {
+      span: 6, meta: dirty ? 'unsaved changes' : 'saved in this browser',
+      body: col(
+        field('Data source', seg('mode', [['demo', 'Demo data'], ['live', 'Live Traccar']])),
+        field('Server URL (REST + WebSocket)', inp('server', 'https://track.yourdomain.com'), 'The address of your Traccar web interface. Must be HTTPS.'),
+        field('Device URL (what the phones use)', inp('deviceUrl', 'https://gps.yourdomain.com'), 'Entered as Server URL in Traccar Client on each phone.'),
+        field('Service-user token', inp('token', saved.token ? 'leave as is to keep the stored token' : 'paste token', 'password'), 'Generated on the read-only dashboard user. Stored in this browser only.', saved.token ? badge('stored', '#2E6B34', '#E7F2E8') : null),
+        check('enabled', 'Enabled', 'keep the live socket to the server open'),
+        h('div', { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
+          btn('Save & connect', save, true, !dirty), btn('Test connection', test), dirty ? btn('Discard', () => this.setState({ tDraft: null, tMsg: null })) : null),
+        msg ? h('span', { font: small, color: msg.ok ? '#2E6B34' : '#9B2C1F' }, msg.text) : null),
+    });
+    const L = T.link, stC = { live: ['live', '#2E6B34', '#E7F2E8'], polling: ['polling', '#2E6B34', '#E7F2E8'], demo: ['demo', '#8A6A12', '#FBF6E6'], connecting: ['connecting', '#1C64B4', '#E6EEF8'], error: ['error', '#9B2C1F', '#F7E6E3'], off: ['off', '#5F5F5B', '#EDEDEA'], waiting: ['waiting', '#5F5F5B', '#EDEDEA'], idle: ['idle', '#5F5F5B', '#EDEDEA'] }[L.state] || ['—', '#5F5F5B', '#EDEDEA'];
+    const kv = rows => h('div', { display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: '10px 14px', font: sans },
+      ...rows.flatMap(([k, v], i) => [e('span', { key: 'k' + i, style: { color: '#5F5F5B' } }, k), e('span', { key: 'v' + i, style: { color: '#1F1F1D', overflowWrap: 'anywhere' } }, v)]));
+    const withPos = T.devices.filter(d => d.lat != null).length, online = T.devices.filter(d => d.state === 'online').length;
+    const link = this.card('Live link', {
+      span: 6, meta: L.lastMsg ? 'last message ' + this.ago(L.lastMsg) : 'never',
+      body: kv([
+        ['State', e('span', { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } }, badge(stC[0], stC[1], stC[2]), e('span', { style: { color: L.state === 'error' ? '#9B2C1F' : '#1F1F1D' } }, L.msg || ''))],
+        ['Server', saved.mode === 'demo' ? 'demo (no server)' : saved.server || '—'],
+        ['Connected', (L.since ? new Date(L.since).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—') + ' · ' + (L.reconnects || 0) + ' reconnects'],
+        ['Devices', T.devices.length + ' known · ' + withPos + ' with a position'],
+        ['Technicians', online + ' online now'],
+        ['Dashboard origin', location.origin],
+      ]),
+    });
+    const behaviour = this.card('Behaviour', {
+      span: 6,
+      body: col(
+        h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 18 },
+          field('Stale after (minutes)', inp('staleMin', '15', 'number')),
+          field('Offline after (minutes)', inp('offlineMin', '60', 'number')),
+          field('Arrival radius (metres)', inp('arriveM', '150', 'number')),
+          field('Server retention (days)', inp('retentionDays', '365', 'number'))),
+        h('span', { font: small, color: '#5F5F5B' }, 'Arrival radius decides when a technician counts as at the customer. 100–200 m suits GPS on phones in dense areas.')),
+    });
+    const matching = this.card('Work-order matching', {
+      span: 6,
+      body: col(
+        field('Technician column in Tickets sheet', inp('techCol', 'e.g. AG'), 'Column letter holding the assigned technician for each work order.'),
+        field('Match devices by', seg('matchBy', [['name', 'Device name = technician name'], ['phone', 'Identifier = phone number']])),
+        h('span', { font: small, color: '#5F5F5B' }, 'Work orders are read from the Tickets sheet by date (column D), customer CID (F), WO number (AC) and status (AD). Customer coordinates come from the customer sheet.')),
+    });
+    const code = (k, text) => h('div', { position: 'relative' },
+      e('pre', { style: { margin: 0, padding: '10px 12px', paddingRight: 64, background: '#F4F4F2', border: '1px solid #DCDCD8', borderRadius: 3, font: "500 12px/1.6 'IBM Plex Mono',ui-monospace,monospace", color: '#1F1F1D', overflowX: 'auto', whiteSpace: 'pre' } }, text),
+      e('button', { type: 'button', onClick: () => { navigator.clipboard && navigator.clipboard.writeText(text); this.setState({ copied: k }); setTimeout(() => this.setState({ copied: null }), 1500); }, style: { position: 'absolute', top: 6, right: 6, padding: '3px 8px', border: '1px solid #DCDCD8', borderRadius: 3, background: '#FFFFFF', font: "500 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#1F1F1D', cursor: 'pointer' } }, this.state.copied === k ? 'Copied' : 'Copy'));
+    const host = (u, f) => { try { return new URL(u).host || f; } catch (x) { return f; } };
+    const th = host(dr.server, 'track.yourdomain.com'), gh = host(dr.deviceUrl, 'gps.yourdomain.com');
+    const step = (n, title, ...kids) => h('div', { display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', gap: 12 },
+      h('span', { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#B08A1E', paddingTop: 2 }, String(n).padStart(2, '0')),
+      h('div', { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }, h('strong', { font: "600 13.5px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D' }, title), ...kids));
+    const p = t => h('span', { font: small, color: '#3A3A37' }, t);
+    const setup = this.card('Server setup', {
+      span: 12, meta: 'Ubuntu 22.04 / 24.04 VPS · commands update as you fill in the URLs',
+      body: h('div', { display: 'grid', gridTemplateColumns: this.state.w < 1100 ? 'minmax(0,1fr)' : 'repeat(2,minmax(0,1fr))', gap: '22px 32px' },
+        step(1, 'DNS', p('Create two A records pointing to the VPS IP address: ' + th + ' for the dashboard and API, ' + gh + ' for the phones.')),
+        step(2, 'Install Traccar', code('i', 'sudo apt update && sudo apt install -y unzip\nwget https://www.traccar.org/download/traccar-linux-64-latest.zip\nunzip traccar-linux-64-latest.zip && sudo ./traccar.run\nsudo systemctl enable --now traccar')),
+        step(3, 'HTTPS with Caddy', p('Install Caddy, put this in /etc/caddy/Caddyfile, then run sudo systemctl reload caddy. Certificates are issued automatically.'),
+          code('c', 'sudo apt install -y caddy'), code('cf', th + ' {\n  reverse_proxy localhost:8082\n}\n' + gh + ' {\n  reverse_proxy localhost:5055\n}')),
+        step(4, 'Allow the dashboard and set retention', p('Add inside <properties> in /opt/traccar/conf/traccar.xml, then run sudo systemctl restart traccar. Use the origin where the dashboard is published (for GitHub Pages: https://username.github.io).'),
+          code('x', "<entry key='web.origin'>" + (dr.origin || location.origin) + "</entry>\n<entry key='database.historyDays'>" + (dr.retentionDays || 365) + '</entry>'),
+          field('Dashboard origin', inp('origin', 'https://username.github.io'))),
+        step(5, 'Firewall', code('f', 'sudo ufw allow OpenSSH\nsudo ufw allow 80,443/tcp\nsudo ufw enable')),
+        step(6, 'Service user and token', p('Open https://' + th + ', create the admin account, then add a user named "dashboard" with Readonly ticked and access to every technician device. Sign in as that user, open Account, generate a Token without expiry and paste it into Traccar connection above.')),
+        step(7, 'Devices', p('Add one device per technician. ' + (dr.matchBy === 'phone' ? 'Identifier = the technician’s phone number, exactly as in the Tickets sheet.' : 'Name = the technician’s name exactly as written in the Tickets sheet; Identifier = their phone number.'))),
+        step(8, 'Switch on', p('Set Data source to Live Traccar, press Test connection, then Save & connect.'))),
+    });
+    const phone = this.card('Phone app', {
+      span: 6,
+      body: col(
+        field('Android store link', inp('android')),
+        field('iPhone store link', inp('ios')),
+        kv([['Server URL', 'https://' + gh], ['Identifier', 'technician phone number'], ['Accuracy', 'High'], ['Frequency', '30 seconds'], ['Distance / angle', '0 / 0'], ['Buffering', 'On (sends when signal returns)'], ['Permission', 'Location: Allow all the time; battery optimisation off']])),
+    });
+    const purpose = this.card('Purpose & retention (PDP)', {
+      span: 6,
+      body: col(
+        e('textarea', { value: dr.purpose || '', onChange: ev => setD({ purpose: ev.target.value }), rows: 6, style: { ...inputS, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", resize: 'vertical' } }),
+        h('span', { font: small, color: '#5F5F5B' }, 'Share this with technicians before installing the app. Indonesia’s PDP law expects a stated purpose and retention period for employee location data; the server deletes positions after ' + (dr.retentionDays || 365) + ' days.')),
+    });
+    return { kpis: [], cards: [connection, link, behaviour, matching, setup, phone, purpose] };
+  }
+
+  seg(view) { return view === 'growth' ? 'retail' : view === 'intracity' ? 'intracity' : null; }
+  sla() { return Number(this.props.frtSla) || 5; }
+  rtSla() { return Number(this.props.rtSla) || 2; }
+  topN() { return Number(this.props.topN) || 12; }
+
+  refresh = () => {
+    this.D.clearCache();
+    this.setState({ data: {}, swapBy: {}, blockedBy: {} }, async () => {
+      try {
+        const index = await this.D.loadIndex();
+        this.setState({ index }, () => this.load());
+      } catch (e) { this.setState({ error: e.message, busy: false }); }
+    });
+  };
+
+  go = view => this.setState({ view }, () => this.load());
+  navEnter = () => { clearTimeout(this.navTimer); if (!this.state.navOpen) this.setState({ navOpen: true }); };
+  navLeave = () => { clearTimeout(this.navTimer); this.navTimer = setTimeout(() => this.setState({ navOpen: false }), 1500); };
+  setPeriod = e => this.setState({ period: e.target.value }, () => this.load());
+  setBranch = e => this.setState({ branch: e.target.value }, () => this.load());
+
+  runSwap = async (forSeg) => {
+    const seg = typeof forSeg === 'string' ? forSeg : (this.seg(this.state.view) || 'retail');
+    if (this.state.swapBusy) return;
+    this.setState({ swapBusy: true, swapProgress: 0 });
+    try {
+      const swap = await this.D.runSwapAnalysis(n => this.setState({ swapProgress: n }), seg);
+      this.setState(st => ({ swapBy: { ...st.swapBy, [seg]: swap }, swapBusy: false }), () => {
+        const cur = this.seg(this.state.view);
+        if (cur && cur !== seg && !this.state.swapBy[cur]) this.runSwap(cur);
+      });
+    } catch (e) { this.setState(st => ({ swapBusy: false, swapBy: { ...st.swapBy, [seg]: { error: e.message } } })); }
+  };
+
+  /* ---------- small render helpers ---------- */
+
+  el(tag, style, children) { return React.createElement(tag, { style }, children); }
+
+  table(headers, rows, opts) {
+    const o = opts || {};
+    const th = { textAlign: 'left', padding: '7px 12px', background: '#F4F4F2', borderBottom: '1px solid #DCDCD8', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', whiteSpace: 'nowrap', position: o.maxHeight ? 'sticky' : 'static', top: 0 };
+    const td = { padding: '8px 12px', font: "400 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D', borderTop: '1px solid #EBEBE7', verticalAlign: 'top' };
+    return React.createElement('div', { style: { overflowX: 'auto', maxHeight: o.maxHeight || 'none', overflowY: o.maxHeight ? 'auto' : 'visible', border: '1px solid #DCDCD8', borderRadius: 3 } },
+      React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', minWidth: o.minWidth || 'auto' } },
+        React.createElement('thead', null, React.createElement('tr', null, headers.map((hd, i) =>
+          React.createElement('th', { key: i, style: { ...th, textAlign: i && o.numeric !== false ? 'right' : 'left' } }, hd)))),
+        React.createElement('tbody', null, rows.map((r, i) =>
+          React.createElement('tr', { key: i }, r.map((c, j) =>
+            React.createElement('td', {
+              key: j,
+              style: { ...td, borderTop: i ? td.borderTop : 'none', textAlign: j && o.numeric !== false ? 'right' : 'left', font: j && o.numeric !== false ? "400 12.5px 'IBM Plex Mono',ui-monospace,monospace" : td.font, color: j === 0 ? '#1F1F1D' : '#3A3A37' },
+            }, c)))))));
+  }
+
+  statRow(items) {
+    return React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 14 } },
+      items.map((it, i) => React.createElement('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        React.createElement('span', { style: { font: "500 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' } }, it.label),
+        React.createElement('span', { style: { font: "500 20px/1 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '-0.02em', color: it.color || '#1F1F1D' } }, it.value),
+        it.sub ? React.createElement('span', { style: { font: "500 11px/1.4 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.64)' } }, it.sub) : null)));
+  }
+
+  bullets(items, color) {
+    return React.createElement('ul', { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 11 } },
+      items.map((t, i) => React.createElement('li', { key: i, style: { display: 'grid', gridTemplateColumns: '18px minmax(0,1fr)', gap: 10, font: "500 13px/1.65 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)', textWrap: 'pretty' } },
+        React.createElement('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: color || '#B08A1E', paddingTop: 3 } }, String(i + 1).padStart(2, '0')),
+        React.createElement('span', null,
+          t.title ? React.createElement('strong', { style: { color: '#1F1F1D', fontWeight: 600 } }, t.title + ' ') : null,
+          t.text || t))));
+  }
+
+  scaleSpan(n) {
+    const w = this.state.w || 1400;
+    if (w < 860) return 12;
+    if (w < 1280) return n <= 6 ? 6 : 12;
+    return n;
+  }
+
+  card(title, opts) {
+    const o = opts || {};
+    return { title, meta: o.meta || '', sub: o.sub || '', note: o.note || '', body: o.body, grid: { gridColumn: 'span ' + this.scaleSpan(o.span || 12) } };
+  }
+
+  /* ---------- views ---------- */
+
+  overview(d) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D, t = d.tickets, e = d.esc, c = d.chat, s = d.csat, r = d.repeat, q = d.complaints, g = this.state.data.growth;
+    const swR = this.state.swapBy.retail, co = swR && !swR.error ? swR.cohort : null;
+    const blR = this.state.blockedBy.retail, bl = blR && !blR.error ? blR : null;
+    const ct = co && co.total;
+    const kpis = [
+      { label: 'Trouble tickets', value: D.fmtInt(t.total), sub: D.fmtInt(Math.round(t.avgDaily)) + ' per day average' },
+      { label: 'Unique customers', value: D.fmtInt(r.uniq), sub: D.fmtPct(r.multiShare) + ' raised more than one ticket' },
+      { label: 'Escalated to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets queued' },
+      { label: 'Work orders raised', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of tickets became field work' },
+      { label: 'Chat conversations', value: D.fmtInt(c.totalConv), sub: D.fmtPct(c.aiShare) + ' closed by DotAI' },
+      { label: 'CSAT', value: s.total ? D.fmtPct(s.top2Share) : '—', sub: s.total ? 'rated 4 or 5 · average ' + s.avg.toFixed(2) + ' / 5 · ' + D.fmtInt(s.total) + ' responses' : 'No responses in period' },
+    ];
+    const cards = [
+      this.card('Daily ticket volume', {
+        span: 8, meta: t.series.length + ' days',
+        sub: 'Total inbound tickets per day with mass-outage tickets overlaid in red.',
+        body: React.createElement(LineChart, { series: t.series, overlayKey: 'mass', height: 250 }),
+        note: t.peak ? 'Peak ' + D.fmtInt(t.peak.value) + ' tickets on ' + t.peak.raw + '; quietest day ' + D.fmtInt(t.low.value) + ' on ' + t.low.raw + '. Mass-problem tickets in period: ' + D.fmtInt(t.massTotal) + '.' : '',
+      }),
+      this.card('Request type', {
+        span: 4, meta: D.fmtInt(t.total) + ' tickets',
+        body: React.createElement(Donut, { data: t.type, centerValue: D.fmtPct(this.share(t.type, 'Complaint')), centerLabel: 'complaints' }),
+        note: 'Complaints are reactive contacts; info requests are service or account questions.',
+      }),
+      this.card('Top 5 complaint categories', {
+        span: 4, meta: D.fmtInt(q.total) + ' complaints',
+        body: React.createElement(RankBars, { data: q.category, total: q.total }),
+      }),
+      this.card('Top 5 complaint types', {
+        span: 4, meta: 'problem reported',
+        body: React.createElement(RankBars, { data: q.problem, total: q.total, color: this.PAL[2] }),
+      }),
+      this.card('Entry channel', {
+        span: 4, meta: 'via origin',
+        body: React.createElement(RankBars, { data: t.channel.slice(0, 8), total: t.total, color: this.PAL[1] }),
+      }),
+      this.card('Priority mix', {
+        span: 4, meta: D.fmtPct(t.criticalShare) + ' critical',
+        body: React.createElement(Donut, { data: t.priority, centerValue: D.fmtInt(t.critical), centerLabel: 'VIP + highest', colors: ['#9B2C1F', '#C4561B', '#B08A1E', '#3E5C76', '#8C8C88'] }),
+        note: 'VIP and Highest tickets carry the greatest reputational exposure despite their small share of volume.',
+      }),
+      this.card('Retail growth and churn', {
+        span: 8, meta: co ? co.windowLabel + ' · Intracity excluded' : 'trailing 12 months · Intracity excluded',
+        body: this.statRow([
+          { label: 'Active customers', value: g ? D.fmtInt(g.active) : '…', sub: g ? D.fmtInt(g.added12) + ' new accounts in 12 months' : 'loading' },
+          { label: 'Net growth rate', value: ct && ct.opening ? D.fmtPct((ct.added - ct.terminated) / ct.opening) : '…', sub: ct ? 'acquisition rate ' + D.fmtPct(ct.added / ct.opening) : 'scanning records' },
+          { label: 'True churn rate', value: ct && ct.opening ? D.fmtPct(ct.churn / ct.opening) : '…', sub: ct ? D.fmtInt(ct.churn) + ' customers lost' : 'scanning records', color: '#9B2C1F' },
+          { label: 'True churn per 100 new', value: ct && ct.added ? (ct.churn / ct.added * 100).toFixed(0) : '…', sub: ct ? D.fmtInt(ct.churn) + ' lost for ' + D.fmtInt(ct.added) + ' acquired' : 'scanning records' },
+          { label: 'Blocked accounts', value: bl ? D.fmtInt(bl.total) : '…', sub: bl ? D.fmtInt(bl.over3) + ' blocked more than 3 months' : 'loading' },
+          { label: 'MRC on hold', value: bl ? D.fmtRp(bl.mrcTotal) : '…', sub: 'monthly fee on blocked accounts' },
+        ]),
+        note: 'Not affected by the period and branch filters. True churn excludes account swaps, relocations and accounts already blocked before the window.',
+      }),
+      this.card('Response speed and field escalation at a glance', {
+        span: 12,
+        body: this.statRow([
+          { label: 'Weighted FRT (human)', value: D.fmtDur(c.weighted), sub: 'simple average ' + D.fmtDur(c.simple) },
+          { label: 'Excess wait — agents', value: D.fmtInt(c.excessHuman) + ' min', sub: '±' + D.fmtInt(c.excessHuman / 60) + ' hours above the ' + this.sla() + '-minute SLA' },
+          { label: 'Excess wait — dispatch & queues', value: D.fmtInt(c.excessSystem) + ' min', sub: '±' + D.fmtInt(c.excessSystem / 60) + ' hours above the ' + this.rtSla() + '-minute RT threshold' },
+          { label: 'CTSO handled by named officer', value: D.fmtInt(e.named), sub: D.fmtInt(e.unassigned) + ' queued without an individual owner' },
+          { label: 'Work order split', value: e.woTypes.filter(w => w.value).map(w => w.code).join(' / ') || '—', sub: e.woTypes.filter(w => w.value).map(w => D.fmtPct(w.share, 0)).join(' / ') },
+          { label: 'Repeat field work', value: D.fmtInt(r.multi), sub: 'customers needing 2 or more work orders (' + D.fmtPct(r.multiShare) + ' of sites with field work)' },
+        ]),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  share(list, key) {
+    const total = list.reduce((s, x) => s + x.value, 0);
+    const hit = list.find(x => x.key === key);
+    return total && hit ? hit.value / total : 0;
+  }
+
+  ticketsView(t) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D;
+    const prio = t.priority.map(p => {
+      const mix = t.prioComplaint[p.key] || { Complaint: 0, Info: 0 };
+      return [p.key, D.fmtInt(p.value), D.fmtPct(p.value / t.total), D.fmtInt(mix.Complaint), D.fmtPct(mix.Complaint / (p.value || 1))];
+    });
+    const kpis = [
+      { label: 'Tickets in period', value: D.fmtInt(t.total), sub: t.series.length + ' active days' },
+      { label: 'Daily average', value: D.fmtInt(Math.round(t.avgDaily)), sub: t.peak ? 'peak ' + D.fmtInt(t.peak.value) + ' · low ' + D.fmtInt(t.low.value) : '' },
+      { label: 'Complaints', value: D.fmtPct(this.share(t.type, 'Complaint')), sub: D.fmtInt((t.type.find(x => x.key === 'Complaint') || {}).value || 0) + ' of ' + D.fmtInt(t.total) + ' contacts' },
+      { label: 'Critical priority', value: D.fmtInt(t.critical), sub: D.fmtPct(t.criticalShare) + ' VIP + Highest' },
+      { label: 'Mass-outage tickets', value: D.fmtInt(t.massTotal), sub: 'baseline ' + D.fmtInt(t.massBaseline || 0) + ' per day' },
+    ];
+    const cards = [
+      this.card('Volume trend with mass-outage overlay', {
+        span: 12, meta: 'daily',
+        body: React.createElement(LineChart, { series: t.series, overlayKey: 'mass', height: 270 }),
+        note: 'Red bars mark tickets logged under the Mass-Problem problem code — the leading indicator of a network-wide incident.',
+      }),
+      this.card('Info versus complaint', {
+        span: 4,
+        body: React.createElement(Donut, { data: t.type, centerValue: D.fmtInt(t.total), centerLabel: 'tickets' }),
+      }),
+      this.card('Priority segmentation', {
+        span: 8, meta: '5 levels',
+        body: this.table(['Priority', 'Tickets', 'Share', 'Complaints', 'Complaint rate'], prio),
+        note: 'Complaint rate inside the VIP and Highest tiers shows how much of the critical queue is an active fault rather than a prioritised request.',
+      }),
+      this.card('Categories', {
+        span: 6, meta: t.category.length + ' categories',
+        body: React.createElement(RankBars, { data: t.category.slice(0, 12), total: t.total }),
+      }),
+      this.card('Specific problems', {
+        span: 6, meta: 'top 12 problem codes',
+        body: React.createElement(RankBars, { data: t.problem.slice(0, 12), total: t.total, color: this.PAL[1] }),
+      }),
+      this.card('Communication channel', {
+        span: 6, meta: 'via origin',
+        body: this.table(['Channel', 'Tickets', 'Share'], t.channel.map(c => [c.key, D.fmtInt(c.value), D.fmtPct(c.value / t.total)])),
+      }),
+      this.card('Branch and product split', {
+        span: 6,
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 18 } },
+          React.createElement(RankBars, { data: t.branchSplit.map(b => ({ key: b.key.replace(/^GlobalXtreme\s*/, ''), value: b.value })), total: t.total, color: this.PAL[2] }),
+          React.createElement(RankBars, { data: t.product.slice(0, 6), total: t.total, color: this.PAL[4] })),
+      }),
+      this.card('Highest mass-outage concentration', {
+        span: 12, meta: 'top days',
+        body: this.table(['Date', 'Mass-problem tickets', 'Total tickets that day', 'Share of the day'],
+          t.massTop.map(m => [m.raw, D.fmtInt(m.mass), D.fmtInt(m.value), D.fmtPct(m.mass / m.value)])),
+        note: 'Days well above the daily baseline indicate a network-wide incident rather than routine faults.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  escalationView(e) {
+    const { Donut, RankBars } = this.charts;
+    const D = this.D;
+    const funnel = [
+      { key: 'All tickets', value: e.total },
+      { key: 'Queued to CTSO', value: e.sent },
+      { key: 'Handled by a named CTSO', value: e.named },
+      { key: 'Became a work order', value: e.wo },
+    ];
+    const kpis = [
+      { label: 'Queued to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets' },
+      { label: 'Named CTSO owner', value: D.fmtInt(e.named), sub: D.fmtPct(e.namedShare) + ' of all tickets' },
+      { label: 'No individual owner', value: D.fmtInt(e.unassigned), sub: 'batch or automated handling' },
+      { label: 'Work orders', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of all tickets' },
+    ];
+    const cards = [
+      this.card('Escalation funnel', {
+        span: 5, meta: 'ticket → CTSO → work order',
+        body: React.createElement(RankBars, { data: funnel, total: e.total, max: e.total, colorBy: (d, i) => ['#B08A1E', '#3E5C76', '#2E6B34', '#8A3B6E'][i] }),
+        note: 'The gap between tickets queued to CTSO and tickets with a named officer is processed in batch — mostly mass-outage incidents handled collectively or dispatched straight to a work order.',
+      }),
+      this.card('Work orders by type', {
+        span: 7, meta: D.fmtInt(e.wo) + ' work orders',
+        body: React.createElement(Donut, { data: e.woTypes.filter(w => w.value).map(w => ({ key: w.code + ' · ' + w.name, value: w.value })), centerValue: D.fmtInt(e.wo), centerLabel: 'work orders', colors: ['#2E6B34', '#B08A1E', '#9B2C1F', '#3E5C76'] }),
+        note: 'WCA covers new installations (an acquisition signal), WCM covers repairs of the customer local network, and WWR covers wiredown or fiber-cut restoration.',
+      }),
+      this.card('Dispatch route by work-order type', {
+        span: 12,
+        body: this.table(['Type', 'Definition', 'Volume', 'Share of WO', 'Via CTSO', 'Direct dispatch'],
+          e.woTypes.map(w => [w.code + ' — ' + w.name, w.desc, D.fmtInt(w.value), w.value ? D.fmtPct(w.share) : '—',
+            w.value ? D.fmtInt(w.viaCtso) + ' (' + D.fmtPct(w.viaCtso / w.value, 0) + ')' : '—',
+            w.value ? D.fmtInt(w.direct) + ' (' + D.fmtPct(w.direct / w.value, 0) + ')' : '—'])),
+        note: 'A work-order code with zero volume is not present in the source system for this period. WGM (mass outage) has never been issued as a work-order code — mass incidents are tracked through the Mass-Problem ticket code instead.',
+      }),
+      this.card('Categories that generate field work', {
+        span: 6, meta: 'work orders by ticket category',
+        body: React.createElement(RankBars, { data: e.woByCategory, total: e.wo, color: this.PAL[2] }),
+      }),
+      this.card('CTSO workload', {
+        span: 6, meta: e.ctsoAgents.length + ' officers',
+        body: React.createElement(RankBars, { data: e.ctsoAgents, total: e.named, color: this.PAL[1] }),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  resolutionView(r) {
+    const { BarChart, RankBars } = this.charts;
+    const D = this.D;
+    const mins = v => D.fmtDur(v == null ? null : v * 60);
+    const kpis = [
+      { label: 'Median resolution (CSO)', value: mins(r.csoMedian), sub: D.fmtInt(r.csoCount) + ' tickets with a valid timestamp' },
+      { label: 'Mean resolution (CSO)', value: mins(r.csoMean), sub: 'distorted by extreme outliers — use the median for SLA' },
+      { label: 'Median resolution (CTSO)', value: mins(r.ctsoMedian), sub: D.fmtInt(r.ctsoCount) + ' escalated tickets' },
+      { label: 'First contact resolution', value: D.fmtPct(r.fcrRate), sub: D.fmtInt(r.fcr) + ' tickets closed on a single report' },
+      { label: 'Five or more reports', value: D.fmtPct(r.heavyRate), sub: D.fmtInt(r.heavy) + ' tickets needed repeated contact' },
+    ];
+    const cards = [
+      this.card('Resolution time distribution — CSO level', {
+        span: 6, meta: D.fmtInt(r.csoCount) + ' tickets',
+        body: React.createElement(BarChart, {
+          data: r.csoBuckets.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Tickets', color: '#B08A1E' }], height: 230,
+        }),
+        note: r.csoBuckets.map(b => b.label + ' → ' + D.fmtPct(b.cumulative, 1) + ' cumulative').join(' · '),
+      }),
+      this.card('Resolution time distribution — escalated to CTSO', {
+        span: 6, meta: D.fmtInt(r.ctsoCount) + ' tickets',
+        body: React.createElement(BarChart, {
+          data: r.ctsoBuckets.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Tickets', color: '#3E5C76' }], height: 230,
+        }),
+        note: 'Escalated cases resolve more slowly than CSO-level tickets, which is expected given their complexity and dependence on field dispatch.',
+      }),
+      this.card('Cumulative service level', {
+        span: 6,
+        body: this.table(['Window', 'Tickets', 'Share', 'Cumulative'],
+          r.csoBuckets.map(b => [b.label, D.fmtInt(b.value), D.fmtPct(b.share), D.fmtPct(b.cumulative)])),
+        note: 'Longest recorded resolution in this period: ' + mins(r.csoMax) + '.',
+      }),
+      this.card('Reports per ticket', {
+        span: 6, meta: 'FCR proxy',
+        body: React.createElement(RankBars, {
+          data: r.reports.slice(0, 10).map(x => ({ key: x.key + (x.key === 1 ? ' report' : ' reports'), value: x.value })),
+          total: r.repTotal, colorBy: (d, i) => (i === 0 ? '#2E6B34' : i < 3 ? '#B08A1E' : '#9B2C1F'),
+        }),
+        note: 'Total Reports counts every logged entry on a ticket, including proactive follow-up calls that require multiple contacts by design. True FCR is therefore likely higher than the headline figure; separating proactive outbound follow-ups from failed resolutions would sharpen the measure.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  agentsView(a) {
+    const { RankBars } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'Active CSO agents', value: D.fmtInt(a.headcount), sub: 'names recorded on tickets in period' },
+      { label: 'Tickets handled', value: D.fmtInt(a.total), sub: 'attributed to a named agent' },
+      { label: 'Average per agent', value: D.fmtInt(Math.round(a.avg)), sub: 'tickets in the selected period' },
+      { label: 'Workload spread', value: D.fmtInt(a.min) + '–' + D.fmtInt(a.max), sub: 'lowest to highest handling volume' },
+    ];
+    const cards = [
+      this.card('Handling volume by agent', {
+        span: 7, meta: 'top ' + Math.min(this.topN(), a.list.length),
+        body: React.createElement(RankBars, { data: a.list.slice(0, this.topN()).map(x => ({ key: x.key, value: x.value })), total: a.total }),
+        note: 'Cross-check against shift and attendance data before reading the spread as a performance gap — part-month rotations and backup shifts move these numbers.',
+      }),
+      this.card('Complaint load per agent', {
+        span: 5, meta: 'share of complaints',
+        body: React.createElement(RankBars, {
+          data: a.list.slice(0, this.topN()).map(x => ({ key: x.key, value: x.complaint })), total: a.total, color: this.PAL[3],
+        }),
+      }),
+      this.card('Full agent roster', {
+        span: 12, meta: a.headcount + ' agents',
+        body: this.table(['Agent', 'Tickets', 'Complaints', 'Info', 'Complaint share', 'vs team average'],
+          a.list.map(x => [x.key, D.fmtInt(x.value), D.fmtInt(x.complaint), D.fmtInt(x.info), D.fmtPct(x.complaintShare),
+            (x.value >= a.avg ? '+' : '') + D.fmtInt(x.value - a.avg)]), { maxHeight: 420, minWidth: 640 }),
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  customersView(r) {
+    const { RankBars, Donut } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'Field work orders', value: D.fmtInt(r.woTotal), sub: 'WWR / WCM / WGM executed, ' + D.fmtInt(r.cancelled) + ' cancelled orders excluded' },
+      { label: 'Customers with field work', value: D.fmtInt(r.uniq), sub: 'distinct CIDs that required a technician' },
+      { label: 'Repeat field work', value: D.fmtInt(r.multi), sub: D.fmtPct(r.multiShare) + ' of those CIDs needed two or more work orders' },
+      { label: 'Five or more work orders', value: D.fmtInt(r.five), sub: D.fmtPct(r.fiveShare) + ' of those CIDs — chronic fault sites' },
+      { label: 'Work orders on repeat sites', value: D.fmtInt(r.repeatWo), sub: D.fmtPct(r.repeatWoShare) + ' of all field work goes to returning locations' },
+    ];
+    const cards = [
+      this.card('Work orders per customer', {
+        span: 5,
+        body: React.createElement(Donut, { data: r.bands, centerValue: D.fmtInt(r.uniq), centerLabel: 'customers' }),
+        note: 'Counted from executed work orders per CID, not from reported tickets — one fault reported three times still counts as one visit, and a cancelled order counts as none.',
+      }),
+      this.card('Customers with the most field visits', {
+        span: 7, meta: 'top 12 CIDs',
+        body: React.createElement(RankBars, { data: r.top.map(x => ({ key: x.cid, value: x.value })), total: null, showShare: false, color: this.PAL[3] }),
+        note: 'Route these accounts to a retention owner for a proactive line check rather than waiting for the next fault.',
+      }),
+      this.card('Which work drives the repeats', {
+        span: 5, meta: D.fmtInt(r.mixedFault) + ' sites with more than one fault type',
+        body: this.table(['Code', 'Type', 'Total', 'On repeat sites'],
+          r.byType.map(t => [t.code, t.name, D.fmtInt(t.value),
+            D.fmtInt(t.repeat) + ' (' + D.fmtPct(t.value ? t.repeat / t.value : 0, 0) + ')'])),
+        note: 'WCA activations are not counted here — a new installation is acquisition, not a repeat fault.',
+      }),
+      this.card('Repeat work order detail', {
+        span: 7, meta: 'top 12 CIDs by fault mix',
+        body: this.table(['CID', 'Work orders', 'Mix'],
+          r.top.map(x => [x.cid, D.fmtInt(x.value), x.mix]), { maxHeight: 340 }),
+        note: 'A site mixing WWR and WCM points at the drop cable or the local network rather than a one-off break.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  chatView(c) {
+    const { Scatter, RankBars, Donut, SlaBars, BarChart } = this.charts;
+    const D = this.D;
+    const colorFor = a => (a.volume >= c.medVolRt && a.rt >= c.medRt) ? '#9B2C1F'
+      : (a.volume >= c.medVolRt ? '#2E6B34' : (a.rt >= c.medRt ? '#C4561B' : '#3E5C76'));
+    const kpis = [
+      { label: 'Conversations resolved', value: D.fmtInt(c.totalConv), sub: D.fmtInt(c.byHuman) + ' handled by the team' },
+      { label: 'Resolved by DotAI', value: D.fmtInt(c.byAi), sub: D.fmtPct(c.aiShare) + ' of total chat volume' },
+      { label: 'Weighted FRT (human)', value: D.fmtDur(c.weighted), sub: 'simple average ' + D.fmtDur(c.simple) },
+      { label: 'Excess wait — agents', value: D.fmtInt(c.excessHuman) + ' min', sub: '±' + D.fmtInt(c.excessHuman / 60) + ' hours above the ' + this.sla() + '-minute SLA' },
+      { label: 'Excess wait — dispatch', value: D.fmtInt(c.excessSystem) + ' min', sub: '±' + D.fmtInt(c.excessSystem / 60) + ' hours above the ' + this.rtSla() + '-minute threshold' },
+    ];
+    const cards = [
+      this.card('Volume versus average response time', {
+        span: 8, meta: c.measuredRt.length + ' agents plotted',
+        sub: 'Speed here is each agent’s average response time across the whole conversation, not the first reply alone. Dashed lines mark the team medians. Agents in the upper-right quadrant combine above-median volume with below-median speed, so their delay reaches the largest number of customers.',
+        body: React.createElement(Scatter, {
+          points: c.measuredRt.map(a => ({ x: a.volume, y: a.rt, name: a.name, color: colorFor(a), r: 7 })),
+          medX: c.medVolRt, medY: c.medRt, xLabel: 'Conversations handled', yLabel: 'Average response time',
+          yFormat: v => D.fmtDur(v), height: 400,
+          quadrantLabels: {
+            tr: 'HIGH VOLUME · SLOW — highest priority',
+            tl: 'LOW VOLUME · SLOW',
+            br: 'HIGH VOLUME · FAST — role models',
+            bl: 'LOW VOLUME · FAST',
+          },
+        }),
+      }),
+      this.card('Human versus automated resolution', {
+        span: 4,
+        body: React.createElement(Donut, {
+          data: [{ key: 'Handled by the team', value: c.byHuman }, { key: 'Resolved by DotAI', value: c.byAi }],
+          centerValue: D.fmtPct(c.aiShare, 1), centerLabel: 'automated', colors: ['#3E5C76', '#B08A1E'],
+        }),
+        note: 'DotAI removes a real share of first-layer load, though it remains below the 60% traffic-handling target set for the initiative.',
+      }),
+      this.card('First response time by agent', {
+        span: (this.state.w || 1400) < 1280 ? 12 : 6, meta: 'threshold ' + this.sla() + ' min',
+        body: React.createElement(SlaBars, {
+          data: c.measured.slice().sort((a, b) => b.frt - a.frt).map(a => ({ name: a.name, value: a.frt })),
+          threshold: this.sla() * 60, format: v => D.fmtDur(v), height: 360,
+        }),
+      }),
+      this.card('Speed distribution', {
+        span: 6, meta: c.measured.length + ' measured agents',
+        body: React.createElement(BarChart, {
+          data: c.bands.map(b => ({ label: b.label, value: b.value })),
+          keys: [{ key: 'value', label: 'Agents', color: '#B08A1E' }], height: 230,
+        }),
+        note: c.bands.map(b => b.label + ': ' + b.value + ' (' + D.fmtPct(b.share, 0) + ')').join(' · '),
+      }),
+      this.card('Fastest and slowest first response', {
+        span: 6, meta: 'unweighted',
+        body: this.table(['Rank', 'Fastest', 'Time', 'Slowest', 'Time'],
+          c.fastest.map((f, i) => [String(i + 1), f.name, D.fmtDur(f.frt), (c.slowest[i] || {}).name || '—', c.slowest[i] ? D.fmtDur(c.slowest[i].frt) : '—']), { numeric: false }),
+        note: 'This ranking reflects individual speed only. The impact ranking beside it weights the same delay by how many customers experienced it.',
+      }),
+      this.card('Excess wait time contributed per agent', {
+        span: 6, meta: 'minutes above SLA × volume',
+        body: React.createElement(RankBars, {
+          data: c.topExcess.map(a => ({ key: a.name, value: Math.round(a.excessFrt) })),
+          total: c.excessHuman, unit: ' min', color: '#9B2C1F',
+        }),
+        note: 'Coaching priority should follow cumulative impact rather than raw individual speed: a high-volume agent who is moderately slow costs customers more waiting time than a slower agent with little traffic.',
+      }),
+      this.card('System and queue accounts', {
+        span: 12, meta: 'dispatch, lobby and CTSO queues',
+        body: this.table(['Account', 'Conversations', 'First response', 'Response time', 'Excess RT minutes'],
+          c.system.map(a => [a.name, D.fmtInt(a.volume), a.frt != null ? D.fmtDur(a.frt) : '—', a.rt != null ? D.fmtDur(a.rt) : '—', D.fmtInt(a.excessRt)])),
+        note: 'Dispatcher accounts carry more conversations than any individual agent and sit at the hand-off point to the field team. Their excess wait time is close to the combined total of the entire human agent roster, which makes the dispatch process the single largest lever on perceived response speed.',
+      }),
+      ...c.quadrants.map(q => this.card(q.label, {
+        span: 3, meta: q.members.length + ' agents',
+        sub: q.note,
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+          q.members.length ? q.members.map((m, i) => React.createElement('div', {
+            key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 8, font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)' },
+          }, React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, m.name),
+            React.createElement('span', { style: { font: "500 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.64)', flex: '0 0 auto' } }, D.fmtDur(m.frt))))
+            : React.createElement('span', { style: { font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.62)' } }, 'No agents in this quadrant')),
+      })),
+      c.unmeasured.length ? this.card('Agents without speed data', {
+        span: 12,
+        body: React.createElement('p', { style: { margin: 0, font: "500 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.78)' } },
+          c.unmeasured.join(', ') + ' handled conversations but have no FRT or RT recorded. Confirm that their accounts are captured by the speed reporting before the next cycle.'),
+      }) : null,
+    ].filter(Boolean);
+    return { kpis, cards };
+  }
+
+  csatView(s) {
+    const { LineChart, Donut, RankBars } = this.charts;
+    const D = this.D;
+    const kpis = [
+      { label: 'CSAT score', value: s.total ? s.avg.toFixed(2) + ' / 5' : '—', sub: s.total ? D.fmtPct(s.top2Share) + ' top-2-box' : 'No responses in period' },
+      { label: 'Responses', value: D.fmtInt(s.total), sub: D.fmtInt(s.comments.length) + ' left a written comment' },
+      { label: 'Low ratings (1–2★)', value: D.fmtInt(s.bottom2), sub: D.fmtPct(s.bottom2Share) + ' bottom-2-box' },
+      { label: 'Detractor comments', value: D.fmtInt(s.detractors.length), sub: 'rated 3★ or below with written feedback' },
+    ];
+    const cards = [
+      this.card('Daily responses and rolling score', {
+        span: 8, meta: s.series.length + ' days',
+        body: React.createElement(LineChart, { series: s.series, height: 240, label: 'Responses' }),
+        note: 'Submission volume stays broadly stable through the month; spikes usually follow a resolved incident wave.',
+      }),
+      this.card('Rating distribution', {
+        span: 4,
+        body: React.createElement(Donut, {
+          data: s.ratings.map(r => ({ key: r.rating + '★ ' + r.label, value: r.value })),
+          centerValue: s.total ? s.avg.toFixed(2) : '—', centerLabel: 'average',
+          colors: ['#2E6B34', '#3E5C76', '#B08A1E', '#C4561B', '#9B2C1F'],
+        }),
+      }),
+      this.card('Where customers answer from', {
+        span: 6, meta: 'all responses on record',
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 18 } },
+          React.createElement(RankBars, { data: s.device, total: s.device.reduce((a, b) => a + b.value, 0), color: this.PAL[1] }),
+          React.createElement(RankBars, { data: s.browser, total: s.browser.reduce((a, b) => a + b.value, 0), color: this.PAL[5] })),
+      }),
+      this.card('Recurring themes in negative feedback', {
+        span: 6, meta: s.detractors.length + ' comments at 3★ or below',
+        body: this.bullets([
+          { title: 'Slow first response and chatbot loops.', text: 'Customers report waiting many hours for a first reply, receiving repeated template answers, and having to re-explain the same problem at every new contact because chat sessions carry no context forward.' },
+          { title: 'Field technician delays.', text: 'Faults left open for a full day or longer, and visit windows changed without notice. Corporate sites amplify the impact — one hotel account affected ten units at once.' },
+          { title: 'Sales and billing inconsistency.', text: 'Promotional terms promised at sale not honoured at activation, billing-cycle change requests left unprocessed until service was cut, and inspection fees not disclosed up front.' },
+          { title: 'Inconsistent connection quality.', text: 'Speeds below the subscribed package, fluctuating latency, and faults recurring every two to three weeks at the same locations, including physical damage to cable routes.' },
+          { title: 'No downtime compensation policy.', text: 'Business and work-from-home customers question the absence of any formal credit for prolonged outages — a policy gap with direct churn exposure in the highest-value segment.' },
+        ], '#9B2C1F'),
+      }),
+      this.card('Verbatim customer feedback', {
+        span: 12, meta: s.comments.length + ' comments in period',
+        body: React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12, maxHeight: 480, overflowY: 'auto', paddingRight: 4 } },
+          s.comments.slice(0, 90).map((c, i) => React.createElement('div', {
+            key: i,
+            style: {
+              display: 'flex', flexDirection: 'column', gap: 7, padding: '11px 12px', borderRadius: 3,
+              background: c.rating >= 4 ? 'rgba(46,107,52,0.08)' : 'rgba(155,44,31,0.07)',
+              border: '1px solid ' + (c.rating >= 4 ? 'rgba(46,107,52,0.26)' : 'rgba(155,44,31,0.26)'),
+            },
+          },
+            React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.66)' } },
+              React.createElement('span', { style: { color: c.rating >= 4 ? '#2E6B34' : '#9B2C1F' } }, '★'.repeat(c.rating) + '☆'.repeat(5 - c.rating)),
+              React.createElement('span', null, c.date ? c.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '')),
+            React.createElement('p', { style: { margin: 0, font: "500 12.5px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.88)', textWrap: 'pretty' } }, c.text),
+            c.who ? React.createElement('span', { style: { font: "500 11px 'IBM Plex Mono',ui-monospace,monospace", color: 'rgba(17,17,20,0.58)' } }, c.who) : null))),
+        note: 'Comments are pulled live from the survey tab. Named praise for individual agents is frequent, which points to strong individual service quality and a process-level consistency gap rather than a capability gap.',
+      }),
+    ];
+    return { kpis, cards };
+  }
+
+  growthView(g, seg = 'retail') {
+    const { BarChart, RankBars, Donut, MultiLine } = this.charts;
+    const D = this.D;
+    const sRaw = this.state.swapBy[seg];
+    const s = sRaw && !sRaw.error ? sRaw : null;
+    const blRaw = this.state.blockedBy[seg];
+    const bl = blRaw && !blRaw.error ? blRaw : null;
+    const co = s && s.cohort;
+    const kpis = [
+      { label: 'Customer records', value: D.fmtInt(g.totalRecords), sub: seg === 'intracity' ? 'Intracity price plans only' : 'retail only · Intracity plans excluded' },
+      ...(bl ? [
+        { label: 'Blocked accounts', value: D.fmtInt(bl.total), sub: D.fmtInt(bl.over3) + ' blocked for more than 3 months' },
+        { label: 'MRC on blocked accounts', value: D.fmtRp(bl.mrcTotal), sub: D.fmtRp(bl.over3Mrc) + ' blocked for more than 3 months' },
+      ] : []),
+      { label: 'Active customers', value: D.fmtInt(g.active), sub: D.fmtPct(g.active / g.totalRecords) + ' of all records' },
+      { label: 'New in last 12 months', value: D.fmtInt(g.added12), sub: g.windowLabel },
+      { label: 'Terminated in last 12 months', value: D.fmtInt(g.lost12), sub: 'net ' + (g.added12 - g.lost12 >= 0 ? '+' : '') + D.fmtInt(g.added12 - g.lost12) + ' accounts' },
+      { label: 'Change of ownership', value: D.fmtInt(g.changeOwnership), sub: 'formal transfers recorded, excluded from churn' },
+      ...(co && co.total.opening ? [
+        { label: 'Net growth rate (12m)', value: D.fmtPct((co.total.added - co.total.terminated) / co.total.opening), sub: 'acquisition rate ' + D.fmtPct(co.total.added / co.total.opening) + ' on an opening base of ' + D.fmtInt(co.total.opening) },
+        { label: 'True churn per 100 new', value: co.total.added ? (co.total.churn / co.total.added * 100).toFixed(0) : '—', sub: D.fmtInt(co.total.churn) + ' customers truly lost for ' + D.fmtInt(co.total.added) + ' new accounts' },
+        { label: 'True churn (12m)', value: D.fmtInt(co.total.churn), sub: D.fmtPct(co.total.churn / co.total.opening) + ' of opening base · ' + D.fmtInt(co.total.terminated) + ' terminations before adjustment' },
+      ] : []),
+    ];
+    const pr = (a, b) => b ? D.fmtPct(a / b) : '—';
+    const sg = n => (n >= 0 ? '+' : '') + D.fmtInt(n);
+    const coRows = co ? g.branches.map(b => co.branches.find(x => x.label === b.label)).filter(Boolean).concat([{ label: 'Total', ...co.total }]) : [];
+    const cards = [
+      this.card('New activations versus terminations', {
+        span: 12, meta: 'monthly · true churn excludes swaps, relocations and backlog',
+        body: React.createElement(MultiLine, {
+          height: 280,
+          data: g.monthlySeries.map(m => ({
+            ...m,
+            churn: s && s.realByMonth ? (s.realByMonth[m.mk] || 0) : null,
+            blocked: bl && bl.byMonth ? (bl.byMonth[m.mk] || 0) : null,
+          })),
+          lines: [
+            { key: 'added', label: 'New activations', color: '#2E6B34' },
+            { key: 'lost', label: 'Terminations', color: '#9B2C1F' },
+            { key: 'churn', label: 'True churn', color: '#1F1F1C', dash: '5 4', pending: 'scanning records…' },
+            { key: 'blocked', label: 'Blocked', color: '#C4561B', pending: 'loading' },
+          ],
+        }),
+        note: 'Terminations are dated from the account expiration field, which the system uses as the proxy for the termination date.',
+      }),
+      co ? this.card('Growth by city', {
+        span: 12, meta: co.windowLabel,
+        body: this.table(['Branch', 'Opening base', 'New accounts', 'Reactivated', 'Replacement', 'Terminated', 'Net change', 'Acquisition rate', 'Net growth rate'],
+          coRows.map(b => [b.label, D.fmtInt(b.opening), D.fmtInt(b.added), D.fmtInt(b.reactivated), D.fmtInt(b.replacement), D.fmtInt(b.terminated),
+            sg(b.added - b.terminated), pr(b.added, b.opening), pr(b.added - b.terminated, b.opening)])),
+        note: 'Opening base counts every account that started before ' + co.startLabel + ' and had not been terminated by then. Acquisition rate = new accounts ÷ opening base, a gross figure. Net growth rate = (new − terminated) ÷ opening base. Reactivated: the same name or phone had an account terminated more than ' + s.window + ' days before this one started. Replacement: the new record created by an account swap or relocation. Both are included in new accounts.',
+      }) : this.card('Growth by city', {
+        span: 12, meta: 'trailing 12 months · estimated base',
+        body: this.table(['Branch', 'Estimated opening base', 'New accounts', 'Terminated', 'Net change', 'Acquisition rate', 'Net growth rate'],
+          g.branches.map(b => [b.label, D.fmtInt(b.base), D.fmtInt(b.added), D.fmtInt(b.lost), sg(b.net), D.fmtPct(b.growthRate), D.fmtPct(b.net / b.base)])),
+        note: 'Provisional: the base is estimated as active now − new + terminated. The exact opening base, reactivations and true churn appear once the record scan finishes' + (this.state.swapBusy ? ' (scanning ' + D.fmtInt(this.state.swapProgress) + ' records…).' : '.'),
+      }),
+      ...(co ? [this.card('From terminations to true churn', {
+        span: 12, meta: co.windowLabel,
+        body: this.table(['Branch', 'New accounts', 'Terminated', 'Account swaps', 'Relocations', 'Blocked before window', 'True churn', 'True churn per 100 new', 'Reported churn rate', 'True churn rate'],
+          coRows.map(b => [b.label, D.fmtInt(b.added), D.fmtInt(b.terminated), D.fmtInt(b.swaps), D.fmtInt(b.relocations), D.fmtInt(b.backlog), D.fmtInt(b.churn), b.added ? (b.churn / b.added * 100).toFixed(0) : '—',
+            pr(b.terminated, b.opening), pr(b.churn, b.opening)])),
+        note: 'True churn = terminated − account swaps − relocations − accounts whose grace period ended before ' + co.startLabel + '. Those last accounts were already lost before the window and were only closed administratively inside it. Rates use the opening base. The sheet has no termination-reason column, so moves are traced by name or phone plus coordinates and dates, not by a "Moving" reason.',
+      })] : []),
+      ...(bl && bl.total ? [
+      this.card('Blocked accounts per month', {
+        span: 7, meta: 'by month blocked · last 12 months',
+        body: React.createElement(BarChart, {
+          data: bl.series, height: 240,
+          keys: [{ key: 'accounts', label: 'Blocked accounts', color: '#C4561B' }],
+        }),
+        note: 'An account is counted in the month its grace period ended, or its expiration date when no grace was given.',
+      }),
+      this.card('Monthly recurring revenue on hold', {
+        span: 5, meta: 'Rp million per month',
+        body: React.createElement(BarChart, {
+          data: bl.series, height: 240,
+          keys: [{ key: 'mrcM', label: 'MRC (Rp million)', color: '#9B2C1F' }],
+        }),
+        note: 'MRC is the monthly fee minus discount, before PPN.',
+      }),
+      this.card('How long accounts have been blocked', {
+        span: 5, meta: 'as of today',
+        body: React.createElement(Donut, {
+          data: bl.buckets.map(b => ({ key: b.key, value: b.value }))
+            .concat(bl.undated.value ? [{ key: 'No block date', value: bl.undated.value }] : []),
+          centerValue: D.fmtInt(bl.total), centerLabel: 'blocked',
+          colors: ['#D9A441', '#C4561B', '#B5552F', '#9B2C1F', '#A8A8A4'],
+        }),
+      }),
+      this.card('Blocked duration and revenue at risk', {
+        span: 7,
+        body: this.table(['Blocked for', 'Accounts', 'Share', 'MRC', 'Share of MRC'],
+          bl.buckets.map(b => [b.key, D.fmtInt(b.value), D.fmtPct(b.value / bl.total), D.fmtRp(b.mrc), D.fmtPct(bl.mrcTotal ? b.mrc / bl.mrcTotal : 0)])
+            .concat(bl.undated.value ? [['No block date', D.fmtInt(bl.undated.value), D.fmtPct(bl.undated.value / bl.total), D.fmtRp(bl.undated.mrc), D.fmtPct(bl.mrcTotal ? bl.undated.mrc / bl.mrcTotal : 0)]] : [])
+            .concat([['Total', D.fmtInt(bl.total), '100%', D.fmtRp(bl.mrcTotal), '100%']])),
+        note: 'Accounts blocked for up to a month are the most recoverable. Beyond three months, most will end as terminations unless someone contacts them.',
+      }),
+      ...(bl.over3Customers && bl.over3Customers.names ? [this.card('Customers blocked for more than 3 months', {
+        span: 12, meta: D.fmtInt(bl.over3Customers.names) + ' customer names · ' + D.fmtInt(bl.over3Customers.accounts) + ' accounts',
+        sub: D.fmtInt(bl.over3Customers.multiNames) + ' customer names hold more than one blocked account: ' + D.fmtInt(bl.over3Customers.multiAccounts) + ' accounts and ' + D.fmtRp(bl.over3Customers.multiMrc) + ' MRC in total. These are the likely B2B late payers, and one follow-up can recover every account they hold.',
+        body: this.table(['Customer name', 'Blocked accounts', 'MRC', 'Blocked since', 'City'],
+          bl.over3Customers.list.map(x => [x.name, D.fmtInt(x.accounts), D.fmtRp(x.mrc),
+            D.MON3[x.since.getMonth()] + ' ' + x.since.getFullYear() + ' (' + x.months + ' mo)', x.branches || '—']),
+          { maxHeight: 460 }),
+        note: 'Grouped on the Holder Name exactly as written in the sheet. The same company typed two ways counts as two customers. Sorted by number of accounts, then MRC.',
+      })] : []),
+      this.card('Blocked accounts by month', {
+        span: 12, meta: 'last 12 months',
+        body: this.table(['Month blocked', 'Accounts', 'MRC', 'Average MRC per account'],
+          bl.series.slice().reverse().map(m => [m.label, D.fmtInt(m.accounts), D.fmtRp(m.mrc), m.accounts ? D.fmtRp(m.mrc / m.accounts) : '—'])
+            .concat(bl.earlier.accounts ? [['Earlier', D.fmtInt(bl.earlier.accounts), D.fmtRp(bl.earlier.mrc), D.fmtRp(bl.earlier.mrc / bl.earlier.accounts)]] : []),
+          { maxHeight: 420 }),
+      }),
+      ] : [this.card('Blocked accounts', {
+        span: 12,
+        body: React.createElement('div', { style: { font: '500 14px ' + "'IBM Plex Sans',system-ui,sans-serif", color: '#5F5F5B', padding: '12px 0' } },
+          blRaw && blRaw.error ? 'Could not load blocked accounts: ' + blRaw.error : 'Loading blocked accounts…'),
+      })]),
+      this.card('Account status mix', {
+        span: 5,
+        body: React.createElement(Donut, { data: g.statuses.slice(0, 6).map(x => ({ key: x.key, value: x.value })), centerValue: D.fmtInt(g.totalRecords), centerLabel: 'records' }),
+      }),
+      this.card('Active base by branch', {
+        span: 7,
+        body: React.createElement(RankBars, { data: g.branches.map(b => ({ key: b.label, value: b.active })), total: g.active, color: this.PAL[2] }),
+        note: seg === 'retail' ? 'Bali carries the overwhelming majority of the base, so its absolute churn volume drives company-level revenue exposure even while its growth-to-churn ratio stays healthy.' : null,
+      }),
+      this.card('Active base by product', {
+        span: 6,
+        body: React.createElement(RankBars, { data: g.product, total: g.active, color: this.PAL[0] }),
+      }),
+      this.card('Highest-density service areas', {
+        span: 6, meta: 'active accounts',
+        body: React.createElement(RankBars, { data: g.area, total: g.active, color: this.PAL[1] }),
+      }),
+      this.card('What is actually churn', {
+        span: 12,
+        sub: 'Every terminated account is traced before it counts as a loss. A live account at the same coordinate under the same name or phone is an account swap. The same customer starting again at a different coordinate within ' + (s ? s.window : 14) + ' days of the termination is a relocation — they moved house and kept the service. Formal Change Ownership records are a transfer, not a loss, and were never in the churn figure.',
+        body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
+          s ? this.statRow([
+            { label: 'Records scanned', value: D.fmtInt(s.scanned) },
+            { label: 'Termination records', value: D.fmtInt(s.terminations) },
+            { label: 'Account swaps', value: D.fmtInt(s.swaps), sub: D.fmtPct(s.swapShare) + ' — same address, new record', color: '#3E5C76' },
+            { label: 'Relocations', value: D.fmtInt(s.relocations), sub: D.fmtPct(s.relocationShare) + ' — active again elsewhere within ' + s.window + ' days', color: '#2E6B34' },
+            { label: 'Change of ownership', value: D.fmtInt(s.changeOwnership), sub: 'formal transfers, excluded from churn' },
+            { label: 'Real churn', value: D.fmtInt(s.realChurn), sub: D.fmtPct(s.realChurnShare) + ' genuine customer loss', color: '#9B2C1F' },
+            { label: 'Same coordinate, different identity', value: D.fmtInt(s.sameCoordDiffId), sub: 'multi-tenant buildings — not counted as swaps' },
+            { label: 'Unmappable coordinates', value: D.fmtInt(s.invalid), sub: 'legacy records excluded from address matching' },
+            { label: 'Terminations without a date', value: D.fmtInt(s.undatedTerm), sub: 'cannot be tested for relocation' },
+          ]) : React.createElement('button', {
+            type: 'button', onClick: this.runSwap, disabled: this.state.swapBusy,
+            style: {
+              alignSelf: 'flex-start', padding: '8px 14px', borderRadius: 3, cursor: 'pointer',
+              border: '1px solid #1F1F1D', background: '#1F1F1D', color: '#FFFFFF',
+              font: "500 12.5px 'IBM Plex Mono',ui-monospace,monospace",
+            },
+          }, this.state.swapBusy ? 'Scanning ' + D.fmtInt(this.state.swapProgress) + ' records…' : 'Run churn quality analysis'),
+          s && s.byBranch.length ? React.createElement(RankBars, { data: s.byBranch, total: s.swaps, color: this.PAL[1] }) : null),
+        note: 'Exact coordinate matching at six decimal places means any manually re-pinned location is missed, so both the swap and the relocation figures are a lower bound. The system already offers a formal Change Ownership status; most detected swaps bypass it and are recorded as ordinary terminations, which inflates reported churn.',
+      }),
+      s && s.relocations ? this.card('Relocations excluded from churn', {
+        span: 7, meta: D.fmtInt(s.relocations) + ' moves traced',
+        body: this.table(['Customer', 'City', 'Gap', 'Moved to'],
+          s.relocSamples.map(x => [x.name, x.branch,
+            x.gap == null ? '—' : (x.gap >= 0 ? x.gap + ' days after' : Math.abs(x.gap) + ' days before'),
+            x.to])),
+        note: 'Traced on customer name or phone number, so a move recorded under a different name is still counted as churn.',
+      }) : null,
+      s && s.relocByBranch.length ? this.card('Where relocations happen', {
+        span: 5, meta: 'moves by city',
+        body: React.createElement(RankBars, { data: s.relocByBranch, total: s.relocations, color: this.PAL[2] }),
+      }) : null,
+    ];
+    return { kpis, cards };
+  }
+
+  /* ---------- render ---------- */
+
+  renderVals() {
+    const S = this.state;
+    const D = this.D;
+    const views = [
+      { id: 'overview', label: 'Executive overview', tag: '01', kicker: 'Customer Service & Customer Experience', title: 'Operational command centre', sub: 'Every metric on this page is read live from the operations spreadsheet. Change the period or branch and every panel re-queries the source.' },
+      { id: 'tickets', label: 'Trouble tickets', tag: '02', kicker: 'Demand', title: 'Trouble tickets, escalation and resolution', sub: 'Ticket volume and composition, escalation to CTSO and work orders, resolution time and FCR, and repeat contacts, on one page.' },
+      { id: 'chat', label: 'Chat omnichannel', tag: '03', kicker: 'Speed', title: 'Response time and impact analysis', sub: 'First response time, ongoing response time and DotAI contribution, weighted by the conversation volume each account actually handles, followed by CSO ticket workload for the selected period.' },
+      { id: 'csat', label: 'CSAT', tag: '04', kicker: 'Voice of customer', title: 'Customer satisfaction', sub: 'Survey score, rating distribution and the verbatim feedback behind it.' },
+      { id: 'growth', label: 'Growth & churn', tag: '05', kicker: 'Customer base', title: 'Growth and churn by city', sub: 'Account acquisition and loss across Bali, Malang, Balikpapan, Samarinda and Jakarta, with real churn separated from administrative account swaps. Retail customers only; Intracity price plans are reported on their own page.' },
+      { id: 'intracity', label: 'Intracity churn', tag: '06', kicker: 'Intracity', title: 'Intracity growth and churn', sub: 'Accounts on Intracity price plans, reported apart from the retail base. Same method as the retail page: activations, terminations, blocked accounts and real churn.' },
+      { id: 'map', label: 'Customer map', tag: '07', kicker: 'Customer base', title: 'Customer locations', sub: 'Every account with coordinates in the customer sheet, plotted on OpenStreetMap by current status and package, with field technicians from Traccar. Follows the branch filter; the period filter does not apply.' },
+      { id: 'dispatch', label: 'IDS · WWR wiredown', tag: '08', kicker: 'Intelligence Dispatch System', title: 'IDS · WWR wiredown', sub: 'Open WWR work orders grouped into fixed grid cells. Each cell is coloured and ranked by the total priority score of its jobs, with the number of teams it needs and how long the work takes. Teams go to the highest-scoring cells first, on road drive times. Follows the branch filter; the period filter does not apply.' },
+      { id: 'dispatchWcm', label: 'IDS · WCM maintenance', tag: '09', kicker: 'Intelligence Dispatch System', title: 'IDS · WCM maintenance', sub: 'Open WCM work orders, planned separately from wiredown with their own teams, grid priorities and board. Follows the branch filter; the period filter does not apply.' },
+      { id: 'settings', label: 'Tracking setup', tag: '10', kicker: 'Field team', title: 'Tracking setup', sub: 'Connect the dashboard to your own Traccar server. Settings are saved in this browser; demo data runs until a server is connected.' },
+    ];
+    const view = views.find(v => v.id === S.view) || views[0];
+    const key = this.key(S.view);
+    const payload = S.data[key];
+    let built = { kpis: [], cards: [] };
+    if (this.charts && D) {
+      try {
+        if (payload) {
+          built = ({
+            overview: () => this.overview(payload),
+            tickets: () => this.mergedView([
+              ['Trouble tickets', null, this.ticketsView(payload.tickets)],
+              ['CTSO & work orders', 'How inbound tickets convert into technical escalation and dispatched work orders, broken down by work-order type and routing path.', this.escalationView(payload.esc)],
+              ['Resolution & FCR', 'Time from ticket creation to closure at CSO and CTSO level, with the distribution of reports per ticket.', this.resolutionView(payload.res)],
+              ['Repeat contacts', 'Repeat contact measured from executed WWR, WCM and WGM work orders per customer ID, with cancelled orders excluded — the earliest available churn signal in support data.', this.customersView(payload.repeat)],
+            ]),
+            escalation: () => this.escalationView(payload),
+            resolution: () => this.resolutionView(payload),
+            agents: () => this.agentsView(payload),
+            customers: () => this.customersView(payload),
+            chat: () => {
+              const ag = S.data['agents|' + S.period + '|' + S.branch];
+              const agv = ag && !ag.error ? this.agentsView(ag)
+                : { kpis: [], cards: [this.card('CSO workload', { span: 12, meta: ag ? 'error' : 'loading', body: React.createElement('div', { style: ag ? { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#9B2C1F' } : { height: 160, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' } }, ag ? ag.error : null) })] };
+              return this.mergedView([['Chat omnichannel', null, this.chatView(payload)], ['CSO workload', 'Ticket handling volume per customer service officer, with the complaint share each agent absorbs. Follows the period and branch filters.', agv]]);
+            },
+            csat: () => this.csatView(payload),
+            growth: () => this.growthView(payload, 'retail'),
+            intracity: () => this.growthView(payload, 'intracity'),
+            map: () => this.mapView(payload),
+            dispatch: () => this.dispatchView(payload),
+            dispatchWcm: () => this.dispatchView(payload),
+            settings: () => this.settingsView(),
+          })[S.view]();
+          const at = { overview: 2, tickets: 1, csat: 2 }[S.view];
+          if (at != null) built.cards.splice(at, 0, ...(S.view === 'overview'
+            ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
+            : [this.opsCompareCard(S.view, 12)]));
+          if (S.view === 'growth' || S.view === 'intracity') built.cards.splice(1, 0, this.growthCompareCard(payload, this.seg(S.view), 12));
+        }
+      } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
+    }
+    if (!built.cards.length && !S.error) {
+      const shimmer = hgt => React.createElement('div', {
+        style: { height: hgt, borderRadius: 2, background: 'linear-gradient(90deg, rgba(17,17,20,0.05), rgba(17,17,20,0.10), rgba(17,17,20,0.05))', animation: 'gxpulse 1.6s ease-in-out infinite' },
+      });
+      built = {
+        kpis: [1, 2, 3, 4, 5, 6].map(i => ({ label: 'Loading', value: '—', sub: 'querying the spreadsheet' })),
+        cards: [[12, 240], [6, 190], [6, 190]].map(([sp, hgt], i) => this.card('Loading data', {
+          span: sp, meta: 'reading live sheet',
+          body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+            shimmer(hgt), shimmer(12), shimmer(12)),
+        })),
+      };
+    }
+    const idx = S.index;
+    const periodLabel = S.period === 'all' ? 'All time' : ((idx && idx.periods.find(p => p.key === S.period) || {}).label || S.period);
+    const sync = D && D.stats.lastSync ? D.stats.lastSync : null;
+    return {
+      nav: (() => {
+        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchWcm', 'WCM · maintenance']]], ['settings']];
+        const by = id => views.find(v => v.id === id), og = S.navGroups || {};
+        return G.map((g, i) => {
+          const tag = String(i + 1).padStart(2, '0');
+          if (!g[1]) { const v = by(g[0]); return { tag, label: v.label, active: v.id === S.view, isGroup: false, open: false, chev: '', kids: [], onClick: () => this.go(v.id) }; }
+          const hasActive = g[1].some(c => c[0] === S.view), open = og[g[0]] != null ? og[g[0]] : hasActive;
+          return { tag, label: g[0], active: hasActive && !open, isGroup: true, open, chev: open ? '▾' : '▸',
+            onClick: () => this.setState(s => ({ navGroups: { ...(s.navGroups || {}), [g[0]]: !open } })),
+            kids: g[1].map(([id, label]) => ({ label, active: id === S.view, onClick: () => this.go(id) })) };
+        });
+      })(),
+      navEnter: this.navEnter, navLeave: this.navLeave,
+      navX: S.navOpen ? 'translateX(0)' : 'translateX(-196px)', navShadow: S.navOpen ? '4px 0 18px rgba(0,0,0,0.10)' : 'none',
+      viewTitle: view.title, viewSub: view.sub,
+      viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),
+      period: S.period, branch: S.branch,
+      periodOptions: idx ? idx.periods.map(p => ({ key: p.key, label: p.label })) : [],
+      branchOptions: idx ? idx.branches.map(b => ({ key: b.key, label: b.label })) : [],
+      onPeriod: this.setPeriod, onBranch: this.setBranch, onRefresh: this.refresh,
+      busy: S.busy, error: S.error,
+      dateWarn: !!(idx && (idx.unreadable || idx.future)),
+      dateWarnText: idx ? [
+        idx.unreadable ? D.fmtInt(idx.unreadable) + ' tickets have a date the dashboard cannot read and are missing from every chart.' : '',
+        idx.future ? D.fmtInt(idx.future) + ' tickets are dated after today, which usually means day and month were swapped.' : '',
+      ].filter(Boolean).join(' ') : '',
+      kpis: built.kpis, cards: (built.cards || []).filter(Boolean),
+      syncLine: sync ? 'Synced ' + sync.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Connecting…',
+      engineLine: D ? D.stats.queries + ' aggregate queries · ' + Math.round(D.stats.bytes / 1024) + ' KB transferred · ' + (D.csvInfo && D.csvInfo.text ? D.csvInfo.text : D.csvInfo && D.csvInfo.error ? 'Google Sheets (Drive CSV unavailable: ' + D.csvInfo.error + ')' : 'computation pushed to Google Sheets') : '',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
