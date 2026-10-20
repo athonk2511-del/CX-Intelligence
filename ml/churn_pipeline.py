@@ -69,8 +69,11 @@ def stack_folder(folder: Path, names: list[str] | dict[int, str]) -> pd.DataFram
     """Every CSV in the folder, stacked in name order; columns are taken by position."""
     files = sorted(p for p in folder.iterdir() if p.suffix.lower() == ".csv")
     frames = []
-    for p in files:
+    log.info("reading %s: %d CSV files", folder.name, len(files))
+    for i, p in enumerate(files, 1):
+        t1 = time.time()
         df = read_csv_text(p.read_bytes().decode("utf-8", errors="replace"))
+        log.info("  %s %d/%d %s · %d rows · %.1fs", folder.name, i, len(files), p.name, len(df), time.time() - t1)
         if isinstance(names, dict):
             df = pd.DataFrame({n: (df.iloc[:, i] if i < df.shape[1] else "") for i, n in names.items()})
         else:
@@ -200,6 +203,10 @@ def find_subfolders(root: Path, cfg: dict) -> dict[str, Path]:
         if re.search(r"churn ?model", n):
             continue
         for kind, pat in cfg["subfolders"].items():
+            if kind == "wo" and re.search(pat, n):
+                out.setdefault("wo_all", []).append(p)
+                out.setdefault("wo", p)
+                break
             if kind not in out and re.search(pat, n):
                 out[kind] = p
                 break
@@ -308,7 +315,7 @@ def load_data(cfg: dict) -> Data:
     missing = [k for k in ("tickets", "customers") if k not in sub]
     if missing:
         raise DataQualityError("missing subfolders: " + ", ".join(missing))
-    dq: dict = {"folders": {k: v.name for k, v in sub.items()}}
+    dq: dict = {"folders": {k: (", ".join(x.name for x in v) if isinstance(v, list) else v.name) for k, v in sub.items()}}
     craw = stack_folder(sub["customers"], CUST_COLS)
     traw = stack_folder(sub["tickets"], TICKET_COLS)
     for need, df, cols in (("customers", craw, ["cid", "status", "start_date", "grace", "expiration", "uid"]),
@@ -331,7 +338,7 @@ def load_data(cfg: dict) -> Data:
                     dq["ticket_customer_match_rate"] * 100)
     dq["ticket_date_min"] = str(t["date"].min().date())
     dq["ticket_date_max"] = str(t["date"].max().date())
-    wo = prepare_wo(stack_folder(sub["wo"], WO_POS)) if "wo" in sub else pd.DataFrame(columns=["cid", "kind", "created", "dow"])
+    wo = prepare_wo(pd.concat([stack_folder(f, WO_POS) for f in sub["wo_all"]], ignore_index=True)) if "wo" in sub else pd.DataFrame(columns=["cid", "kind", "created", "dow"])
     dq["wo_rows"] = int(len(wo))
     newest = max(p.stat().st_mtime for p in sub["customers"].iterdir() if p.suffix.lower() == ".csv")
     cust_date = pd.Timestamp(newest, unit="s").normalize()
@@ -1067,6 +1074,9 @@ def train(cfg: dict) -> dict:
     log.info("scale_pos_weight: %s (val PR-AUC sqrt %.4f · ratio %.4f)", spw_key, spw_res["sqrt"], spw_res["ratio"])
     best = None
     G = m["grid"]
+    n_grid = len(G["max_depth"]) * len(G["learning_rate"]) * len(G["min_child_weight"]) * len(G["reg_lambda"])
+    i_grid = 0
+    log.info("grid search: %d combinations on %d training rows", n_grid, len(Xtr))
     for md in G["max_depth"]:
         for lr in G["learning_rate"]:
             for mcw in G["min_child_weight"]:
@@ -1074,6 +1084,8 @@ def train(cfg: dict) -> dict:
                     kw = dict(max_depth=md, learning_rate=lr, min_child_weight=mcw, reg_lambda=lam, n_estimators=m["n_estimators"], early_stopping_rounds=m["early_stopping_rounds"])
                     mdl = xgb_model(cfg, cols, spw, **kw).fit(Xtr, ytr, eval_set=[(Xva, yva)], verbose=False)
                     ap = float(average_precision_score(yva, mdl.predict_proba(Xva)[:, 1]))
+                    i_grid += 1
+                    log.info("grid %d/%d · depth %d lr %.2f mcw %d lambda %d · val PR-AUC %.4f · %.0fs", i_grid, n_grid, md, lr, mcw, lam, ap, time.time() - t0)
                     if best is None or ap > best["val_pr_auc"]:
                         best = {"params": kw, "val_pr_auc": ap, "best_iteration": int(mdl.best_iteration), "model": mdl}
     log.info("grid best: %s · val PR-AUC %.4f · %d rounds", {k: v for k, v in best["params"].items() if k not in ("n_estimators", "early_stopping_rounds")}, best["val_pr_auc"], best["best_iteration"] + 1)
@@ -1341,6 +1353,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     cfg = load_config(a.config)
+    log.info("start · drive_root %s", cfg["paths"]["drive_root"])
     try:
         if a.mode in ("train", "all"):
             train(cfg)
