@@ -1,0 +1,129 @@
+# CX Intelligence — churn risk pipeline configuration.
+# No secrets or data belong in this file. Paths point at the owner's mounted Google Drive.
+
+paths:
+  drive_root: /content/drive/MyDrive/CX Intelligence       # folder holding Ticket/, Customer Data/, WWR/, WCM/, CSAT/
+  output_folder: Churn Model                                # created inside drive_root; the dashboard reads it
+  local_output: ml/output                                   # used when drive_root does not exist (git-ignored)
+
+subfolders:          # matched case-insensitively, same rule as gxcsv.js kindOf()
+  tickets: "ticket|tiket"
+  customers: "customer|pelanggan"
+  wo: "work ?order|^wo\\b|wwr|wcm"
+  csat: "csat"
+
+label:
+  horizon_days: 60
+  relocation_window: {before: 90, after: 60}     # canonical window (days relative to termination date)
+  dashboard_window: {before: 14, after: 14}      # dashboard rule, reported side by side
+  backlog_months: 12                             # grace ended before (snapshot date − N months) → backlog
+  live_statuses_for_matching: [Active, Pending, Graced, Blocked]
+
+population:
+  exclude_statuses: [Pending, Cancel Installation, Change Ownership]
+  score_statuses: [Active, Blocked, Graced, Inactive, Termination in Progress]
+  non_retail_pattern: "intracity|\\bdia\\b|dedicated|partner isp"
+  min_history_days: 90
+
+holder:
+  max_key_accounts: 30          # phones/emails shared by more accounts are ignored as identity keys
+  mega_holder_live: 30
+  staff_email_domain: globalxtreme.net
+
+features:
+  geo_radius_m: 500
+  csat:                        # column letters in the CSAT export; leave null to skip the feature
+    cid_col: null
+    score_col: null
+    date_col: null
+    min_link_rate: 0.30
+  # Ticket flags: case-insensitive regex on Category / Problem. Adjust to the exact export spelling.
+  ticket_flags:
+    complaint:          {type: "complaint"}
+    inet:               {category: "internet"}
+    inet_cant_access:   {category: "internet", problem: "can.?t access|cannot access|no access"}
+    inet_slow:          {category: "internet", problem: "slow"}
+    inet_wiredown:      {category: "internet", problem: "wire ?down"}
+    inet_onoff:         {category: "internet", problem: "on ?/ ?off|unstable"}
+    mass:               {problem: "mass"}
+    inet_billing_issue: {category: "internet", problem: "billing"}
+    billing_problem:    {category: "billing"}
+    pay_failed:         {problem: "payment.*fail|transaction failed"}
+    post_payment:       {problem: "post payment|payment confirm"}
+    grace_ext:          {problem: "grace"}
+    change_cycle:       {problem: "change cycle|cycle period"}
+    downgrade:          {problem: "downgrade"}
+    upgrade:            {problem: "upgrade"}
+    temp_inactive:      {problem: "temporary inactiv"}
+    reactivation:       {problem: "reactivat"}
+    tech_issue:         {category: "technician|field team"}
+    tech_late:          {problem: "arrival"}
+    work_result:        {problem: "working result"}
+    outbound:           {problem: "follow.?up"}
+    canceled:           {status: "cancel"}
+    walk_in:            {via: "walk"}
+    hw_relocation:      {problem: "hardware relocation|relocation device|device relocation"}
+    change_address:     {problem: "change address"}
+  forbidden:              # leakage: these tickets never reach the feature matrix
+    category: "termination"
+    problem: "dismantle|deposit refund|change ownership"
+
+current_value_check:      # drop a current-value field when terminated vs live distributions differ this much
+  fields: [priority, product_variant, monthly_fee, discount, industry]
+  max_tvd: 0.45
+
+model:
+  seed: 42
+  grid:
+    max_depth: [3, 4, 5]
+    learning_rate: [0.03, 0.06]
+    min_child_weight: [3, 5, 10]
+    reg_lambda: [1, 5]
+  subsample: 0.8
+  colsample_bytree: 0.7
+  n_estimators: 2000
+  early_stopping_rounds: 100
+  monotone: {first_cycle: -1}
+
+tiers: {high_pct: 5, medium_pct: 15}
+control_share: 15
+
+gate:
+  min_recall_top10: 0.40
+  require_beats_lr_prauc: true
+
+stale_days: 14
+
+# Appendix C — customer segment keywords (word-boundary regex unless noted). Extend freely.
+segments:
+  free_mail: [gmail.com, yahoo.com, yahoo.co.id, hotmail.com, outlook.com, icloud.com, live.com, ymail.com, me.com, protonmail.com, aol.com, mail.com, gmx.com]
+  isp_domains: [nusa.id, cni.net.id, maxindo.net.id, matrixx-networks.com, metrosolusindo.co.id, mynet.co.id, com.net.id]
+  isp_products: "partner isp"
+  corporate_products: "intracity|\\bdia\\b|dedicated"
+  name_exclusions: ["\\bdesak\\b", "face bar", "laser lounge"]
+  groups:
+    - segment: Hotel & accommodation
+      subs:
+        Hotel / resort: [hotel, resort, resor, inn, suites, hospitality]
+        Guest house / homestay / hostel: ["guest ?house", homestay, hostel, lodge, cottage, bungalow, glamping, penginapan, losmen, stays]
+        Villa rental / villa management: [villas?, villa management, airbnb, booking]
+        Kos / room rental: [kos, kost, kos-kosan, boarding house, apartment, apartemen]
+    - segment: Restaurant, café & F&B
+      subs:
+        Café / coffee: [cafe, café, coffee, kopi, espresso, roastery, brew]
+        Restaurant / warung: [restaurant, resto, restoran, warung, kitchen, bistro, eatery, grill, pizza, sushi, ramen, "steak ?house", rumah makan, dapur, food, kuliner, boga]
+        Bar / beach club: [bar, beach club, lounge, pub, "night ?club", brewery]
+        Bakery / other F&B: [bakery, patisserie, croissant, gelato, juice, catering]
+    - segment: Other business
+      subs:
+        Spa / salon / wellness / gym: [spa, salon, barber, beauty, wellness, gym, fitness, pilates, yoga studio, yoga shala, massage, nail, laser, lash, skincare, aesthetic]
+        Property / real estate: [property, properti, real estate, realty, developer, construction, builder, estate, architect]
+        Retail: [toko, shop, store, boutique, mart, apotek, pharmacy, gallery]
+        Health: [klinik, clinic, hospital, dental, medical, vet, bidan]
+        Education: [school, sekolah, academy, akademi, kursus, bimbel, montessori]
+        Organisation / government / worship: [yayasan, desa, banjar, pura, gereja, masjid, dinas, koperasi, foundation]
+        Other services: [laundry, rental, travel, tour, coworking, studio, agency, consulting, creative, digital, media, services, surf, diving, photography, event]
+  email_local_words: [hotel, resort, villa, villas, homestay, guesthouse, hostel, cafe, coffee, kopi, resto, restaurant, warung, bakery, salon, spa, gym, laundry, rental, travel, property, school, klinik, clinic]
+  org_name_only: [Organisation / government / worship]
+  company_markers: "\\b(pt|cv|ud|ltd|group|holding)\\b"
+  needs_verification_min_live: 4
