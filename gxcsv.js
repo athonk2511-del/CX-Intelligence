@@ -204,7 +204,7 @@ async function cachePrune(keep) { try { const db = await idb(); const st = db.tr
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 export function kindOf(name, inFolder) {
   const n = String(name || '').toLowerCase();
-  if (inFolder) return /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
+  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
   return /csat/.test(n) ? 'csat' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
 }
 // auth: { key } for an API key, or { token: async (renew) => accessToken } for Google sign-in.
@@ -227,13 +227,14 @@ async function listDrive(folderId, apiKey) {
   return out;
 }
 export async function listSets(rootId, apiKey) {
-  const sets = { tickets: [], customers: [], wo: [], csat: [] };
+  const sets = { tickets: [], customers: [], wo: [], csat: [], churn: [] };
   const root = await listDrive(rootId, apiKey);
   const isCsv = f => !f.folder && /\.csv$/i.test(f.name);
   root.filter(isCsv).forEach(f => sets[kindOf(f.name, false)].push(f));
   for (const d of root.filter(f => f.folder)) {
     const k = kindOf(d.name, true); if (!k) continue;
-    (await listDrive(d.id, apiKey)).filter(isCsv).forEach(f => sets[k].push(f));
+    // Churn Model holds separate CSV + JSON outputs (not stacked); its models/ subfolder is never read.
+    (await listDrive(d.id, apiKey)).filter(f => isCsv(f) || (k === 'churn' && !f.folder && /\.json$/i.test(f.name))).forEach(f => sets[k].push(f));
   }
   Object.values(sets).forEach(l => l.sort((a, b) => a.name.localeCompare(b.name)));
   return sets;
@@ -267,6 +268,18 @@ async function parseInto(text, T) {
   if (f !== '' || row.length) { row.push(f); end(); }
 }
 
+// One file's text, from the browser cache when unchanged.
+export async function fileText(f, apiKey) {
+  const ck = f.id + '|' + f.updated + '|' + f.size;
+  let text = await cacheGet(ck);
+  if (text == null) {
+    const r = await driveFetch('https://www.googleapis.com/drive/v3/files/' + f.id + '?alt=media&supportsAllDrives=true', apiKey);
+    if (!r.ok) throw new Error(f.name + ': Google Drive HTTP ' + r.status);
+    text = await r.text();
+    cachePut(ck, text);
+  }
+  return text;
+}
 // Download (or read from the browser cache) and stack the files of one dataset, one file at a time.
 // Newest file (last by name) first, so the current period is usable after the first batch.
 // onBatch(T) fires after every file with the table so far; T.complete turns true after the last one.

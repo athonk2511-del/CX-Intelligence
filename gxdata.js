@@ -108,7 +108,7 @@ function dropPartial(name) {
   [...cache.keys()].forEach(k => { if (k.startsWith(pre) && !k.endsWith('|F')) cache.delete(k); });
 }
 function driveSets() {
-  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-19c'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat)); return s; })()
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat, s.churn || [])); return s; })()
     .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
   return setsP;
 }
@@ -141,6 +141,14 @@ function csvSet(name, full) {
   return full ? fullP[name] : setP[name];
 }
 // Work-order CSV table, or null (no files / unreachable) so callers use ticket column AC.
+// Churn Model outputs: the file list of the Drive set and a reader for one file (CSV text or JSON).
+export async function churnFiles() {
+  if (!CSV_FOLDER) return { files: [], error: 'No Drive CSV folder configured.' };
+  try { const s = await driveSets(); return { files: s.churn || [] }; }
+  catch (e) { return { files: [], error: e.message }; }
+}
+export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.fileText(f, DRIVE_AUTH); }
+export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.parseCSV(text); }
 export async function woTable() {
   if (!CSV_FOLDER || csvFailed.wo) return null;
   try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }

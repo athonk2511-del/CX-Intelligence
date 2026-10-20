@@ -1,0 +1,9 @@
+#!/bin/sh
+# Install: cp ml/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Blocks commits that stage data or model files under ml/.
+bad=$(git diff --cached --name-only | grep -E '^ml/.*\.(csv|parquet|pkl|pickle)$|^ml/output/|^ml/.*churn_(model|meta)_.*\.json$')
+if [ -n "$bad" ]; then
+  echo "Blocked: data or model files staged under ml/:"
+  echo "$bad"
+  exit 1
+fi
