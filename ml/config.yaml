@@ -2,7 +2,7 @@
 # No secrets or data belong in this file. Paths point at the owner's mounted Google Drive.
 
 paths:
-  drive_root: /content/drive/MyDrive/CX Intelligence CSV   # folder holding Tickets/, Customers/, Work Orders/, CSAT/
+  drive_root: /content/drive/MyDrive/CX Intelligence       # folder holding Ticket/, Customer Data/, WWR/, WCM/, CSAT/
   output_folder: Churn Model                                # created inside drive_root; the dashboard reads it
   local_output: ml/output                                   # used when drive_root does not exist (git-ignored)
 
@@ -105,14 +105,14 @@ segments:
     - segment: Hotel & accommodation
       subs:
         Hotel / resort: [hotel, resort, resor, inn, suites, hospitality]
-        Guest house / homestay / hostel: [guest ?house, homestay, hostel, lodge, cottage, bungalow, glamping, penginapan, losmen, stays]
-        Villa rental / villa management: [villas?, villa management, airbnb, booking]
+        Guest house / homestay / hostel: ["guest ?house", homestay, hostel, lodge, cottage, bungalow, glamping, penginapan, losmen, stays]
+        Villa rental / villa management: ["villas?", villa management, airbnb, booking]
         Kos / room rental: [kos, kost, kos-kosan, boarding house, apartment, apartemen]
     - segment: Restaurant, café & F&B
       subs:
         Café / coffee: [cafe, café, coffee, kopi, espresso, roastery, brew]
-        Restaurant / warung: [restaurant, resto, restoran, warung, kitchen, bistro, eatery, grill, pizza, sushi, ramen, steak ?house, rumah makan, dapur, food, kuliner, boga]
-        Bar / beach club: [bar, beach club, lounge, pub, night ?club, brewery]
+        Restaurant / warung: [restaurant, resto, restoran, warung, kitchen, bistro, eatery, grill, pizza, sushi, ramen, "steak ?house", rumah makan, dapur, food, kuliner, boga]
+        Bar / beach club: [bar, beach club, lounge, pub, "night ?club", brewery]
         Bakery / other F&B: [bakery, patisserie, croissant, gelato, juice, catering]
     - segment: Other business
       subs:
