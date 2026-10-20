@@ -228,7 +228,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-19e'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-20c'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -255,7 +255,7 @@ class Component extends DCLogic {
   }
 
   key(view) {
-    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', churnRisk: 'churnRisk', map: 'map', dispatch: 'map', dispatchWcm: 'map' };
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map' };
     return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
   }
 
@@ -464,18 +464,19 @@ class Component extends DCLogic {
 
   /* ---------- churn risk (XGBoost) ---------- */
 
-  async loadChurn() {
-    this.CH = this.CH || await import('./gxchurn.js?v=2026-10-19a');
-    const p = await this.CH.loadChurnRisk(this.D);
+  async loadChurn(period) {
+    this.CH = this.CH || await import('./gxchurn.js?v=2026-10-20a');
+    const p = await this.CH.loadChurnRisk(this.D, period || this.state.period);
+    if (!p.empty && !p.names && this._names) p.names = this._names;
     if (!p.empty && !p.names && !this._namesP) {
-      this._namesP = this.CH.loadNames(this.D).then(m => { p.names = m; this._crMemo = null; this.forceUpdate(); })
+      this._namesP = this.CH.loadNames(this.D).then(m => { this._names = m; p.names = m; this._crMemo = null; this.forceUpdate(); })
         .catch(e => { p.namesError = e.message; this.forceUpdate(); });
     }
     return p;
   }
   churnLine() {
     const p = this.state.data.churnRisk;
-    if (!p && !this._chPre) { this._chPre = true; setTimeout(() => this.loadChurn().then(v => this.setState(s => ({ data: { ...s.data, churnRisk: v } }))).catch(() => {}), 1500); }
+    if (!p && !this._chPre) { this._chPre = true; setTimeout(() => this.loadChurn('all').then(v => this.setState(s => ({ data: { ...s.data, churnRisk: v } }))).catch(() => {}), 1500); }
     if (!p || p.empty || !p.meta || !p.meta.scored) return null;
     const m = p.meta;
     return React.createElement('button', { type: 'button', onClick: () => this.go('churnRisk'), style: { textAlign: 'left', padding: '8px 10px', border: '1px solid #DCDCD8', borderRadius: 2, background: '#FFFFFF', cursor: 'pointer',
@@ -532,6 +533,10 @@ class Component extends DCLogic {
     const e = React.createElement, h = this.h.bind(this), D = this.D, { BarChart, RankBars } = this.charts;
     const sans = "500 13px 'IBM Plex Sans',system-ui,sans-serif", mono = "500 12px 'IBM Plex Mono',ui-monospace,monospace";
     const msg = (t, c) => h('p', { margin: 0, font: sans, lineHeight: 1.6, color: c || '#5F5F5B', textWrap: 'pretty' }, t);
+    if (p && p.noMonth) {
+      return { kpis: [], cards: [this.card('Churn risk forecast', { span: 12, meta: 'no scores for this month',
+        body: msg('No churn scores exist for this month. The first pipeline run is dated ' + p.first.slice(0, 4) + '-' + p.first.slice(4, 6) + '-' + p.first.slice(6) + '. Pick a later month or All time.', '#1F1F1D') })] };
+    }
     if (!p || p.empty) {
       return { kpis: [], cards: [this.card('Churn risk forecast', { span: 12, meta: 'no model output',
         body: h('div', { display: 'flex', flexDirection: 'column', gap: 8 },
@@ -548,6 +553,8 @@ class Component extends DCLogic {
 
     /* status banners */
     const banners = [];
+    if (p.carried) banners.push(['No pipeline run in the selected month. Showing the most recent earlier run, snapshot ' + m.snapshot_date + '.', '#7A5A00']);
+    if (m.rebuilt) banners.push(['This run has no saved meta file. Headline numbers are rebuilt from its scores; drift and tier-method ranges are unavailable.', '#5F5F5B']);
     if (!m.scored) banners.push(['No scores are live: no model has passed the publish gate yet.', '#9B2C1F']);
     if (p.ageDays != null && p.ageDays > (m.stale_days || 14)) banners.push(['Scores are ' + p.ageDays + ' days old (snapshot ' + m.snapshot_date + '). Re-run the pipeline.', '#7A5A00']);
     const lr = m.last_run;
@@ -2396,7 +2403,16 @@ class Component extends DCLogic {
         { label: 'Blocked accounts', value: D.fmtInt(bl.total), sub: D.fmtInt(bl.over3) + ' blocked for more than 3 months' },
         { label: 'MRC on blocked accounts', value: D.fmtRp(bl.mrcTotal), sub: D.fmtRp(bl.over3Mrc) + ' blocked for more than 3 months' },
       ] : []),
-      { label: 'Active customers', value: D.fmtInt(g.active), sub: D.fmtPct(g.active / g.totalRecords) + ' of all records' },
+      { label: 'Active customers', value: D.fmtInt(g.active), sub: D.fmtPct(g.active / g.totalRecords) + ' of all records · current status' },
+      ...(this.state.period !== 'all' && g.byMonth ? (() => {
+        const mo = g.byMonth[this.state.period] || { added: 0, lost: 0, byBranch: {} }, br = this.state.branch;
+        const x = br === 'all' ? mo : (mo.byBranch[br] || { added: 0, lost: 0 });
+        const [mm, yy] = this.state.period.split('/'), lab = ['January','February','March','April','May','June','July','August','September','October','November','December'][+mm - 1] + ' ' + yy;
+        return [
+          { label: 'New in ' + lab, value: D.fmtInt(x.added), sub: 'by start date' + (br === 'all' ? '' : ' · ' + br.replace(/^GlobalXtreme\s*/, '')) },
+          { label: 'Terminated in ' + lab, value: D.fmtInt(x.lost), sub: 'net ' + (x.added - x.lost >= 0 ? '+' : '') + D.fmtInt(x.added - x.lost) + ' accounts', color: '#9B2C1F' },
+        ];
+      })() : []),
       { label: 'New in last 12 months', value: D.fmtInt(g.added12), sub: g.windowLabel },
       { label: 'Terminated in last 12 months', value: D.fmtInt(g.lost12), sub: 'net ' + (g.added12 - g.lost12 >= 0 ? '+' : '') + D.fmtInt(g.added12 - g.lost12) + ' accounts' },
       { label: 'Change of ownership', value: D.fmtInt(g.changeOwnership), sub: 'formal transfers recorded, excluded from churn' },

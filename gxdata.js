@@ -373,10 +373,18 @@ async function grouped(col, where, limit) {
 /* ---------- bootstrap: available periods ---------- */
 
 export async function loadIndex() {
-  const [days, , branches] = await Promise.all([
+  const [days, , branches, csatMonths] = await Promise.all([
     gviz(TABS.tickets, 'select D, count(B) group by D'),
     detectTypedCols(),
     gviz(TABS.tickets, 'select C, count(B) group by C order by count(B) desc'),
+    // Every dataset contributes its months, so a newly uploaded month shows up in the picker
+    // as soon as any one source has it (CSAT survey date, customer start/termination, WO created).
+    Promise.all([
+      gviz(TABS.csat, 'select year(S), month(S), count(G) group by year(S), month(S)'),
+      gviz(TABS.customers, 'select year(J), month(J), count(E) group by year(J), month(J)'),
+      gviz(TABS.customers, "select year(L), month(L), count(E) where G = 'Termination' group by year(L), month(L)"),
+      woQuery('select year(H), month(H), count(B) group by year(H), month(H)'),
+    ].map(p => Promise.resolve(p).catch(() => null))).then(rs => ({ rows: rs.flatMap(r => (r && r.rows) || []) })),
   ]);
   const byPeriod = new Map();
   ticketDateTyped = days.rows.some(([d]) => d instanceof Date || /^Date\(/.test(String(d || '')));
@@ -390,6 +398,12 @@ export async function loadIndex() {
     const key = String(dt.getMonth() + 1).padStart(2, '0') + '/' + dt.getFullYear();
     if (dt.getFullYear() * 12 + dt.getMonth() + 1 > nowKey) future += num(n);
     byPeriod.set(key, (byPeriod.get(key) || 0) + num(n));
+  });
+  // Months that exist in other datasets but not (yet) in tickets still get a period.
+  csatMonths.rows.forEach(([y, m]) => {
+    if (y == null || m == null) return;
+    const key = String(num(m) + 1).padStart(2, '0') + '/' + num(y);
+    if (num(y) * 12 + num(m) + 1 <= nowKey && !byPeriod.has(key)) byPeriod.set(key, 0);
   });
   const periods = [...byPeriod.entries()]
     .map(([key, total]) => {
@@ -852,6 +866,11 @@ export async function loadGrowth(seg = 'retail') {
   };
   startRows.forEach(r => { if (r.mk >= latest - 17 && r.mk <= latest) bump(r.mk, r.y, r.m, 'added', r.n); });
   termRows.forEach(r => { if (r.mk >= latest - 17 && r.mk <= latest) bump(r.mk, r.y, r.m, 'lost', r.n); });
+  // Every month (not only the 18-month window), so the period picker can show new/terminated for any month.
+  const byMonth = {};
+  const put = (r, k) => { const key = String(r.m + 1).padStart(2, '0') + '/' + r.y; const e = byMonth[key] || (byMonth[key] = { added: 0, lost: 0, byBranch: {} });
+    e[k] += r.n; const b = e.byBranch[r.branch] || (e.byBranch[r.branch] = { added: 0, lost: 0 }); b[k] += r.n; };
+  startRows.forEach(r => put(r, 'added')); termRows.forEach(r => put(r, 'lost'));
   const monthlySeries = [...monthly.values()].sort((a, b) => a.mk - b.mk).map(x => ({ ...x, net: x.added - x.lost }));
 
   const perBranch = [...branches.values()].map(b => {
@@ -868,7 +887,7 @@ export async function loadGrowth(seg = 'retail') {
   }).sort((a, b) => b.total - a.total);
 
   return {
-    totalRecords, branches: perBranch,
+    totalRecords, branches: perBranch, byMonth,
     statuses: [...statuses.entries()].map(([key, value]) => ({ key, value })).sort((a, b) => b.value - a.value),
     active: statuses.get('Active') || 0,
     terminated: statuses.get('Termination') || 0,

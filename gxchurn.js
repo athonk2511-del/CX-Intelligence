@@ -23,28 +23,55 @@ function objects(rows) {
   return out.filter(o => Object.keys(o).length > 1);
 }
 
-let memo = null;
-export function clearChurn() { memo = null; }
+let memo = {};
+export function clearChurn() { memo = {}; }
 
-export async function loadChurnRisk(D) {
-  if (memo) return memo;
+// period: 'MM/YYYY' or 'all'. Each pipeline run also writes dated copies (churn_scores_YYYYMMDD.csv,
+// churn_model_meta_YYYYMMDD.json, churn_segments_YYYYMMDD.csv); the newest run on or before the end of the
+// selected month is shown. 'all' or no dated files → the latest run.
+export async function loadChurnRisk(D, period) {
   const { files, error } = await D.churnFiles();
   if (error) return { empty: true, error };
   const by = n => files.find(f => f.name.toLowerCase() === n);
   if (!by(FILES.meta) && !by(FILES.scores)) return { empty: true, files: files.map(f => f.name) };
+  const dates = [...new Set(files.map(f => (f.name.match(/^churn_scores_(\d{8})\.csv$/i) || [])[1]).filter(Boolean))].sort();
+  let pick = null, want = null;
+  if (period && period !== 'all' && dates.length) {
+    const [mm, yyyy] = period.split('/'); want = yyyy + mm;
+    const ok = dates.filter(d => d.slice(0, 6) <= want);
+    if (!ok.length) return { empty: true, noMonth: true, period, first: dates[0] };
+    pick = ok[ok.length - 1];
+  }
+  const mk = pick || 'latest';
+  if (memo[mk]) return memo[mk];
   const read = async (n, json) => {
     const f = by(n); if (!f) return null;
     const t = await D.driveFileText(f);
     return json ? JSON.parse(t) : objects(await D.parseCsvText(t));
   };
-  const [meta, scores, segments, monitoring, labels] = await Promise.all([
-    read(FILES.meta, true), read(FILES.scores), read(FILES.segments), read(FILES.monitoring), read(FILES.labels)]);
+  const latestMeta = await read(FILES.meta, true);
+  const isLatest = !pick || (latestMeta && String(latestMeta.snapshot_date || '').replace(/-/g, '') === pick);
+  const [datedMeta, scores, segments, monitoring, labels] = await Promise.all([
+    isLatest ? null : read('churn_model_meta_' + pick + '.json', true),
+    read(isLatest ? FILES.scores : 'churn_scores_' + pick + '.csv'),
+    read(isLatest ? FILES.segments : 'churn_segments_' + pick + '.csv'),
+    read(FILES.monitoring), read(FILES.labels)]);
+  let meta = isLatest ? latestMeta : datedMeta;
+  if (!meta && latestMeta && scores) {
+    // Older run without its own meta file: rebuild the headline numbers from its scores.
+    const S = scores, sum = k => S.reduce((s, r) => s + (+r[k] || 0), 0);
+    meta = { ...latestMeta, snapshot_date: pick.slice(0, 4) + '-' + pick.slice(4, 6) + '-' + pick.slice(6), accounts_scored: S.length,
+      high_tier: S.filter(r => r.tier === 'High').length, control_accounts: sum('control_group'), expected_true_churn: sum('prob'),
+      expected_true_churn_tier_method: null, mrr_at_risk: sum('expected_mrr_at_risk'), drift: null, rebuilt: true };
+  }
   if (!meta) return { empty: true, files: files.map(f => f.name) };
   const snap = meta.snapshot_date ? new Date(meta.snapshot_date + 'T00:00:00') : null;
   const ageDays = snap ? Math.floor((Date.now() - snap.getTime()) / 86400000) : null;
   (scores || []).forEach((r, i) => { r.cid = digits(r.cid); r._i = i; });
-  memo = { meta, scores: scores || [], segments: segments || [], monitoring: monitoring || [], labels: labels || [], ageDays, names: null };
-  return memo;
+  const snapMonth = String(meta.snapshot_date || '').replace(/-/g, '').slice(0, 6);
+  memo[mk] = { meta, scores: scores || [], segments: segments || [], monitoring: monitoring || [], labels: labels || [], ageDays, names: null,
+    period, carried: !!want && snapMonth !== want, runs: dates };
+  return memo[mk];
 }
 
 // Holder and company names by CID, from the already-loaded Customers set (complete set, so it waits for every file).

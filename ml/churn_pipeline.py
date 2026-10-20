@@ -1225,6 +1225,7 @@ def score(cfg: dict) -> dict:
                 meta["last_run"] = last
                 meta["scored"] = False
                 jdump(meta, out / "churn_model_meta.json")
+    jdump(meta, out / f"churn_model_meta_{s:%Y%m%d}.json")  # per-run copy, read by the dashboard month picker
         return {}
     version = reg["accepted"][-1]
     meta = json.loads((out / "models" / f"churn_meta_{version}.json").read_text())
@@ -1293,6 +1294,7 @@ def score(cfg: dict) -> dict:
     S.to_csv(out / f"churn_scores_{s:%Y%m%d}.csv", index=False)
     segs = S.groupby(["branch", "segment", "tier", "product"]).agg(accounts=("cid", "size"), expected_churn=("prob", "sum"), mrr_at_risk=("expected_mrr_at_risk", "sum"), control=("control_group", "sum")).reset_index()
     segs.to_csv(out / "churn_segments.csv", index=False)
+    segs.to_csv(out / f"churn_segments_{s:%Y%m%d}.csv", index=False)
     lab = ctx.labels.drop(columns="row").copy()
     lab["term_date"] = pd.to_datetime(lab["term_date"]).dt.strftime("%Y-%m-%d")
     lab["start_date"] = pd.to_datetime(lab["start_date"]).dt.strftime("%Y-%m-%d")
@@ -1317,6 +1319,7 @@ def score(cfg: dict) -> dict:
         "last_run": last, "reason_codes": sorted({v[0] for v in REASONS.values()}),
     })
     jdump(meta, out / "churn_model_meta.json")
+    jdump(meta, out / f"churn_model_meta_{s:%Y%m%d}.json")  # per-run copy, read by the dashboard month picker
     log.info("SCORE SUMMARY · %s · %d accounts · High %d (control %d) · expected true churn %.1f (tier method %.1f) · drift %s · %.0fs",
              version, len(S), (tier == "High").sum(), ctrl.sum(), prob.sum(), exp_tier, drift["status"], time.time() - t0)
     return meta
