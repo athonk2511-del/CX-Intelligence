@@ -228,7 +228,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21a'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21b'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -2058,6 +2058,28 @@ class Component extends DCLogic {
       { label: 'Collected by CS', value: col.total, color: '#2E6B34', sub: fI(col.accounts) + ' accounts · reactivation or payment-confirmation tickets in period' },
     ];
 
+    const ready = !!(bk && ct && bl && g);
+    const trim = (x, n) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, n || 180);
+    const pctN = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+    const facts = ready ? {
+      period: this.periodLabel(), branch: this.state.branch === 'all' ? 'All branches' : this.state.branch,
+      tickets: { total: f.total, perDay: Math.round(t.avgDaily), resolvedByCsoPct: pctN(f.cso, f.total), escalatedCtsoPct: pctN(f.sent, f.total), woWithoutCtso: f.direct, woViaCtso: f.viaCtso, ctsoClosedPct: pctN(f.ctsoClosed, f.sent), complaintPct: pctN(cmpN, cmpN + inqN), massOutageTickets: t.massTotal },
+      workOrders: Object.fromEntries(woT.map(w => [w.code, w.value])),
+      topComplaints: { categories: q.category.map(x => x.key + ' ' + x.value), types: q.problem.map(x => x.key + ' ' + x.value) },
+      topInquiries: { categories: iq.category.map(x => x.key + ' ' + x.value), types: iq.problem.map(x => x.key + ' ' + x.value) },
+      channels: t.channel.slice(0, 5).map(x => x.key + ' ' + pctN(x.value, t.total) + '%'),
+      repeatWo30d: { cids: r30.list.length, shareOfFieldCids: pctN(r30.list.length, r30.cids), threePlus: r30.list.filter(x => x.n >= 3).length },
+      csat: { responses: s.total, avg: Math.round(s.avg * 100) / 100, satisfiedPct: pctN(s.top2, s.total), dissatisfiedPct: pctN(s.bottom2, s.total),
+        complaintsVerbatim: neg.slice(0, 6).map(c => c.rating + '/5: ' + trim(c.text)), praiseVerbatim: pos.slice(0, 3).map(c => c.rating + '/5: ' + trim(c.text, 120)) },
+      retail: { active: g.active, netGrowthPct: pctN(ct.added - ct.terminated, ct.opening), trueChurnPct: pctN(ct.churn, ct.opening), churnPer100New: ct.added ? Math.round(ct.churn / ct.added * 100) : null,
+        blocked: bl.total, blockedOver3m: bl.over3, mrcOnHoldRp: Math.round(bl.mrcTotal), lifetimeMonths: lifeAll && lifeAll.lifetime ? Math.round(lifeAll.lifetime * 10) / 10 : null, collectedByCsTickets: col.total },
+      areas: areaRows.map(r => r.slice(0, 6).join(' | ')),
+      packages: pkgs.map(p => p.key + ': ' + p.n + ' accts, avg MRC Rp ' + Math.round(p.avg) + ', ' + p.billing.map(b => b.key + ' ' + Math.round(b.share * 100) + '%').join('/')),
+      arpuRp: done.slice(-4).map(x => x.label + ' ' + Math.round(x.arpu)),
+    } : null;
+    const sig = facts ? this.hashStr(JSON.stringify(facts)) : null;
+    if (facts) this.ensureAi(sig, facts);
+
     const cards = [
       section('Customer Service demand', 'Every ticket that reached Customer Service in the period, and the route it took: closed by the CSO, escalated to CTSO, or sent to the field as a work order.'),
       this.card('Ticket flow', { span: 8, meta: fI(f.total) + ' tickets',
@@ -2068,7 +2090,7 @@ class Component extends DCLogic {
       }),
       this.card('Work orders by type', { span: 4, meta: fI(woSum) + ' work orders',
         body: col3(bar(woParts, woSum), tiles(woParts, 120)),
-        note: (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.',
+        note: (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.' + (es.woSrc === 'wo' && woT.some(w => w.code !== 'WCA' && !w.value) ? ' No ' + woT.filter(w => w.code !== 'WCA' && !w.value).map(w => w.code).join(' / ') + ' work orders dated in this period: upload that month\'s file to Drive.' : ''),
       }),
       this.card('Inquiry vs complaint', { span: 4, meta: fI(t.total) + ' tickets',
         body: e(Donut, { data: typeData, centerValue: fP(cmpN, cmpN + inqN), centerLabel: 'complaints', colors: ['#9B2C1F', '#3E5C76'] }),
@@ -2146,8 +2168,125 @@ class Component extends DCLogic {
           col.byProblem.length ? e(RankBars, { data: col.byProblem, total: col.total, color: '#2E6B34' }) : null),
         note: 'Blocked is the current count of retail accounts past grace without payment. Collected counts reactivation and payment-confirmation tickets, as a stand-in until payment dates are available in the data.',
       }),
+      this.aiCard(ready, sig),
     ];
     return { kpis, cards };
+  }
+
+  /* ---------- AI consultant notes ---------- */
+
+  hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+  periodLabel() {
+    const S = this.state, idx = S.index;
+    return S.period === 'all' ? 'All time' : ((idx && idx.periods.find(p => p.key === S.period) || {}).label || S.period);
+  }
+  aiCache(put) {
+    const K = 'gx-ai-notes-v1';
+    let c = {}; try { c = JSON.parse(localStorage.getItem(K) || '{}') || {}; } catch (e) {}
+    if (put) { c[put.sig] = put.v; const keys = Object.keys(c).sort((x, y) => (c[y].at || 0) - (c[x].at || 0)); keys.slice(12).forEach(k => delete c[k]); try { localStorage.setItem(K, JSON.stringify(c)); } catch (e) {} }
+    return c;
+  }
+  ensureAi(sig, facts, force, ctx) {
+    this.aiFacts = facts; this.aiCtx = ctx || null;
+    if (!force && this.aiSig === sig) return;
+    this.aiSig = sig;
+    clearTimeout(this.aiTimer);
+    const hit = !force && this.aiCache()[sig];
+    if (hit) { setTimeout(() => this.setState({ ai: { sig, status: 'done', ...hit } }), 0); return; }
+    setTimeout(() => this.setState({ ai: { sig, status: 'loading' } }), 0);
+    // Wait until the figures stop changing (panels load progressively) before calling the model.
+    this.aiTimer = setTimeout(() => { if (this.aiSig === sig) this.aiRun(sig, facts, ctx); }, force ? 0 : 3000);
+  }
+  pageFacts(view, built) {
+    const S = this.state, out = [];
+    let budget = 14000;
+    const walk = (n, acc, depth) => {
+      if (n == null || n === false || acc.len > 1600 || depth > 40) return;
+      if (typeof n === 'string' || typeof n === 'number') { const s = String(n).trim(); if (s) { acc.parts.push(s); acc.len += s.length + 1; } return; }
+      if (Array.isArray(n)) { n.forEach(c => walk(c, acc, depth + 1)); return; }
+      if (typeof n !== 'object' || !n.props) return;
+      const p = n.props;
+      if (Array.isArray(p.data)) {
+        const rows = p.data.slice(0, 15).map(r => r && typeof r === 'object' ? Object.fromEntries(Object.entries(r).filter(([, v]) => v == null || ['string', 'number', 'boolean'].includes(typeof v)).slice(0, 6)) : r);
+        const s = JSON.stringify(rows); acc.parts.push(s); acc.len += s.length;
+      }
+      if (typeof n.type === 'string' || !Array.isArray(p.data)) walk(p.children, acc, depth + 1);
+    };
+    (built.cards || []).filter(Boolean).forEach(c => {
+      if (budget <= 0 || /consultant notes/i.test(c.title || '')) return;
+      const acc = { parts: [], len: 0 };
+      walk(c.body, acc, 0);
+      const text = acc.parts.join(' · ').slice(0, 1600);
+      budget -= text.length;
+      out.push({ panel: c.title, meta: c.meta || undefined, content: text || undefined });
+    });
+    return {
+      page: view.title, period: this.periodLabel(), branch: S.branch === 'all' ? 'All branches' : S.branch,
+      headlineKpis: (built.kpis || []).map(k => [k.label, k.value, k.sub].filter(x => x != null && x !== '').join(' — ')),
+      panels: out,
+    };
+  }
+  async aiRun(sig, facts, ctx) {
+    const page = ctx ? 'This page of the dashboard is "' + ctx.title + '": ' + ctx.sub + ' Focus the SWOT and milestones on what this page measures, framed as Customer Service operations. ' : '';
+    const system = 'You are a senior business intelligence consultant who advises internet service providers on customer service operations. You are writing the consultant notes at the bottom of a page of the GlobalXtreme Customer Service dashboard. ' + page + ' GlobalXtreme is a fiber ISP in Indonesia (branches: Bali, Malang, Balikpapan, Samarinda, Jakarta). Roles: CSO = front-line customer service officer; CTSO = technical support escalation; work orders: WCM maintenance, WWR wiredown / fiber cut, WCA new activation, WGM mass outage. Packages: Lite, Signature, Dedicated (DIA). Base every point on the numbers provided, quote the figures that justify it, and never invent data that is not given. Be direct and specific; no generic advice. Reply with JSON only.';
+    const user = 'Current operational data (JSON):\n' + JSON.stringify(facts) + '\n\nReturn exactly this JSON shape:\n{"headline": "one sentence on the overall operational condition",\n "swot": {"strengths": [..], "weaknesses": [..], "opportunities": [..], "threats": [..]},\n "roadmap": {"short": [{"action": "..", "owner": "..", "kpi": ".."}], "mid": [..], "long": [..]}}\nRules: 3-4 items per SWOT list, each one sentence under 30 words with the supporting figure. Roadmap: short = 0-3 months, mid = 3-6 months, long = 6-12 months; 3 items each; action under 22 words; owner is a role (e.g. CS Lead, CTSO Lead, Field Ops, Billing, Product); kpi is a measurable target with a number.';
+    try {
+      const body = { model: 'claude-sonnet-4-5', max_tokens: 2500, system, messages: [{ role: 'user', content: user }] };
+      const text = window.claude && window.claude.complete ? await window.claude.complete(body) : await this.D.aiComplete(body);
+      const m = String(text || '').match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('The AI reply was not in the expected format.');
+      const notes = JSON.parse(m[0]);
+      const v = { notes, at: Date.now() };
+      this.aiCache({ sig, v });
+      if (this.aiSig === sig) this.setState({ ai: { sig, status: 'done', ...v } });
+    } catch (e) {
+      if (this.aiSig === sig) this.setState({ ai: { sig, status: 'error', error: e.message } });
+    }
+  }
+  aiCard(ready, sig, ctx) {
+    const D = this.D, h = (tag, st, ...k) => this.h(tag, st, ...k), e = React.createElement;
+    const MONO = "'IBM Plex Mono',ui-monospace,monospace", SANS = "'IBM Plex Sans',system-ui,sans-serif";
+    const cap = { font: '600 10.5px ' + MONO, letterSpacing: '0.1em', textTransform: 'uppercase' };
+    const ai = this.state.ai && this.state.ai.sig === sig ? this.state.ai : null;
+    const btn = (label, on) => e('button', { type: 'button', onClick: on, style: { border: '1px solid #DCDCD8', background: '#FFFFFF', borderRadius: 2, padding: '6px 12px', font: '500 11px ' + MONO, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1F1F1D', cursor: 'pointer' } }, label);
+    const regen = () => this.aiFacts && this.ensureAi(sig, this.aiFacts, true, this.aiCtx);
+    const msg = (t, c) => h('div', { font: '500 13px/1.6 ' + SANS, color: c || 'rgba(17,17,20,0.64)', padding: '10px 0' }, t);
+    let body;
+    if (!ready) body = msg('Waiting for the customer data to finish loading. The notes are written once every panel above has data.');
+    else if (!ai || ai.status === 'loading') body = h('div', { display: 'flex', flexDirection: 'column', gap: 12 },
+      msg('Analysing current operations…'),
+      h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }, ...[0, 1, 2, 3].map(i => e('div', { key: i, style: { height: 140, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' } }))));
+    else if (ai.status === 'error') body = h('div', { display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' },
+      msg('The notes could not be generated: ' + ai.error, '#9B2C1F'), btn('Try again', regen));
+    else {
+      const n = ai.notes || {}, sw = n.swot || {}, rm = n.roadmap || {};
+      const list = (items, color) => e('ul', { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 } },
+        (items || []).map((t, i) => e('li', { key: i, style: { display: 'grid', gridTemplateColumns: '8px minmax(0,1fr)', gap: 10, font: '400 13px/1.6 ' + SANS, color: '#1F1F1D', textWrap: 'pretty' } },
+          e('span', { style: { width: 6, height: 6, background: color, marginTop: 8 } }), e('span', null, String(t)))));
+      const quad = [['Strengths', 'strengths', '#2E6B34'], ['Weaknesses', 'weaknesses', '#9B2C1F'], ['Opportunities', 'opportunities', '#3E5C76'], ['Threats', 'threats', '#C4561B']];
+      const phases = [['Short term', '0–3 months', 'short', '#B08A1E'], ['Mid term', '3–6 months', 'mid', '#3E5C76'], ['Long term', '6–12 months', 'long', '#2B2B29']];
+      body = h('div', { display: 'flex', flexDirection: 'column', gap: 22 },
+        n.headline ? h('p', { margin: 0, font: '500 17px/1.5 ' + SANS, color: '#1F1F1D', textWrap: 'pretty', maxWidth: 980 }, n.headline) : null,
+        h('div', { display: 'flex', flexDirection: 'column', gap: 10 },
+          h('span', { ...cap, color: '#5F5F5B' }, 'SWOT · Customer Service operations'),
+          h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 1, background: '#DCDCD8', border: '1px solid #DCDCD8' },
+            ...quad.map(([t, k, c]) => e('div', { key: k, style: { background: '#FFFFFF', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 } },
+              h('span', { ...cap, color: c }, t), list(sw[k], c))))),
+        h('div', { display: 'flex', flexDirection: 'column', gap: 10 },
+          h('span', { ...cap, color: '#5F5F5B' }, 'Recommended milestones'),
+          h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 14 },
+            ...phases.map(([t, w, k, c]) => e('div', { key: k, style: { borderTop: '3px solid ' + c, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
+              h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }, h('span', { font: '600 14px ' + SANS, color: '#1F1F1D' }, t), h('span', { font: '500 11px ' + MONO, color: '#5F5F5B' }, w)),
+              ...(rm[k] || []).map((it, i) => e('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, borderBottom: '1px solid #EBEBE7' } },
+                h('span', { font: '500 13px/1.55 ' + SANS, color: '#1F1F1D', textWrap: 'pretty' }, typeof it === 'string' ? it : it.action),
+                typeof it === 'string' ? null : h('span', { font: '500 11px/1.5 ' + MONO, color: '#5F5F5B' }, [it.owner, it.kpi].filter(Boolean).join(' · ')))))))),
+        h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #EBEBE7', paddingTop: 12 },
+          h('span', { font: '500 11px ' + MONO, color: '#8C8C88' }, 'Generated ' + new Date(ai.at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + this.periodLabel() + ' · ' + (this.state.branch === 'all' ? 'all branches' : this.state.branch.replace(/^GlobalXtreme\s*/, ''))),
+          btn('Regenerate', regen)));
+    }
+    return this.card('Consultant notes · AI', { span: 12, meta: 'refreshes when the data changes',
+      sub: 'An operational SWOT of the Customer Service division and recommended strategic milestones, written by an AI business intelligence consultant from the figures on this page. It is rewritten automatically after each data sync or filter change.',
+      body, note: 'AI-generated from the figures shown on this page. Check the figures before acting on a recommendation.' });
   }
 
   share(list, key) {
@@ -2769,6 +2908,13 @@ class Component extends DCLogic {
             ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
             : [this.opsCompareCard(S.view, 12)]));
           if (S.view === 'growth' || S.view === 'intracity') built.cards.splice(1, 0, this.growthCompareCard(payload, this.seg(S.view), 12));
+          if (S.view !== 'overview' && S.view !== 'settings' && !payload.error) {
+            const ready = !built.cards.some(c => c && /^loading/i.test(String(c.meta || '')));
+            const facts = ready ? this.pageFacts(view, built) : null;
+            const sig = facts ? S.view + '-' + this.hashStr(JSON.stringify(facts)) : null;
+            if (facts) this.ensureAi(sig, facts, false, view);
+            built.cards.push(this.aiCard(ready, sig, view));
+          }
         }
       } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
     }
