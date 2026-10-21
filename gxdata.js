@@ -1521,7 +1521,9 @@ export async function aiComplete(body) {
   if (!useProxy()) throw new Error('AI notes need the Apps Script proxy.');
   let k = readKey();
   if (!k) k = await askKey('Enter your access key to load the data.');
-  const res = await fetch(PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'ai', key: k, body }) });
+  let res;
+  try { res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'ai', key: k, body }) }); }
+  catch (e) { throw new Error('The Apps Script proxy did not answer the AI request. Add doPost from AI_SETUP.md, then Deploy → Manage deployments → edit → New version (keep "Who has access: Anyone").'); }
   if (!res.ok) throw new Error('AI request failed (HTTP ' + res.status + ')');
   const text = await res.text();
   let out; try { out = JSON.parse(text); } catch (e) { throw new Error('The proxy has no AI endpoint yet. Add doPost from AI_SETUP.md to the Apps Script and redeploy.'); }

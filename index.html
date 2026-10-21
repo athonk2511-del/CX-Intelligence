@@ -228,7 +228,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21b'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21c'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -1409,7 +1409,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-19b'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-21a'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });

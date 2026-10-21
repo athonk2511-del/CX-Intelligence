@@ -43,10 +43,10 @@ const BASES = [
   [/malang/i, { name: 'GX Malang', lat: -7.9797, lng: 112.6304 }],
 ];
 const DEF = {
-  teams: 10, gridKm: 3, speed: 22, road: 1.3, traffic: 1.2, roadOn: true, osrm: 'https://router.project-osrm.org',
-  maxHop: 30, ring: 1, ring2: 1, hop2: 45, start: 540, cut: 960, end: 1020, ot: false, maxAge: 30, blocked: false, prog: true,
+  teams: 10, gridKm: 3, speed: 22, road: 1.3, traffic: 1.7, roadOn: true, osrm: 'https://router.project-osrm.org',
+  maxHop: 10, ring: 0, ring2: 0, hop2: 30, start: 540, cut: 960, end: 1020, ot: false, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
-  anchorH: 4, sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
+  anchorH: 7, sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -133,7 +133,9 @@ class Dispatch {
   load() {
     let s = store.load(this.LS);
     s = s && typeof s === 'object' ? s : {};
-    const cfg = { ...DEF, ...(s.cfg || {}) };
+    const DEF_V = '2026-10-21';
+    if (s.cfg && s.cfg.defV !== DEF_V) { ['gridKm', 'traffic', 'maxHop', 'ring', 'ring2', 'hop2', 'maxAge', 'anchorH'].forEach(k => { delete s.cfg[k]; }); s.cfg.defV = DEF_V; }
+    const cfg = { ...DEF, ...(s.cfg || {}), defV: DEF_V };
     cfg.dur = { ...DEF.dur, ...((s.cfg || {}).dur || {}) };
     cfg.bases = { ...((s.cfg || {}).bases || {}) };
     return { cfg, plans: s.plans || {}, meta: s.meta || {}, log: Array.isArray(s.log) ? s.log.slice(0, 200) : [] };
