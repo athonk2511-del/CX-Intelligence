@@ -228,7 +228,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-20c'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21a'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -268,8 +268,8 @@ class Component extends DCLogic {
     this.setState({ busy: true, error: null });
     const D = this.D, p = this.state.period, b = this.state.branch;
     const jobs = {
-      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadChat(this.sla(), this.rtSla()), D.loadCsat(p), D.loadRepeat(p, b), D.loadComplaintTop(p, b)])
-        .then(([tickets, esc, chat, csat, repeat, complaints]) => ({ tickets, esc, chat, csat, repeat, complaints })),
+      overview: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadFlow(p, b), D.loadCsat(p), D.loadComplaintTop(p, b), D.loadInquiryTop(p, b), D.loadRepeat30(b), D.loadCollected(p, b)])
+        .then(([tickets, esc, flow, csat, complaints, inquiry, rep30, collected]) => ({ tickets, esc, flow, csat, complaints, inquiry, rep30, collected })),
       tickets: () => Promise.all([D.loadTickets(p, b), D.loadEscalation(p, b), D.loadResolution(p, b), D.loadRepeat(p, b)])
         .then(([tickets, esc, res, repeat]) => ({ tickets, esc, res, repeat })),
       escalation: () => D.loadEscalation(p, b),
@@ -298,6 +298,11 @@ class Component extends DCLogic {
           this.growthLoading = true; if (this.stale) this.stale.delete('growth');
           D.loadGrowth('retail').then(gr => this.setState(s => ({ data: { ...s.data, growth: gr } })))
             .catch(() => {}).finally(() => { this.growthLoading = false; });
+        }
+        if ((!this.state.data.book || this.isStale('book')) && !this.bookLoading) {
+          this.bookLoading = true; if (this.stale) this.stale.delete('book');
+          D.loadRetailBook().then(v => this.setState(s => ({ data: { ...s.data, book: v } })))
+            .catch(er => this.setState(s => ({ data: { ...s.data, book: { error: er.message } } }))).finally(() => { this.bookLoading = false; });
         }
         this.startCustomerJobs('retail');
       });
@@ -339,7 +344,7 @@ class Component extends DCLogic {
     return out;
   }
   ensureTrends(view) {
-    if (!['overview', 'tickets', 'csat'].includes(view)) return;
+    if (!['tickets', 'csat'].includes(view)) return;
     const k = 'trends|' + this.state.branch;
     if ((this.state.data[k] && !this.isStale(k)) || this.trendsLoading === k) return;
     this.trendsLoading = k; if (this.stale) this.stale.delete(k);
@@ -1945,70 +1950,201 @@ class Component extends DCLogic {
   /* ---------- views ---------- */
 
   overview(d) {
-    const { LineChart, Donut, RankBars } = this.charts;
-    const D = this.D, t = d.tickets, e = d.esc, c = d.chat, s = d.csat, r = d.repeat, q = d.complaints, g = this.state.data.growth;
+    const { Donut, RankBars, BarChart } = this.charts;
+    const D = this.D, h = (tag, st, ...k) => this.h(tag, st, ...k), e = React.createElement;
+    const t = d.tickets, es = d.esc, f = d.flow, s = d.csat, q = d.complaints, iq = d.inquiry, r30 = d.rep30, col = d.collected;
+    const g = this.state.data.growth, bkR = this.state.data.book, bk = bkR && !bkR.error ? bkR : null;
     const swR = this.state.swapBy.retail, co = swR && !swR.error ? swR.cohort : null;
     const blR = this.state.blockedBy.retail, bl = blR && !blR.error ? blR : null;
     const ct = co && co.total;
+    const MONO = "'IBM Plex Mono',ui-monospace,monospace", SANS = "'IBM Plex Sans',system-ui,sans-serif";
+    const muted = { font: '500 11.5px/1.45 ' + SANS, color: 'rgba(17,17,20,0.64)' };
+    const cap = { font: '500 10px ' + MONO, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' };
+    const fI = D.fmtInt, fP = (a, b) => D.fmtPct(b ? a / b : 0), fRp = D.fmtRp;
+    const dash = '…', mo = v => v == null ? '—' : v.toFixed(1) + ' mo';
+    const fD = dt => dt ? dt.getDate() + ' ' + D.MON3[dt.getMonth()] : '—';
+    const wait = txt => h('div', { ...muted, padding: '14px 0', color: !txt && bkR && bkR.error ? '#9B2C1F' : muted.color }, txt || (bkR && bkR.error ? 'Could not load the customer book: ' + bkR.error : 'Loading…'));
+    const bar = (parts, total, hgt) => h('div', { display: 'flex', height: hgt || 26, width: '100%', borderRadius: 2, overflow: 'hidden', background: '#EDEDEA' },
+      ...parts.filter(p => p.value > 0).map((p, i) => e('div', { key: i, title: p.label + ': ' + fI(p.value), style: { width: (p.value / (total || 1) * 100) + '%', background: p.color, borderRight: '1px solid #FFFFFF' } })));
+    const tile = p => e('div', { key: p.label, style: { display: 'flex', flexDirection: 'column', gap: 4, borderTop: '3px solid ' + p.color, paddingTop: 8, minWidth: 0 } },
+      h('span', cap, p.label), h('span', { font: '500 20px/1 ' + MONO, letterSpacing: '-0.02em', color: '#1F1F1D' }, p.text != null ? p.text : fI(p.value)), p.sub ? h('span', muted, p.sub) : null);
+    const tiles = (parts, min) => h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(' + (min || 140) + 'px,1fr))', gap: 14 }, ...parts.map(tile));
+    const col3 = (...k) => h('div', { display: 'flex', flexDirection: 'column', gap: 16 }, ...k);
+    const section = (title, sub) => this.card(title, { span: 12, sub, body: null });
+    const C = { cso: '#2E6B34', ctso: '#3E5C76', direct: '#C4561B', via: '#8A3B6E', closed: '#9DB0C2' };
+
     const kpis = [
-      { label: 'Trouble tickets', value: D.fmtInt(t.total), sub: D.fmtInt(Math.round(t.avgDaily)) + ' per day average' },
-      { label: 'Unique customers', value: D.fmtInt(r.uniq), sub: D.fmtPct(r.multiShare) + ' raised more than one ticket' },
-      { label: 'Escalated to CTSO', value: D.fmtInt(e.sent), sub: D.fmtPct(e.sentShare) + ' of all tickets queued' },
-      { label: 'Work orders raised', value: D.fmtInt(e.wo), sub: D.fmtPct(e.woShare) + ' of tickets became field work' },
-      { label: 'Chat conversations', value: D.fmtInt(c.totalConv), sub: D.fmtPct(c.aiShare) + ' closed by DotAI' },
-      { label: 'CSAT', value: s.total ? D.fmtPct(s.top2Share) : '—', sub: s.total ? 'rated 4 or 5 · average ' + s.avg.toFixed(2) + ' / 5 · ' + D.fmtInt(s.total) + ' responses' : 'No responses in period' },
+      { label: 'Tickets into CS', value: fI(f.total), sub: fI(Math.round(t.avgDaily)) + ' per day average' },
+      { label: 'Resolved by CSO', value: fI(f.cso), sub: fP(f.cso, f.total) + ' with no CTSO or work order' },
+      { label: 'Escalated to CTSO', value: fI(f.sent), sub: fP(f.sent, f.total) + ' of tickets' },
+      { label: 'WO without CTSO', value: fI(f.direct), sub: fP(f.direct, f.total) + ' of tickets' },
+      { label: 'WO via CTSO', value: fI(f.viaCtso), sub: fP(f.viaCtso, f.sent) + ' of CTSO escalations' },
+      { label: 'CSAT', value: s.total ? D.fmtPct(s.top2Share) : '—', sub: s.total ? 'rated 4 or 5 · ' + fI(s.total) + ' responses' : 'No responses in period' },
     ];
+
+    const flowParts = [
+      { label: 'Resolved by CSO', value: f.cso, color: C.cso, sub: fP(f.cso, f.total) + ' · no CTSO, no work order' },
+      { label: 'Escalated to CTSO', value: f.sent, color: C.ctso, sub: fP(f.sent, f.total) + ' of all tickets' },
+      { label: 'Work order without CTSO', value: f.direct, color: C.direct, sub: fP(f.direct, f.total) + ' · CSO raised the WO' },
+    ];
+    const ctsoParts = [
+      { label: 'Closed by CTSO', value: f.ctsoClosed, color: C.closed, sub: fP(f.ctsoClosed, f.sent) + ' of escalations' },
+      { label: 'Work order via CTSO', value: f.viaCtso, color: C.via, sub: fP(f.viaCtso, f.sent) + ' of escalations' },
+    ];
+    const woC = { WCM: '#B08A1E', WWR: '#9B2C1F', WCA: '#2E6B34' };
+    const woT = ['WCM', 'WWR', 'WCA'].map(c => es.woTypes.find(w => w.code === c) || { code: c, name: c, value: 0 });
+    const woSum = woT.reduce((a, w) => a + w.value, 0);
+    const woParts = woT.map(w => ({ label: w.code + ' · ' + w.name, value: w.value, color: woC[w.code], sub: fP(w.value, woSum) + ' of these work orders' }));
+    const typeData = t.type.map(x => ({ key: x.key === 'Complaint' ? 'Complaint' : 'Inquiry', value: x.value }))
+      .reduce((acc, x) => { const hit = acc.find(y => y.key === x.key); if (hit) hit.value += x.value; else acc.push({ ...x }); return acc; }, []);
+    const cmpN = (typeData.find(x => x.key === 'Complaint') || {}).value || 0, inqN = (typeData.find(x => x.key === 'Inquiry') || {}).value || 0;
+
+    const repRows = (r30.list || []).slice(0, 80).map(x => [
+      x.cid, fI(x.n), x.mix,
+      h('div', { display: 'flex', flexDirection: 'column', gap: 2, font: "400 12px 'IBM Plex Mono',ui-monospace,monospace" }, ...x.wos.map((w, i) => e('span', { key: i, style: { whiteSpace: 'nowrap' } }, w.wo + ' · ' + fD(w.date)))),
+      h('div', { display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left', font: '400 12.5px ' + SANS }, ...x.cats.map((c, i) => e('span', { key: i }, c))),
+    ]);
+
+    const fb = (list, color) => list.length ? h('div', { display: 'flex', flexDirection: 'column', maxHeight: 520, overflowY: 'auto', paddingRight: 4 },
+      ...list.map((c, i) => e('div', { key: i, style: { display: 'grid', gridTemplateColumns: '34px minmax(0,1fr)', gap: 10, padding: '10px 0', borderTop: i ? '1px solid #EBEBE7' : 'none' } },
+        h('span', { font: '600 12px ' + MONO, color, paddingTop: 2 }, c.rating + '/5'),
+        h('div', { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 },
+          h('span', { font: '400 13px/1.55 ' + SANS, color: '#1F1F1D', textWrap: 'pretty', overflowWrap: 'anywhere' }, c.text),
+          h('span', { font: '500 10.5px ' + MONO, color: '#8C8C88' }, c.date ? fD(c.date) + ' ' + c.date.getFullYear() : '')))))
+      : wait('No written feedback in this period.');
+    const pos = s.promoters.slice().sort((a, b) => b.rating - a.rating).slice(0, 10);
+    const neg = s.detractors.slice().sort((a, b) => a.rating - b.rating).slice(0, 10);
+
+    const lifeAll = bk && bk.total;
+    const brMap = new Map();
+    (co ? co.branches : []).forEach(b => brMap.set(b.label, { label: b.label, c: b }));
+    (bk ? bk.branches : []).forEach(b => { const x = brMap.get(b.label) || { label: b.label }; x.b = b; brMap.set(b.label, x); });
+    const areaRows = [...brMap.values()].filter(x => (x.b && (x.b.active || x.b.blocked)) || (x.c && x.c.opening))
+      .sort((a, b) => ((b.b && b.b.active) || 0) - ((a.b && a.b.active) || 0)).map(x => [
+        x.label,
+        x.b ? fI(x.b.active) : dash,
+        x.c && x.c.opening ? D.fmtPct((x.c.added - x.c.terminated) / x.c.opening) : dash,
+        x.c && x.c.opening ? D.fmtPct(x.c.churn / x.c.opening) : dash,
+        x.c && x.c.added ? (x.c.churn / x.c.added * 100).toFixed(0) : dash,
+        x.b ? fI(x.b.blocked) : dash,
+        x.b ? fRp(x.b.mrcHold) : dash,
+        x.b ? mo(x.b.lifetime) : dash,
+      ]);
+
+    const bC = { Monthly: '#3E5C76', Quarterly: '#B08A1E', Semester: '#2E6B34', Annual: '#8A3B6E' };
+    const pkgs = bk ? bk.packages.filter(p => p.n) : [];
+    const pkgC = { Lite: '#2F5D8A', Signature: '#C2410C', Dedicated: '#1F1F1D', Other: '#8C8C88' };
+    const billBody = bk ? col3(
+      h('div', { display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }, ...Object.entries(bC).map(([k, c]) => e('span', { key: k, style: { display: 'flex', alignItems: 'center', gap: 6, font: '500 12px ' + SANS, color: '#1F1F1D' } }, h('span', { width: 10, height: 10, background: c, display: 'inline-block' }), k))),
+      ...pkgs.map(p => e('div', { key: p.key, style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        h('div', { display: 'flex', justifyContent: 'space-between', gap: 10 }, h('span', { font: '600 13px ' + SANS, color: '#1F1F1D' }, p.key), h('span', { font: '500 12px ' + MONO, color: '#5F5F5B' }, fI(p.n) + ' accounts')),
+        bar(p.billing.map(b => ({ label: b.key, value: b.value, color: bC[b.key] })), p.n, 18),
+        h('span', { font: '500 11.5px ' + MONO, color: '#3A3A37' }, p.billing.map(b => b.key.slice(0, 3) + ' ' + D.fmtPct(b.share, 0)).join('  ·  '))))) : wait();
+
+    const hasOther = bk && bk.priority.some(p => p.groups.Other);
+    const grpCols = ['Lite', 'Signature', 'Dedicated'].concat(hasOther ? ['Other'] : []);
+    const prioRows = bk ? bk.priority.map(p => [p.key, fI(p.n)].concat(grpCols.map(gk => p.groups[gk] ? fI(p.groups[gk]) + ' (' + fP(p.groups[gk], p.n) + ')' : '—'),
+      [h('div', { display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left', font: '400 12.5px ' + SANS }, ...p.plans.map((pl, i) => e('span', { key: i }, pl.key + ' · ' + D.fmtPct(pl.share, 0))))])) : [];
+
+    const arS = bk ? bk.arpuSeries.slice(-13) : [];
+    const done = arS.filter(x => !x.partial), lastA = done[done.length - 1], prevA = done[done.length - 2];
+    const arpuRows = arS.slice().reverse().map((x, i, arr) => {
+      const pv = arr[i + 1], ch = pv && pv.arpu ? x.arpu / pv.arpu - 1 : null;
+      return [x.label + (x.partial ? ' (MTD)' : ''), fI(x.accounts), fRp(x.arpu), ch == null ? '—' : e('span', { style: { color: ch < 0 ? '#9B2C1F' : '#2E6B34' } }, (ch > 0 ? '+' : '') + D.fmtPct(ch))];
+    }).slice(0, 12);
+
+    const blkParts = [
+      { label: 'Blocked (unpaid) now', value: bl ? bl.total : 0, text: bl ? fI(bl.total) : dash, color: '#9B2C1F', sub: bl ? fRp(bl.mrcTotal) + ' MRC on hold · ' + fI(bl.over3) + ' over 3 months' : 'loading' },
+      { label: 'Collected by CS', value: col.total, color: '#2E6B34', sub: fI(col.accounts) + ' accounts · reactivation or payment-confirmation tickets in period' },
+    ];
+
     const cards = [
-      this.card('Daily ticket volume', {
-        span: 8, meta: t.series.length + ' days',
-        sub: 'Total inbound tickets per day with mass-outage tickets overlaid in red.',
-        body: React.createElement(LineChart, { series: t.series, overlayKey: 'mass', height: 250 }),
-        note: t.peak ? 'Peak ' + D.fmtInt(t.peak.value) + ' tickets on ' + t.peak.raw + '; quietest day ' + D.fmtInt(t.low.value) + ' on ' + t.low.raw + '. Mass-problem tickets in period: ' + D.fmtInt(t.massTotal) + '.' : '',
+      section('Customer Service demand', 'Every ticket that reached Customer Service in the period, and the route it took: closed by the CSO, escalated to CTSO, or sent to the field as a work order.'),
+      this.card('Ticket flow', { span: 8, meta: fI(f.total) + ' tickets',
+        body: col3(bar(flowParts, f.total), tiles(flowParts, 150),
+          h('div', { display: 'flex', flexDirection: 'column', gap: 10, borderTop: '1px solid #EBEBE7', paddingTop: 14 },
+            h('span', cap, 'Inside CTSO · ' + fI(f.sent) + ' escalations'), bar(ctsoParts, f.sent, 14), tiles(ctsoParts, 150)),
+          h('span', muted, 'Tickets that became work orders: ' + fI(f.woFromTickets) + ' (' + fI(f.direct) + ' without CTSO, ' + fI(f.viaCtso) + ' via CTSO).')),
       }),
-      this.card('Request type', {
-        span: 4, meta: D.fmtInt(t.total) + ' tickets',
-        body: React.createElement(Donut, { data: t.type, centerValue: D.fmtPct(this.share(t.type, 'Complaint')), centerLabel: 'complaints' }),
-        note: 'Complaints are reactive contacts; info requests are service or account questions.',
+      this.card('Work orders by type', { span: 4, meta: fI(woSum) + ' work orders',
+        body: col3(bar(woParts, woSum), tiles(woParts, 120)),
+        note: (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.',
       }),
-      this.card('Top 5 complaint categories', {
-        span: 4, meta: D.fmtInt(q.total) + ' complaints',
-        body: React.createElement(RankBars, { data: q.category, total: q.total }),
+      this.card('Inquiry vs complaint', { span: 4, meta: fI(t.total) + ' tickets',
+        body: e(Donut, { data: typeData, centerValue: fP(cmpN, cmpN + inqN), centerLabel: 'complaints', colors: ['#9B2C1F', '#3E5C76'] }),
+        note: fI(inqN) + ' inquiries (' + fP(inqN, cmpN + inqN) + ') and ' + fI(cmpN) + ' complaints.',
       }),
-      this.card('Top 5 complaint types', {
-        span: 4, meta: 'problem reported',
-        body: React.createElement(RankBars, { data: q.problem, total: q.total, color: this.PAL[2] }),
+      this.card('Top 5 complaint categories', { span: 4, meta: fI(q.total) + ' complaints', body: e(RankBars, { data: q.category, total: q.total, color: '#9B2C1F' }) }),
+      this.card('Top 5 complaint types', { span: 4, meta: 'problem reported', body: e(RankBars, { data: q.problem, total: q.total, color: '#C4561B' }) }),
+      this.card('Entry channel', { span: 4, meta: 'via origin', body: e(RankBars, { data: t.channel.slice(0, 8), total: t.total, color: this.PAL[0] }) }),
+      this.card('Top 5 inquiry categories', { span: 4, meta: fI(iq.total) + ' inquiries', body: e(RankBars, { data: iq.category, total: iq.total, color: '#3E5C76' }) }),
+      this.card('Top 5 inquiry types', { span: 4, meta: 'request made', body: e(RankBars, { data: iq.problem, total: iq.total, color: '#5B4E8C' }) }),
+
+      section('Repeat work orders', 'Customer IDs that needed more than one field work order (WCM, WWR, WGM) in the last 30 days of work-order data. Activations (WCA) and cancelled orders are excluded.'),
+      this.card('CIDs with repeat work orders · last 30 days', { span: 12, meta: r30.start ? fD(r30.start) + ' – ' + fD(r30.end) + ' ' + r30.end.getFullYear() : 'no work orders',
+        body: col3(this.statRow([
+          { label: 'CIDs with 2+ work orders', value: fI(r30.list.length), sub: fP(r30.list.length, r30.cids) + ' of ' + fI(r30.cids) + ' CIDs with field work' },
+          { label: 'Work orders on these CIDs', value: fI(r30.list.reduce((a, x) => a + x.n, 0)), sub: fP(r30.list.reduce((a, x) => a + x.n, 0), r30.woInWindow) + ' of ' + fI(r30.woInWindow) + ' work orders in the window' },
+          { label: '3 or more', value: fI(r30.list.filter(x => x.n >= 3).length), sub: 'CIDs visited three times or more' },
+        ]), repRows.length ? this.table(['CID', 'WOs', 'Mix', 'Work orders · date', 'Category · problem'], repRows, { maxHeight: 460, minWidth: 820 }) : wait('No CID had more than one work order in this window.')),
+        note: 'Follows the branch filter. The window ends on the latest work-order date in the data' + (r30.list.length > 80 ? '; the first 80 CIDs are listed.' : '.'),
       }),
-      this.card('Entry channel', {
-        span: 4, meta: 'via origin',
-        body: React.createElement(RankBars, { data: t.channel.slice(0, 8), total: t.total, color: this.PAL[1] }),
+
+      section('Customer voice', 'Post-interaction survey for the selected period.'),
+      this.card('CSAT', { span: 4, meta: fI(s.total) + ' responses',
+        body: s.total ? col3(this.statRow([
+          { label: 'Score', value: s.avg.toFixed(2) + ' / 5', sub: 'average rating' },
+          { label: 'Satisfied', value: D.fmtPct(s.top2Share), sub: 'rated 4 or 5' },
+          { label: 'Responses', value: fI(s.total), sub: D.fmtPct(s.bottom2Share) + ' rated 1 or 2' },
+        ]), e(RankBars, { data: s.ratings.map(x => ({ key: x.rating + ' · ' + x.label, value: x.value })), total: s.total, colorBy: (x, i) => ['#2E6B34', '#5F7F2E', '#B08A1E', '#C4561B', '#9B2C1F'][i] })) : wait('No responses in this period.'),
       }),
-      this.card('Priority mix', {
-        span: 4, meta: D.fmtPct(t.criticalShare) + ' critical',
-        body: React.createElement(Donut, { data: t.priority, centerValue: D.fmtInt(t.critical), centerLabel: 'VIP + highest', colors: ['#9B2C1F', '#C4561B', '#B08A1E', '#3E5C76', '#8C8C88'] }),
-        note: 'VIP and Highest tickets carry the greatest reputational exposure despite their small share of volume.',
-      }),
-      this.card('Retail growth and churn', {
-        span: 8, meta: co ? co.windowLabel + ' · Intracity excluded' : 'trailing 12 months · Intracity excluded',
+      this.card('10 positive feedback', { span: 4, meta: 'rated 4–5', body: fb(pos, '#2E6B34') }),
+      this.card('10 complaint feedback', { span: 4, meta: 'rated 1–3', body: fb(neg, '#9B2C1F') }),
+
+      section('Retail growth and churn', 'Retail customers only; Intracity plans excluded. Not affected by the period and branch filters.'),
+      this.card('All areas', { span: 12, meta: co ? co.windowLabel : 'trailing 12 months',
         body: this.statRow([
-          { label: 'Active customers', value: g ? D.fmtInt(g.active) : '…', sub: g ? D.fmtInt(g.added12) + ' new accounts in 12 months' : 'loading' },
-          { label: 'Net growth rate', value: ct && ct.opening ? D.fmtPct((ct.added - ct.terminated) / ct.opening) : '…', sub: ct ? 'acquisition rate ' + D.fmtPct(ct.added / ct.opening) : 'scanning records' },
-          { label: 'True churn rate', value: ct && ct.opening ? D.fmtPct(ct.churn / ct.opening) : '…', sub: ct ? D.fmtInt(ct.churn) + ' customers lost' : 'scanning records', color: '#9B2C1F' },
-          { label: 'True churn per 100 new', value: ct && ct.added ? (ct.churn / ct.added * 100).toFixed(0) : '…', sub: ct ? D.fmtInt(ct.churn) + ' lost for ' + D.fmtInt(ct.added) + ' acquired' : 'scanning records' },
-          { label: 'Blocked accounts', value: bl ? D.fmtInt(bl.total) : '…', sub: bl ? D.fmtInt(bl.over3) + ' blocked more than 3 months' : 'loading' },
-          { label: 'MRC on hold', value: bl ? D.fmtRp(bl.mrcTotal) : '…', sub: 'monthly fee on blocked accounts' },
+          { label: 'Active customers', value: g ? fI(g.active) : dash, sub: g ? fI(g.added12) + ' new accounts in 12 months' : 'loading' },
+          { label: 'Net growth rate', value: ct && ct.opening ? D.fmtPct((ct.added - ct.terminated) / ct.opening) : dash, sub: ct ? 'acquisition rate ' + fP(ct.added, ct.opening) : 'scanning records' },
+          { label: 'True churn rate', value: ct && ct.opening ? D.fmtPct(ct.churn / ct.opening) : dash, sub: ct ? fI(ct.churn) + ' customers lost' : 'scanning records', color: '#9B2C1F' },
+          { label: 'True churn per 100 new', value: ct && ct.added ? (ct.churn / ct.added * 100).toFixed(0) : dash, sub: ct ? fI(ct.churn) + ' lost for ' + fI(ct.added) + ' acquired' : 'scanning records' },
+          { label: 'Blocked accounts', value: bl ? fI(bl.total) : dash, sub: bl ? fI(bl.over3) + ' blocked more than 3 months' : 'loading' },
+          { label: 'MRC on hold', value: bl ? fRp(bl.mrcTotal) : dash, sub: 'monthly fee on blocked accounts' },
+          { label: 'Customer lifetime', value: lifeAll ? mo(lifeAll.lifetime) : dash, sub: lifeAll ? 'terminated in 12 months · active base ' + mo(lifeAll.tenure) : 'loading' },
         ]),
-        note: 'Not affected by the period and branch filters. True churn excludes account swaps, relocations and accounts already blocked before the window.',
+        note: 'True churn excludes account swaps, relocations and accounts already blocked before the window. Customer lifetime is the average time from start to termination for accounts terminated in the last 12 months.',
       }),
-      this.card('Response speed and field escalation at a glance', {
-        span: 12,
-        body: this.statRow([
-          { label: 'Weighted FRT (human)', value: D.fmtDur(c.weighted), sub: 'simple average ' + D.fmtDur(c.simple) },
-          { label: 'Excess wait — agents', value: D.fmtInt(c.excessHuman) + ' min', sub: '±' + D.fmtInt(c.excessHuman / 60) + ' hours above the ' + this.sla() + '-minute SLA' },
-          { label: 'Excess wait — dispatch & queues', value: D.fmtInt(c.excessSystem) + ' min', sub: '±' + D.fmtInt(c.excessSystem / 60) + ' hours above the ' + this.rtSla() + '-minute RT threshold' },
-          { label: 'CTSO handled by named officer', value: D.fmtInt(e.named), sub: D.fmtInt(e.unassigned) + ' queued without an individual owner' },
-          { label: 'Work order split', value: e.woTypes.filter(w => w.value).map(w => w.code).join(' / ') || '—', sub: e.woTypes.filter(w => w.value).map(w => D.fmtPct(w.share, 0)).join(' / ') },
-          { label: 'Repeat field work', value: D.fmtInt(r.multi), sub: 'customers needing 2 or more work orders (' + D.fmtPct(r.multiShare) + ' of sites with field work)' },
-        ]),
+      this.card('By area', { span: 12, meta: areaRows.length + ' areas',
+        body: areaRows.length ? this.table(['Area', 'Active', 'Net growth', 'True churn', 'Churn / 100 new', 'Blocked', 'MRC on hold', 'Lifetime'], areaRows, { minWidth: 820 }) : wait('Scanning customer records…'),
+      }),
+
+      section('Retail products and revenue', 'Active retail accounts by package, billing term and priority, with ARPU and payment collection.'),
+      this.card('Product distribution', { span: 7, meta: bk ? fI(bk.activeN) + ' active accounts' : 'loading',
+        body: bk ? col3(bar(pkgs.map(p => ({ label: p.key, value: p.n, color: pkgC[p.key] })), bk.activeN, 14),
+          this.table(['Package', 'Customers', 'Share', 'Avg MRC', 'Median MRC', 'Top bandwidth'], pkgs.map(p => [
+            h('span', { display: 'flex', alignItems: 'center', gap: 8 }, h('span', { width: 10, height: 10, background: pkgC[p.key], display: 'inline-block' }), p.key),
+            fI(p.n), D.fmtPct(p.share), fRp(p.avg), fRp(p.median || 0),
+            h('div', { display: 'flex', flexDirection: 'column', gap: 2 }, ...p.speeds.map((sp, i) => e('span', { key: i, style: { color: i ? '#8C8C88' : '#1F1F1D' } }, sp.label + ' · ' + D.fmtPct(sp.share, 0)))),
+          ]), { minWidth: 560 })) : wait(),
+        note: 'MRC is monthly fee minus discount, before tax. Bandwidth is read from the price plan name.',
+      }),
+      this.card('Billing pattern', { span: 5, meta: 'by payment term', body: billBody, note: 'Billing term is read from the price plan name; plans without a term are monthly.' }),
+      this.card('Priority by package', { span: 12, meta: 'active accounts',
+        body: bk ? this.table(['Priority', 'Accounts'].concat(grpCols, ['Main price plans']), prioRows, { minWidth: 820 }) : wait(),
+      }),
+      this.card('ARPU by month', { span: 8, meta: 'Dedicated, DIA and Intracity excluded',
+        body: bk ? col3(this.statRow([
+          { label: 'ARPU · ' + (lastA ? lastA.label : ''), value: lastA ? fRp(lastA.arpu) : '—', sub: lastA ? fI(lastA.accounts) + ' accounts in the base' : '' },
+          { label: 'Month on month', value: lastA && prevA && prevA.arpu ? (lastA.arpu >= prevA.arpu ? '+' : '') + D.fmtPct(lastA.arpu / prevA.arpu - 1) : '—', sub: prevA ? 'vs ' + prevA.label + ' · ' + fRp(prevA.arpu) : '', color: lastA && prevA && lastA.arpu < prevA.arpu ? '#9B2C1F' : '#2E6B34' },
+          { label: 'Active accounts today', value: fRp(bk.arpuNow), sub: fI(bk.arpuNowN) + ' Active-status accounts' },
+        ]), e(BarChart, { data: arS.map(x => ({ label: x.label, arpuK: Math.round(x.arpu / 1000) })), keys: [{ key: 'arpuK', label: 'ARPU (Rp thousand)', color: '#3E5C76' }], height: 230 })) : wait(),
+        note: 'ARPU = total MRC ÷ accounts live at month end (started, not yet terminated). Each account uses its current fee, so mid-year plan changes are not reflected. The current month is month-to-date.',
+      }),
+      this.card('ARPU month on month', { span: 4, meta: 'Rp per account', body: bk ? this.table(['Month', 'Accounts', 'ARPU', 'MoM'], arpuRows) : wait() }),
+      this.card('Blocked vs collected by CS', { span: 12, meta: 'collection follows the period and branch filters',
+        body: col3(bar(blkParts, blkParts.reduce((a, p) => a + p.value, 0), 18), tiles(blkParts, 220),
+          col.byProblem.length ? e(RankBars, { data: col.byProblem, total: col.total, color: '#2E6B34' }) : null),
+        note: 'Blocked is the current count of retail accounts past grace without payment. Collected counts reactivation and payment-confirmation tickets, as a stand-in until payment dates are available in the data.',
       }),
     ];
     return { kpis, cards };
@@ -2582,7 +2718,7 @@ class Component extends DCLogic {
     const S = this.state;
     const D = this.D;
     const views = [
-      { id: 'overview', label: 'Executive overview', tag: '01', kicker: 'Customer Service & Customer Experience', title: 'Operational command centre', sub: 'Every metric on this page is read live from the operations spreadsheet. Change the period or branch and every panel re-queries the source.' },
+      { id: 'overview', label: 'Executive overview', tag: '01', kicker: 'Customer Service & Customer Experience', title: 'Executive summary', sub: 'Customer Service demand, field work, customer voice and the retail book. Ticket, work-order and CSAT panels follow the period and branch filters; retail panels show the current customer base.' },
       { id: 'tickets', label: 'Trouble tickets', tag: '02', kicker: 'Demand', title: 'Trouble tickets, escalation and resolution', sub: 'Ticket volume and composition, escalation to CTSO and work orders, resolution time and FCR, and repeat contacts, on one page.' },
       { id: 'chat', label: 'Chat omnichannel', tag: '03', kicker: 'Speed', title: 'Response time and impact analysis', sub: 'First response time, ongoing response time and DotAI contribution, weighted by the conversation volume each account actually handles, followed by CSO ticket workload for the selected period.' },
       { id: 'csat', label: 'CSAT', tag: '04', kicker: 'Voice of customer', title: 'Customer satisfaction', sub: 'Survey score, rating distribution and the verbatim feedback behind it.' },
@@ -2628,7 +2764,7 @@ class Component extends DCLogic {
             dispatchWcm: () => this.dispatchView(payload),
             settings: () => this.settingsView(),
           })[S.view]();
-          const at = { overview: 2, tickets: 1, csat: 2 }[S.view];
+          const at = { tickets: 1, csat: 2 }[S.view];
           if (at != null) built.cards.splice(at, 0, ...(S.view === 'overview'
             ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
             : [this.opsCompareCard(S.view, 12)]));

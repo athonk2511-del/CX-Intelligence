@@ -1354,3 +1354,163 @@ export async function loadFieldWOs(day, techCol) {
     return { wo, type: String(wo).slice(0, 3), cid, status: st, tech, dispatch: t ? t.getTime() : day.getTime() };
   });
 }
+
+
+/* ---------- executive summary ---------- */
+
+const blankCol = col => typedCols.has(col) ? `${col} is null` : `(${col} is null or ${col} = '-')`;
+
+// Ticket routing: resolved by CSO (no CTSO, no WO), work order straight from CSO, escalated to CTSO (± WO).
+export async function loadFlow(period, branch) {
+  const ctso = filled('T'), noCtso = blankCol('T'), wo = "AC is not null and AC <> '-'", noWo = "(AC is null or AC = '-')";
+  const [total, sent, cso, direct, viaCtso] = await Promise.all([
+    count(W(period, branch)),
+    count(W(period, branch, ctso)),
+    count(W(period, branch, noCtso + ' and ' + noWo)),
+    count(W(period, branch, noCtso + ' and ' + wo)),
+    count(W(period, branch, ctso + ' and ' + wo)),
+  ]);
+  return { total, sent, cso, direct, viaCtso, ctsoClosed: sent - viaCtso, woFromTickets: direct + viaCtso };
+}
+
+export async function loadInquiryTop(period, branch) {
+  const w = W(period, branch, "O <> 'Complaint'");
+  const [total, category, problem] = await Promise.all([count(w), grouped('P', w, 5), grouped('Q', w, 5)]);
+  return { total, category, problem };
+}
+
+// Blocked-account payments handled by CS: reactivation / post-payment confirmation tickets.
+export async function loadCollected(period, branch) {
+  const w = W(period, branch, "(lower(Q) contains 'reactivat' or lower(Q) contains 'post payment' or lower(Q) contains 'payment confirm')");
+  const [total, byProblem, cids] = await Promise.all([count(w), grouped('Q', w, 6), gviz(TABS.tickets, 'select F, count(B)' + w + ' group by F')]);
+  return { total, byProblem, accounts: cids.rows.filter(r => r[0] != null).length };
+}
+
+// CIDs with more than one field work order (WCA excluded) in the 30 days up to the latest work order.
+export async function loadRepeat30(branch) {
+  const code = v => String(v || '').trim().slice(0, 3).toUpperCase();
+  const cidOf = v => String(v || '').replace(/\D/g, '');
+  const fromWo = !!(await woTable());
+  const items = new Map();
+  if (fromWo) {
+    const bw = branch && branch !== 'all' ? ` and C = '${esc(branch)}'` : '';
+    const r = await woQuery(`select L, B, H, Y, R, S where ${WO_LIVE} and L is not null${bw}`);
+    (r ? r.rows : []).forEach(([l, b, h, y, cat, prob]) => {
+      const wo = String(b || '').trim(), c = code(wo);
+      if (!wo || c === 'WCA') return;
+      items.set(wo, { cid: cidOf(l), wo, code: c, date: parseAnyDate(y) || parseAnyDate(h), cat: String(cat || '').trim(), prob: String(prob || '').trim() });
+    });
+  }
+  const t = await gviz(TABS.tickets, `select F, AC, D, P, Q${W('all', branch, "F is not null and AC is not null and AC <> '-' and AD <> 'Canceled'")} limit 240000`);
+  t.rows.forEach(([f, ac, d, p, q]) => {
+    const wo = String(ac || '').trim(), c = code(wo);
+    if (!wo || c === 'WCA' || items.has(wo) || (fromWo && (c === 'WWR' || c === 'WCM'))) return;
+    items.set(wo, { cid: cidOf(f), wo, code: c, date: parseAnyDate(d), cat: String(p || '').trim(), prob: String(q || '').trim() });
+  });
+  const now = Date.now();
+  const all = [...items.values()].filter(x => x.cid && x.date && x.date.getTime() <= now);
+  const end = all.reduce((m, x) => Math.max(m, x.date.getTime()), 0);
+  const start = end - 30 * DAY;
+  const byCid = new Map();
+  all.filter(x => x.date.getTime() > start).forEach(x => { if (!byCid.has(x.cid)) byCid.set(x.cid, []); byCid.get(x.cid).push(x); });
+  const list = [...byCid.entries()].filter(([, v]) => v.length > 1).map(([cid, v]) => {
+    v.sort((a, b) => a.date - b.date);
+    const mix = {}; v.forEach(x => { mix[x.code] = (mix[x.code] || 0) + 1; });
+    const cats = [...new Set(v.map(x => [x.cat, x.prob].filter(Boolean).filter((s, i, a) => a.indexOf(s) === i).join(' · ')).filter(Boolean))];
+    return { cid, n: v.length, wos: v, mix: Object.entries(mix).map(([k, n]) => k + '×' + n).join('  '), cats, last: v[v.length - 1].date };
+  }).sort((a, b) => b.n - a.n || b.last - a.last);
+  return { list, cids: byCid.size, start: end ? new Date(start + DAY) : null, end: end ? new Date(end) : null, fromWo,
+    woInWindow: all.filter(x => x.date.getTime() > start).length };
+}
+
+export const PKG_GROUPS = ['Lite', 'Signature', 'Dedicated'];
+export const BILLING = ['Monthly', 'Quarterly', 'Semester', 'Annual'];
+export const PRIORITIES = ['Low', 'Normal', 'High', 'Highest', 'VIP'];
+export function pkgGroup(product, plan) {
+  const s = String(product || '') + ' ' + String(plan || '');
+  if (/dedicated|\bdia\b/i.test(s)) return 'Dedicated';
+  if (/signature/i.test(s)) return 'Signature';
+  if (/lite/i.test(s)) return 'Lite';
+  return 'Other';
+}
+export function billingOf(plan) {
+  const v = String(plan || '').toLowerCase();
+  if (/annual|yearly|tahun|12 ?(bulan|month)/.test(v)) return 'Annual';
+  if (/semest|6 ?(bulan|month)/.test(v)) return 'Semester';
+  if (/quart|qurt|quat|qtr|3 ?(bulan|month)/.test(v)) return 'Quarterly';
+  return 'Monthly';
+}
+export function speedOf(plan) {
+  const m = String(plan || '').match(/(\d+(?:[.,]\d+)?)\s*(gbps|gb|g|mbps|mb|m)?(?![a-z])/i);
+  if (!m) return null;
+  const v = parseFloat(m[1].replace(',', '.'));
+  return /^g/i.test(m[2] || '') ? v * 1000 : v;
+}
+export const fmtSpeed = v => v == null ? '—' : v >= 1000 ? (v / 1000) + ' Gbps' : v + ' Mbps';
+function wMedian(pairs) {
+  const a = pairs.filter(p => p[1] > 0).sort((x, y) => x[0] - y[0]);
+  const tot = a.reduce((s, p) => s + p[1], 0); let run = 0;
+  for (const [v, n] of a) { run += n; if (run >= tot / 2) return v; }
+  return null;
+}
+
+// Retail book (Intracity excluded): packages, billing, priority, ARPU by month, lifetime and per-branch stock.
+export async function loadRetailBook() {
+  const ret = SEG_WHERE.retail;
+  const [act, life] = await Promise.all([
+    gviz(TABS.customers, `select B, M, N, O, P, count(E) where G = 'Active' and ${ret} group by B, M, N, O, P`),
+    gviz(TABS.customers, `select C, M, N, G, J, year(L), month(L), O, P, count(E) where ${ret} group by C, M, N, G, J, year(L), month(L), O, P`),
+  ]);
+  const pk = {}, pr = {};
+  const pkg = k => pk[k] || (pk[k] = { key: k, n: 0, sum: 0, fees: [], speeds: {}, billing: Object.fromEntries(BILLING.map(b => [b, 0])) });
+  let activeN = 0;
+  act.rows.forEach(([prio, m, plan, fee, disc, cnt]) => {
+    const n = num(cnt); if (!n) return;
+    const net = Math.max(0, rp(fee) - rp(disc)), gk = pkgGroup(m, plan), e = pkg(gk);
+    activeN += n; e.n += n; e.sum += net * n; e.fees.push([net, n]);
+    const sp = speedOf(plan); if (sp != null) e.speeds[sp] = (e.speeds[sp] || 0) + n;
+    e.billing[billingOf(plan)] += n;
+    const pkk = String(prio || 'Unknown').trim() || 'Unknown';
+    const p = pr[pkk] || (pr[pkk] = { key: pkk, n: 0, groups: {}, plans: {} });
+    p.n += n; p.groups[gk] = (p.groups[gk] || 0) + n;
+    const pl = String(plan || m || '—').trim(); p.plans[pl] = (p.plans[pl] || 0) + n;
+  });
+  const packages = Object.values(pk).sort((a, b) => (PKG_GROUPS.indexOf(a.key) + 1 || 9) - (PKG_GROUPS.indexOf(b.key) + 1 || 9)).map(e => {
+    const sp = Object.entries(e.speeds).map(([k, v]) => ({ speed: +k, n: v })).sort((a, b) => b.n - a.n);
+    return { key: e.key, n: e.n, share: pct(e.n, activeN), avg: e.n ? e.sum / e.n : 0, median: wMedian(e.fees), mrc: e.sum,
+      speeds: sp.slice(0, 3).map(s => ({ ...s, label: fmtSpeed(s.speed), share: pct(s.n, e.n) })),
+      billing: BILLING.map(b => ({ key: b, value: e.billing[b], share: pct(e.billing[b], e.n) })) };
+  });
+  const order = k => { const i = PRIORITIES.findIndex(p => p.toLowerCase() === k.toLowerCase()); return i < 0 ? 99 : i; };
+  const priority = Object.values(pr).sort((a, b) => order(a.key) - order(b.key) || b.n - a.n).map(p => ({
+    key: p.key, n: p.n, groups: p.groups,
+    plans: Object.entries(p.plans).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => ({ key: k, value: v, share: pct(v, p.n) })),
+  }));
+
+  const today = new Date(), nowMk = today.getFullYear() * 12 + today.getMonth();
+  const ws = nowMk - 11;
+  const skip = st => /pending|cancel|change\s*(of\s*)?ownership/i.test(String(st || ''));
+  const isTerm = st => /^termination$/i.test(String(st || '').trim());
+  const arpu = new Map();
+  for (let mk = nowMk - 12; mk <= nowMk; mk++) arpu.set(mk, { mk, n: 0, sum: 0 });
+  const br = new Map(), tot = { active: 0, blocked: 0, mrcHold: 0, lifeN: 0, lifeSum: 0, tenN: 0, tenSum: 0 };
+  const bOf = k => { const l = String(k || 'Unknown').replace(/^GlobalXtreme\s*/, ''); if (!br.has(l)) br.set(l, { label: l, active: 0, blocked: 0, mrcHold: 0, lifeN: 0, lifeSum: 0, tenN: 0, tenSum: 0 }); return br.get(l); };
+  life.rows.forEach(([b, m, plan, st, j, ly, lm, fee, disc, cnt]) => {
+    const n = num(cnt); if (!n || skip(st)) return;
+    const jd = parseAnyDate(j), smk = jd ? jd.getFullYear() * 12 + jd.getMonth() : null, tmk = ly == null ? null : num(ly) * 12 + num(lm);
+    const net = Math.max(0, rp(fee) - rp(disc)), B = bOf(b), s = String(st || '').trim();
+    const both = (k, v) => { B[k] += v; tot[k] += v; };
+    if (/^active$/i.test(s)) { both('active', n); if (smk != null && smk <= nowMk) { both('tenN', n); both('tenSum', (nowMk - smk) * n); } }
+    if (/^blocked$/i.test(s)) { both('blocked', n); both('mrcHold', net * n); }
+    if (isTerm(s) && smk != null && tmk != null && tmk >= ws && tmk <= nowMk && tmk >= smk) { both('lifeN', n); both('lifeSum', (tmk - smk) * n); }
+    if (pkgGroup(m, plan) === 'Dedicated' || smk == null) return;
+    if (isTerm(s) && tmk == null) return;
+    arpu.forEach(e => { if (smk <= e.mk && !(isTerm(s) && tmk <= e.mk)) { e.n += n; e.sum += net * n; } });
+  });
+  const arpuSeries = [...arpu.values()].map(e => ({ mk: e.mk, label: MON3[e.mk % 12] + " '" + String(Math.floor(e.mk / 12)).slice(2), accounts: e.n, arpu: e.n ? e.sum / e.n : 0, partial: e.mk === nowMk }));
+  const fin = x => ({ ...x, lifetime: x.lifeN ? x.lifeSum / x.lifeN : null, tenure: x.tenN ? x.tenSum / x.tenN : null });
+  const nonDed = packages.filter(p => p.key !== 'Dedicated');
+  const nd = nonDed.reduce((s, p) => ({ n: s.n + p.n, mrc: s.mrc + p.mrc }), { n: 0, mrc: 0 });
+  return { activeN, packages, priority, arpuSeries, arpuNow: nd.n ? nd.mrc / nd.n : 0, arpuNowN: nd.n,
+    total: fin(tot), branches: [...br.values()].map(fin).sort((a, b) => b.active - a.active) };
+}
