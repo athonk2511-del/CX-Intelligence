@@ -1,8 +1,10 @@
 // GlobalXtreme BI — IDS (Intelligence Dispatch System). One instance per work-order type: WWR and WCM run as separate pages.
-// Grid first: open jobs (latest WO per CID, still open) are grouped into fixed grid cells. Cells are joined into anchor blocks
-// (cell + 8 neighbours) once a block holds enough hours of work; every block gets at least one anchor team, most urgent SLA
-// first, then as many as it needs. Free teams become floaters for sparse cells. Jobs close to SLA breach always go first. Drive times come from an OSRM road router; straight-line estimates are only a
-// fallback while road times load or where the router has no answer.
+// Grid first: open jobs (latest WO per CID, still open) are grouped into fixed grid cells. A busy cell (more than gridMin WO)
+// gets its own anchor team, busy cells ranked by their total job score, then as many teams as it needs. A share of the teams
+// (floatPct) is held back as floaters for isolated jobs. Teams with hours left take jobs from the 8 neighbouring cells only.
+// Job score = priority tier + job type + aging (internal deferrals) + SLA-overdue booster; within a route higher scores go
+// first. A planned lunch break is taken out of every team's day. Drive times: OSRM car routes (or a straight-line estimate)
+// multiplied by a traffic factor for the zone: tourist centre, dense, medium or open land (from customer density per cell).
 
 const SANS = "500 12px 'IBM Plex Sans',system-ui,sans-serif";
 const MONO = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
@@ -42,11 +44,20 @@ const BASES = [
   [/bali|denpasar|badung|kerobokan/i, { name: 'GlobalXtreme HQ · Jl. Raya Kerobokan 388X', lat: -8.6705, lng: 115.1655 }],
   [/malang/i, { name: 'GX Malang', lat: -7.9797, lng: 112.6304 }],
 ];
+// Tourist centres in Bali, approximate. Within tR km of one of these, drives get the tourist traffic factor. Assumption to be
+// calibrated against real Traccar drive times.
+const TOURIST = [
+  ['Kuta', -8.7180, 115.1690], ['Legian', -8.7040, 115.1700], ['Seminyak', -8.6900, 115.1610], ['Canggu', -8.6480, 115.1380],
+  ['Kerobokan', -8.6650, 115.1650], ['Jimbaran', -8.7900, 115.1600], ['Nusa Dua', -8.8000, 115.2300], ['Sanur', -8.6880, 115.2620],
+  ['Ubud', -8.5069, 115.2625], ['Denpasar centre', -8.6560, 115.2160],
+];
 const DEF = {
-  teams: 10, gridKm: 3, speed: 22, road: 1.3, traffic: 1.7, roadOn: true, osrm: 'https://router.project-osrm.org',
-  maxHop: 10, ring: 0, ring2: 0, hop2: 30, start: 540, cut: 960, end: 1020, ot: false, maxAge: 7, blocked: false, prog: true,
+  teams: 10, gridKm: 3, speed: 35, road: 1.3, roadOn: true, osrm: 'https://router.project-osrm.org',
+  zTour: 2.0, zDense: 1.7, zMid: 1.4, zOpen: 1.2, tR: 2.5,
+  maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
-  anchorH: 7, sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
+  lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -133,8 +144,8 @@ class Dispatch {
   load() {
     let s = store.load(this.LS);
     s = s && typeof s === 'object' ? s : {};
-    const DEF_V = '2026-10-21';
-    if (s.cfg && s.cfg.defV !== DEF_V) { ['gridKm', 'traffic', 'maxHop', 'ring', 'ring2', 'hop2', 'maxAge', 'anchorH'].forEach(k => { delete s.cfg[k]; }); s.cfg.defV = DEF_V; }
+    const DEF_V = '2026-10-23';
+    if (s.cfg && s.cfg.defV !== DEF_V) { ['traffic', 'anchorH', 'speed', 'maxHop', 'ring', 'ring2', 'hop2'].forEach(k => { delete s.cfg[k]; }); s.cfg.defV = DEF_V; }
     const cfg = { ...DEF, ...(s.cfg || {}), defV: DEF_V };
     cfg.dur = { ...DEF.dur, ...((s.cfg || {}).dur || {}) };
     cfg.bases = { ...((s.cfg || {}).bases || {}) };
@@ -165,6 +176,7 @@ class Dispatch {
     const cfg = this.st.cfg, ST = m[this.TY.st], INFO = m[this.TY.info];
     const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm].join('|');
     if (this._jobs && this._jobs.m === m && this._jobs.sig === sig) return this._jobs.v;
+    if (this._zm !== m || this._zbi !== bi || this._zg !== cfg.gridKm) { this._zm = m; this._zbi = bi; this._zg = cfg.gridKm; this._zone = null; }
     const now = Date.now(), maxMs = (+cfg.maxAge || 0) * 86400e3;
     const list = [], skipped = { old: 0, status: 0, noPrio: 0, unknown: 0 };
     if (ST && INFO) for (let i = 0; i < m.count; i++) {
@@ -201,9 +213,32 @@ class Dispatch {
   crew(i) { return (this.st.cfg.crew || [])[i] || {}; }
   tbase(P, i) { const BS = this._BS || [], c = this.crew(i); return BS[c.base != null ? c.base : 0] || BS[0]; }
   tstart(i) { const c = this.crew(i); return isFinite(c.start) && c.start !== '' ? +c.start : this.st.cfg.start; }
+  // Shift end of a team: its own end time, else its start plus the default shift length.
+  tend(i) {
+    const c = this.crew(i), cfg = this.st.cfg, st = this.tstart(i);
+    const e = isFinite(c.end) && c.end !== '' && c.end !== null ? +c.end : st + (cfg.end - cfg.start);
+    return e > st ? e : st + (cfg.end - cfg.start);
+  }
+  // Latest time a job may start for a team: lastBefore minutes before its shift end. The job may finish after the shift.
+  tlast(i) { return (i != null ? this.tend(i) : this.st.cfg.end) - Math.max(0, +this.st.cfg.lastBefore || 0); }
   setCrew(i, patch) { const a = (this.st.cfg.crew || []).slice(); a[i] = { ...(a[i] || {}), ...patch }; this.st.cfg.crew = a; }
   nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; }
-  evList(P, i) { return ((P.ev || {})[i] || []).slice().sort((a, b) => a.at - b.at); }
+  // Planned lunch, taken out of every team's day. Replaced by the real break once the technician app reports one.
+  // Lunch sits the same time after shift start as in the default shift (12:00 for 09:00 = 3 h in).
+  lunchE(i) {
+    const c = this.st.cfg, n = +c.lunchMin || 0, at = (i != null ? this.tstart(i) : c.start) + ((+c.lunchAt || 720) - c.start);
+    return n > 0 ? [{ type: 'break', at, end: at + n, planned: true }] : [];
+  }
+  evList(P, i) {
+    const real = ((P && P.ev) || {})[i] || [];
+    return real.concat(real.some(e => e.type === 'break') ? [] : this.lunchE(i)).slice().sort((a, b) => a.at - b.at);
+  }
+  // A team's running state for planning: { ids, t (free from), pos, E (breaks/problems), k (cursor into E) }.
+  fresh(i, P, B) { return { i, ids: [], t: i != null ? this.tstart(i) : this.st.cfg.start, last: this.tlast(i), pos: B, E: i != null ? this.evList(P, i) : this.lunchE(), k: { i: 0 } }; }
+  fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.step(s.E, k, s.t, hop, this.dur(j)); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
+  // A job fits when it can start by the team's last-start time; finishing after the shift end is allowed.
+  ok(f) { return f.arr <= f.last; }
+  put(s, j, f) { s.ids.push(j.key); s.t = f.end; s.pos = j; s.k.i = f.ki; }
   evDur(e) { return e.end != null ? Math.max(0, e.end - e.at) : Math.max(e.est || 0, this.nowMin() - e.at); }
   // Breaks and problems push back the job they fall in and everything after it.
   step(E, k, t, hop, dur) {
@@ -222,7 +257,13 @@ class Dispatch {
 
   /* ---------- scoring ---------- */
   aging(j) { const a = this.st.meta[j.key]; return a ? a.aging.length : 0; }
-  score(j) { return TIERS[j.tier].s + CATS[j.cat].s + AGING * this.aging(j); }
+  score(j) { return TIERS[j.tier].s + CATS[j.cat].s + AGING * this.aging(j) + this.slaBoost(j); }
+  // Overdue booster: slaB0 once the SLA is breached, plus slaBd for every full working day past it.
+  slaBoost(j) {
+    const c = this.st.cfg, r = this.rem(j);
+    if (!(r < 0)) return 0;
+    return (+c.slaB0 || 0) + (+c.slaBd || 0) * Math.floor(-r / Math.max(60, c.end - c.start));
+  }
   urgent(j) { return CATS[j.cat].s >= 400; }
   vipLate(j) { return j.tier === 'VIP' && !this.urgent(j); }
   locked(j) { const s = (this.st.meta[j.key] || {}).stat; return j.prog || s === 'start' || s === 'checkin' || s === 'checkout'; }
@@ -252,11 +293,41 @@ class Dispatch {
 
   /* ---------- drive time ---------- */
   roadHit(a, b) { return this.st.cfg.roadOn ? this.road.get(a, b) : null; }
+  // Car drive time, free-flow (OSRM or straight line ÷ speed), times the average traffic factor of the two end zones.
   travel(a, b) {
-    const cfg = this.st.cfg, r = this.roadHit(a, b);
-    if (r) return Math.max(r.min < 0.5 ? 0 : 1, Math.round(r.min * cfg.traffic));
+    const cfg = this.st.cfg, r = this.roadHit(a, b), f = (this.zoneF(a) + this.zoneF(b)) / 2;
+    if (r) return Math.max(r.min < 0.5 ? 0 : 1, Math.round(r.min * f));
     const d = hav(a, b) * cfg.road;
-    return d < 0.05 ? 0 : Math.max(3, Math.round(d / Math.max(5, cfg.speed) * 60));
+    return d < 0.05 ? 0 : Math.max(3, Math.round(d / Math.max(5, cfg.speed) * 60 * f));
+  }
+  // Traffic zone of a point: tourist centre (within tR km), else by customer density of its grid cell: top quarter of
+  // cells = dense, next third = medium, the rest (rice fields, open land) = open.
+  zoneOf(p) {
+    const c = this.st.cfg;
+    if (TOURIST.some(t => hav(p, { lat: t[1], lng: t[2] }) <= (+c.tR || 2.5))) return 'tour';
+    const Z = this.zoneMap(); if (!Z) return 'mid';
+    const k = this.M.cellOf(p.lat, p.lng, c.gridKm * 1000), n = Z.n.get(k[0] + ',' + k[1]) || 0;
+    return n >= Z.hi ? 'dense' : n >= Z.mid ? 'mid' : 'open';
+  }
+  zoneF(p) {
+    if (!p || !isFinite(p.lat)) return 1.4;
+    const c = this.st.cfg, key = p.zk || (p.zk = p.lat.toFixed(4) + ',' + p.lng.toFixed(4)), Z = this.zoneMap(), cache = Z ? Z.f : (this._zf || (this._zf = new Map()));
+    let z = cache.get(key); if (!z) { z = this.zoneOf(p); cache.set(key, z); }
+    return +({ tour: c.zTour, dense: c.zDense, mid: c.zMid, open: c.zOpen }[z]) || 1.4;
+  }
+  zoneMap() {
+    if (this._zone) return this._zone;
+    const m = this._zm, bi = this._zbi, c = this.st.cfg;
+    if (!m || !m.count) return null;
+    const n = new Map();
+    for (let i = 0; i < m.count; i++) {
+      if (m.branch[i] !== bi || !isFinite(m.lat[i]) || !isFinite(m.lng[i])) continue;
+      const k = this.M.cellOf(m.lat[i], m.lng[i], c.gridKm * 1000), key = k[0] + ',' + k[1];
+      n.set(key, (n.get(key) || 0) + 1);
+    }
+    const v = [...n.values()].sort((a, b) => a - b), q = x => v.length ? v[Math.min(v.length - 1, Math.floor(v.length * x))] : Infinity;
+    this._zone = { n, hi: q(0.75), mid: q(0.42), f: new Map() };
+    return this._zone;
   }
   km(a, b) { const r = this.roadHit(a, b); return r && r.km != null ? r.km : hav(a, b) * this.st.cfg.road; }
   isRoad(a, b) { return !!this.roadHit(a, b) || hav(a, b) < 0.05; }
@@ -325,58 +396,51 @@ class Dispatch {
     return [...g.values()].sort((a, b) => b.jobs.length - a.jobs.length || b.score - a.score);
   }
   state(ids, B, i, P) {
-    let t = i != null ? this.tstart(i) : this.st.cfg.start, pos = B;
-    const E = P && i != null ? this.evList(P, i) : [], kk = { i: 0 };
-    ids.forEach(k => { const j = this._J.by.get(k); if (!j) return; t = this.step(E, kk, t, this.travel(pos, j), this.dur(j)).end; pos = j; });
-    return { ids, t, pos };
+    const s = this.fresh(i, P, B);
+    ids.forEach(k => { const j = this._J.by.get(k); if (!j) return; this.put(s, j, this.fit(s, j)); });
+    s.ids = ids;
+    return s;
   }
-  // Greedy: each job (already in priority order) goes to the team that would finish it earliest within working hours.
+  // Greedy: each job (already in score order) goes to the team that would finish it earliest within working hours.
   packInto(S, jobs) {
-    const cfg = this.st.cfg, left = [];
+    const left = [];
     jobs.forEach(j => {
       let best = null;
-      S.forEach(s => {
-        const arr = s.t + this.travel(s.pos, j), end = arr + this.dur(j);
-        if (arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
-        if (!best || end < best.end) best = { s, end };
-      });
-      if (best) { best.s.ids.push(j.key); best.s.t = best.end; best.s.pos = j; } else left.push(j);
+      S.forEach(s => { const f = this.fit(s, j); if (this.ok(f) && (!best || f.end < best.f.end)) best = { s, f }; });
+      if (best) this.put(best.s, j, best.f); else left.push(j);
     });
     return left;
   }
+  // Working minutes in a team day, after the planned lunch.
+  dayMin() { const c = this.st.cfg; return Math.max(60, c.end - c.start - (+c.lunchMin || 0)); }
   // Teams a cell needs: the smallest number of teams that fits every job of the cell into today's hours.
   needOf(jobs, B) {
-    const cfg = this.st.cfg, avail = Math.max(60, cfg.end - cfg.start);
+    const cfg = this.st.cfg;
     if (!jobs.length) return { n: 0, left: 0, finish: cfg.start };
-    let n = Math.max(1, Math.ceil(jobs.reduce((a, j) => a + this.dur(j), 0) / avail)), r = null;
+    let n = Math.max(1, Math.ceil(jobs.reduce((a, j) => a + this.dur(j), 0) / this.dayMin())), r = null;
     for (; n <= jobs.length; n++) {
-      const S = Array.from({ length: n }, () => ({ ids: [], t: cfg.start, pos: B }));
+      const S = Array.from({ length: n }, () => this.fresh(null, null, B));
       const left = this.packInto(S, jobs);
       r = { n, left: left.length, finish: Math.max(...S.map(s => s.t)) };
       if (!left.length) break;
     }
     return r;
   }
-  // Anchor blocks: the cell whose 3×3 block (cell + 8 neighbours) holds the most work becomes a centre when the block has at
-  // least anchorH hours. Its block is taken out and the search repeats. Cells left over are sparse: floater work.
-  // Blocks are ordered by the job closest to SLA breach (still savable), then breached count, then load.
+  // Busy cells: a cell holding more than gridMin open WO gets its own anchor team. Busy cells are ranked by the total score
+  // of their jobs, so with too few teams the most important cells are staffed first. Other cells are sparse: their jobs go
+  // to anchor teams in a neighbouring cell (8 directions) or to floaters.
   clusters(list, B) {
-    const cfg = this.st.cfg, G = this.group(list), by = new Map(G.map(g => [g.key, g])), left = new Set(by.keys()), out = [];
-    const work = new Map(G.map(g => [g.key, g.jobs.reduce((a, j) => a + this.dur(j), 0)]));
-    const blk = k => { const [c, r] = String(k).split(',').map(Number), a = []; for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) { const q = (c + x) + ',' + (r + y); if (left.has(q)) a.push(q); } return a; };
-    while (left.size) {
-      let best = null;
-      left.forEach(k => { const cs = blk(k), w = cs.reduce((a, q) => a + work.get(q), 0); if (!best || w > best.w || (w === best.w && by.get(k).jobs.length > by.get(best.k).jobs.length)) best = { k, cs, w }; });
-      if (best.w < cfg.anchorH * 60) break;
-      best.cs.forEach(q => left.delete(q));
-      const jobs = best.cs.flatMap(q => by.get(q).jobs).sort(this.urg);
-      const live = jobs.map(j => this.rem(j)).filter(r => r >= 0);
+    const cfg = this.st.cfg, min = Math.max(0, Math.round(+cfg.gridMin || 0)), out = [], sparse = [];
+    this.group(list).forEach(g => {
+      // A cell holding an urgent VIP (Wiredown / Power) always counts as busy, so it gets a team even when it is quiet.
+      if (g.jobs.length <= min && !g.jobs.some(j => j.tier === 'VIP' && this.urgent(j))) { sparse.push(...g.jobs); return; }
+      const jobs = g.jobs.slice().sort(this.cmp), live = jobs.map(j => this.rem(j)).filter(r => r >= 0);
       const nd = this.needOf(jobs, (this._BS || [])[this.nearBase(jobs[0])] || B);
-      out.push({ key: best.k, cells: best.cs, jobs, load: best.w, minRem: live.length ? Math.min(...live) : Infinity, breached: jobs.filter(j => this.breached(j)).length, need: nd.n, finish: nd.finish, left: nd.left });
-    }
-    out.sort((a, b) => a.minRem - b.minRem || b.breached - a.breached || b.load - a.load);
-    const of = new Map(); out.forEach(c => c.cells.forEach(k => of.set(k, c)));
-    return { list: out, of, sparse: [...left].flatMap(k => by.get(k).jobs) };
+      out.push({ key: g.key, cells: [g.key], vipOnly: g.jobs.length <= min, jobs, load: jobs.reduce((a, j) => a + this.dur(j), 0), total: g.score, minRem: live.length ? Math.min(...live) : Infinity, breached: jobs.filter(j => this.breached(j)).length, need: nd.n, finish: nd.finish, left: nd.left });
+    });
+    out.sort((a, b) => b.total - a.total || b.jobs.length - a.jobs.length);
+    const of = new Map(); out.forEach(c => of.set(c.key, c));
+    return { list: out, of, sparse: sparse.sort(this.cmp) };
   }
   clusterInfo(B) {
     const sig = this.cfgSig();
@@ -385,7 +449,7 @@ class Dispatch {
     this._need = { J: this._J, rv: this.road.ver, cv: sig, v };
     return v;
   }
-  cfgSig() { const c = this.st.cfg; return [c.start, c.cut, c.end, c.ot, c.traffic, c.speed, c.road, c.roadOn, c.anchorH, c.sla, c.slaVip, c.nearH, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
+  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
 
   /* ---------- planning ---------- */
   today() { return ymd(new Date()); }
@@ -427,109 +491,161 @@ class Dispatch {
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
-  // 1. Anchor blocks, most urgent SLA first: every block gets one team, then blocks are topped up to the teams they need.
-  // 2. Teams still free become floaters for sparse cells, nearest next job first. 3. Teams with hours left take leftovers
-  // nearby (own block, then neighbours); jobs close to SLA breach go first and may go further. 4. Anything left goes to H+1.
+  // 1. Busy cells (more than gridMin WO), highest total score first: each gets one anchor team, then is topped up to the teams
+  //    it needs, keeping floatPct of the teams back as floaters. 2. Each anchor team works its own cell, highest score first.
+  // 3. Anchor teams with hours left take jobs from the 8 neighbouring cells (ring2 = 1), highest score first.
+  // 4. Floaters (the reserve plus teams without a busy cell) take what is left anywhere, highest score first.
+  // 5. Routes are put in order (tidy); a job that no longer fits the working day goes to H+1 with aging.
   autoPlan(P, J, B, keepLocked) {
     const cfg = this.st.cfg, nT = Math.max(1, Math.round(cfg.teams));
     const old = P.teams || [], oldHome = P.home || [], oldWhy = P.why || {}, oldTb = P.tb || [], oldRole = P.role || [];
     P.teams = Array.from({ length: nT }, () => []); P.home = Array(nT).fill(null); P.tb = Array(nT).fill(0); P.role = Array(nT).fill(null);
     P.why = {}; P.manual = {};
-    const placed = new Set();
+    const placed = new Set(), orphan = [];
     if (keepLocked) old.forEach((t, i) => t.forEach(k => {
-      const j = J.by.get(k), ti = Math.min(i, nT - 1);
-      if (j && this.locked(j)) { P.teams[ti].push(k); placed.add(k); if (!P.home[ti]) { P.home[ti] = oldHome[i] || j.cell.key; P.tb[ti] = oldTb[i] || 0; P.role[ti] = oldRole[i] || 'anchor'; } }
+      const j = J.by.get(k);
+      if (!j || !this.locked(j)) return;
+      placed.add(k);
+      if (i >= nT) { orphan.push(k); return; } // its team was removed: never pile these onto another team
+      P.teams[i].push(k);
+      if (!P.home[i]) { P.home[i] = oldHome[i] || j.cell.key; P.tb[i] = oldTb[i] || 0; P.role[i] = oldRole[i] || 'anchor'; }
     }));
     const hold = (keepLocked ? P.next || [] : []).filter(k => oldWhy[k] === 'customer' && J.by.has(k) && !placed.has(k));
     hold.forEach(k => placed.add(k));
     const CX = this.clusters(J.list.filter(j => !placed.has(j.key)), B);
+    const reserve = CX.list.length ? Math.min(nT - 1, Math.round(nT * (+cfg.floatPct || 0) / 100)) : 0;
+    let gridLeft = nT - reserve - P.home.filter(Boolean).length;
     const free = () => P.teams.map((t, i) => i).filter(i => !P.home[i] && !P.teams[i].length);
     const reach = (i, j) => this.tstart(i) + this.travel(this.tbase(P, i), j);
     const take = c => {
+      if (gridLeft <= 0) return false;
       const f = free(); if (!f.length) return false;
       f.sort((a, b) => reach(a, c.jobs[0]) - reach(b, c.jobs[0]));
-      const i = f[0]; P.home[i] = c.key; P.tb[i] = this.nearBase(c.jobs[0]); P.role[i] = 'anchor'; c.mine.push(i); return true;
+      const i = f[0]; P.home[i] = c.key; P.tb[i] = this.nearBase(c.jobs[0]); P.role[i] = 'anchor'; c.mine.push(i); gridLeft--; return true;
     };
     CX.list.forEach(c => { c.mine = P.home.map((h, i) => h === c.key ? i : -1).filter(i => i >= 0); });
     CX.list.forEach(c => { if (!c.mine.length) take(c); });
     CX.list.forEach(c => { while (c.mine.length < c.need && take(c)); });
-    const rest = [];
-    CX.list.forEach(c => {
-      if (!c.mine.length) { rest.push(...c.jobs); return; }
-      rest.push(...this.packInto(c.mine.map(i => this.state(P.teams[i], this.tbase(P, i), i, P)), c.jobs));
-    });
-    const fl = free(), sp = CX.sparse.slice().sort(this.urg);
-    let rest2 = sp;
-    if (fl.length && sp.length) {
-      const S = fl.map(i => ({ i, ids: P.teams[i], t: this.tstart(i), pos: this.tbase(P, i) }));
-      rest2 = [];
-      sp.forEach(j => {
-        let best = null;
-        S.forEach(s => {
-          const hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
-          if (arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
-          if (!best || hop < best.hop || (hop === best.hop && end < best.end)) best = { s, hop, end };
-        });
-        if (best) { best.s.ids.push(j.key); best.s.t = best.end; best.s.pos = j; } else rest2.push(j);
+    const S = new Map(), st = i => { if (!S.has(i)) S.set(i, this.state(P.teams[i], this.tbase(P, i), i, P)); return S.get(i); };
+    let rest = [];
+    CX.list.forEach(c => { if (!c.mine.length) rest.push(...c.jobs); else rest.push(...this.packInto(c.mine.map(st), c.jobs)); });
+    rest = rest.concat(CX.sparse).sort(this.cmp);
+    // A team sent to a quiet cell only for its urgent VIP works as a floater once the VIP is done.
+    CX.list.forEach(c => { if (c.vipOnly) c.mine.forEach(i => { P.role[i] = 'floater'; }); });
+    const better = (x, y) => !y || x.f.hop < y.f.hop || (x.f.hop === y.f.hop && x.f.end < y.f.end);
+    const anchors = P.teams.map((t, i) => i).filter(i => P.home[i] && P.role[i] !== 'floater'), rest2 = [];
+    rest.forEach(j => {
+      let best = null;
+      anchors.forEach(i => {
+        if (this.ringK(P.home[i], j.cell.key) > Math.max(0, +cfg.ring2 || 0)) return;
+        const s = st(i), f = this.fit(s, j);
+        if (this.ok(f) && better({ f }, best)) best = { s, f };
       });
-      S.forEach(s => { if (s.ids.length) { P.role[s.i] = 'floater'; P.home[s.i] = J.by.get(s.ids[0]).cell.key; P.tb[s.i] = this.crew(s.i).base || 0; } });
-    }
-    const rest3 = [];
-    rest.concat(rest2).sort(this.urg).forEach(j => {
-      let best = null; const sb = this.soon(j);
-      P.teams.forEach((ids, i) => {
-        if (!P.home[i]) return;
-        if (P.role[i] !== 'floater' && !sb && this.ringK(P.home[i], j.cell.key) > cfg.ring2) return;
-        const s = this.state(ids, this.tbase(P, i), i, P), hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
-        if (hop > cfg.hop2 || arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
-        if (!best || hop < best.hop) best = { ids, hop };
-      });
-      if (best) best.ids.push(j.key); else rest3.push(j);
+      if (best) this.put(best.s, j, best.f); else rest2.push(j);
     });
-    rest3.forEach(j => { P.why[j.key] = 'internal'; });
-    hold.forEach(k => { P.why[k] = 'customer'; });
+    const fl = free().concat(P.teams.map((t, i) => i).filter(i => P.role[i] === 'floater' && P.teams[i].length)), rest3 = [];
+    rest2.forEach(j => {
+      let best = null;
+      fl.forEach(i => {
+        const s = st(i), f = this.fit(s, j);
+        if (!this.ok(f) || (s.ids.length && f.hop > (+cfg.hop2 || Infinity))) return;
+        if (better({ f }, best)) best = { i, s, f };
+      });
+      if (!best) { rest3.push(j); return; }
+      this.put(best.s, j, best.f);
+      if (!P.home[best.i]) { P.home[best.i] = j.cell.key; P.role[best.i] = 'floater'; P.tb[best.i] = this.crew(best.i).base || 0; }
+    });
     P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i)) : ids);
-    P.next = rest3.map(j => j.key).concat(hold);
+    const over = [];
+    P.teams = P.teams.map((ids, i) => { if (!ids.length) return ids; const r = this.fitRoute(P, i, ids); over.push(...r.drop); return r.keep; });
+    P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; P.role[i] = null; } });
+    // 6. Every team with hours left (anchor or floater) picks up work on the way back to its base: each pick must bring it
+    //    closer to the base, cost at most homeDetour extra minutes and start by the last-start time (cut, 1 h before the
+    //    end of the day); the highest score among those goes first. Teams that are free earliest choose first.
+    P.ret = {};
+    const pool = rest3.map(j => j.key).concat(over).map(k => J.by.get(k)).filter(Boolean);
+    const fin = i => this.state(P.teams[i], this.tbase(P, i), i, P).t;
+    P.teams.map((ids, i) => i).filter(i => P.teams[i].length).sort((a, b) => fin(a) - fin(b)).forEach(i => {
+      const ids = P.teams[i];
+      const base = this.tbase(P, i), s = this.state(ids, base, i, P);
+      for (;;) {
+        const dHome = this.travel(s.pos, base);
+        let best = null;
+        pool.forEach((j, n) => {
+          const back = this.travel(j, base); if (back >= dHome) return;
+          const det = this.travel(s.pos, j) + back - dHome; if (det > Math.max(0, +cfg.homeDetour || 0)) return;
+          const f = this.fit(s, j); if (!this.ok(f)) return;
+          const sc = this.score(j);
+          if (!best || sc > best.sc || (sc === best.sc && det < best.det)) best = { n, j, f, sc, det };
+        });
+        if (!best) break;
+        this.put(s, best.j, best.f); P.ret[best.j.key] = true; pool.splice(best.n, 1);
+      }
+    });
+    const left = new Set(pool.map(j => j.key)), rest3k = rest3.map(j => j.key).filter(k => left.has(k)), overk = over.filter(k => left.has(k));
+    rest3k.concat(overk, orphan).forEach(k => { P.why[k] = 'internal'; });
+    hold.forEach(k => { P.why[k] = 'customer'; });
+    P.next = rest3k.concat(overk, orphan, hold);
+    if (orphan.length) this.note(orphan.length + ' started job' + (orphan.length > 1 ? 's' : '') + ' belonged to a removed team; moved to H+1 for the dispatcher to reassign.');
   }
-  // A work order that appears during the day joins the anchor of its own cell, then a neighbouring cell, then a floater.
-  // A job close to SLA breach goes to the nearest team within ring2 / hop2 and is put at the front of its route.
+  // Walk a route in order. A job not yet started that no longer fits the working day is dropped; started jobs always stay.
+  fitRoute(P, i, ids) {
+    const s = this.fresh(i, P, this.tbase(P, i)), drop = [];
+    ids.forEach(k => { const j = this._J.by.get(k); if (!j) return; const f = this.fit(s, j); if (this.locked(j) || this.ok(f)) this.put(s, j, f); else drop.push(k); });
+    return { keep: s.ids, drop };
+  }
+  // A work order that appears during the day joins the anchor team of its own cell, then one in a neighbouring cell (ring),
+  // then a floater, then a free team. Urgent VIP (Wiredown / Power) goes to the front after started jobs; every other job,
+  // non-urgent VIP included, joins the end of the route so work already under way is not disturbed.
   place(P, j, B) {
-    const cfg = this.st.cfg, sb = this.soon(j), J = this._J;
+    const cfg = this.st.cfg, J = this._J;
     let best = null;
     P.teams.forEach((ids, i) => {
       if (!P.home[i]) return;
-      const ring = this.ringK(P.home[i], j.cell.key), fl = (P.role || [])[i] === 'floater';
-      if (!fl && ring > (sb ? cfg.ring2 : cfg.ring)) return;
-      const s = this.state(ids, this.tbase(P, i), i, P), hop = this.travel(s.pos, j), arr = s.t + hop, end = arr + this.dur(j);
-      if ((ids.length && hop > (sb ? cfg.hop2 : cfg.maxHop)) || arr > cfg.cut || (!cfg.ot && end > cfg.end)) return;
-      const r = sb ? hop : (fl ? cfg.ring + 1 : ring) * 1e4 + hop;
+      const fl = (P.role || [])[i] === 'floater', ring = this.ringK(P.home[i], j.cell.key);
+      if (!fl && ring > Math.max(0, +cfg.ring || 0)) return;
+      const s = this.state(ids.slice(), this.tbase(P, i), i, P), f = this.fit(s, j);
+      if (!this.ok(f) || (ids.length && f.hop > (fl ? cfg.hop2 : cfg.maxHop))) return;
+      const r = (fl ? (+cfg.ring || 0) + 1 : ring) * 1e4 + f.hop;
       if (!best || r < best.r) best = { ids, r };
     });
     if (best) {
-      if (sb) { let n = 0; while (n < best.ids.length && (k => this.locked(J.by.get(k)) || this.soon(J.by.get(k)))(best.ids[n])) n++; best.ids.splice(n, 0, j.key); }
-      else best.ids.push(j.key);
+      if (j.tier === 'VIP' && this.urgent(j)) {
+        let n = 0;
+        while (n < best.ids.length && (y => this.locked(y) || (y.tier === 'VIP' && this.urgent(y)))(J.by.get(best.ids[n]))) n++;
+        best.ids.splice(n, 0, j.key);
+      } else best.ids.push(j.key);
       return true;
     }
     const i = P.teams.findIndex((ids, n) => !P.home[n] && !ids.length);
-    if (i >= 0) {
-      const nb = this.crew(i).base || 0, arr = this.tstart(i) + this.travel(this.tbase(P, i), j);
-      if (arr <= cfg.cut && (cfg.ot || arr + this.dur(j) <= cfg.end)) { P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = nb; if (P.role) P.role[i] = 'floater'; return true; }
+    if (i >= 0 && this.ok(this.fit(this.fresh(i, P, this.tbase(P, i)), j))) {
+      P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = this.crew(i).base || 0; if (P.role) P.role[i] = 'floater'; return true;
     }
     return false;
   }
-  // Route order: locked jobs, then jobs close to SLA breach (least time left first), then every VIP, then nearest next stop.
-  tidy(ids, B) {
-    const J = this._J, lk = ids.filter(k => this.locked(J.by.get(k))), free = ids.filter(k => !this.locked(J.by.get(k)));
-    const sb = free.filter(k => this.soon(J.by.get(k))).sort((a, b) => this.rem(J.by.get(a)) - this.rem(J.by.get(b)));
-    const top = free.filter(k => !sb.includes(k) && J.by.get(k).tier === 'VIP').sort((a, b) => this.cmp(J.by.get(a), J.by.get(b)));
-    const nr = k => (this.st.meta[k] || {}).conf === 'noresp';
-    const late = free.filter(k => !sb.includes(k) && !top.includes(k) && nr(k));
-    const mid = free.filter(k => !sb.includes(k) && !top.includes(k) && !nr(k));
-    const out = lk.concat(sb, top);
-    let pos = out.length ? J.by.get(out[out.length - 1]) : B;
-    while (mid.length) { mid.sort((a, b) => this.travel(pos, J.by.get(a)) - this.travel(pos, J.by.get(b))); const n = mid.shift(); out.push(n); pos = J.by.get(n); }
-    while (late.length) { late.sort((a, b) => this.travel(pos, J.by.get(a)) - this.travel(pos, J.by.get(b))); const n = late.shift(); out.push(n); pos = J.by.get(n); }
-    return out;
+  // Route order: started (locked) jobs as they are, then urgent VIP (Wiredown / Power), then every other job by score, highest
+  // first (equal scores: nearest next stop), then non-urgent VIP after the existing work, then customers who did not answer.
+  tidy(ids, B, ret) {
+    const J = this._J, by = k => J.by.get(k), nr = k => (this.st.meta[k] || {}).conf === 'noresp', R = ret || {};
+    const lk = ids.filter(k => this.locked(by(k))), back = ids.filter(k => !this.locked(by(k)) && R[k]), free = ids.filter(k => !this.locked(by(k)) && !R[k]);
+    const top = free.filter(k => !nr(k) && by(k).tier === 'VIP' && this.urgent(by(k)));
+    const late = free.filter(k => !nr(k) && this.vipLate(by(k)));
+    const mid = free.filter(k => !nr(k) && !top.includes(k) && !late.includes(k));
+    const out = lk.slice();
+    let pos = out.length ? by(out[out.length - 1]) : B;
+    const byScore = list => {
+      const L = list.map(k => ({ k, s: this.score(by(k)) }));
+      while (L.length) {
+        const hi = Math.max(...L.map(x => x.s));
+        let bi = -1, bt = Infinity;
+        L.forEach((x, n) => { if (x.s !== hi) return; const t = this.travel(pos, by(x.k)); if (t < bt) { bt = t; bi = n; } });
+        const k = L.splice(bi, 1)[0].k; out.push(k); pos = by(k);
+      }
+    };
+    byScore(top); byScore(mid); byScore(late);
+    const L = free.filter(nr);
+    while (L.length) { L.sort((a, b) => this.travel(pos, by(a)) - this.travel(pos, by(b))); const k = L.shift(); out.push(k); pos = by(k); }
+    return out.concat(back);
   }
 
   /* ---------- timeline ---------- */
@@ -538,15 +654,20 @@ class Dispatch {
     let hops = 0, roadHops = 0;
     const T = P.teams.map((ids, ti) => {
       let t = this.tstart(ti), pos = this.tbase(P, ti), work = 0, trav = 0, dist = 0;
+      const tEnd = this.tend(ti), tLast = this.tlast(ti);
       const E = this.evList(P, ti), kk = { i: 0 };
       const rows = ids.map((k, n) => {
         const j = J.by.get(k), hop = this.travel(pos, j), d = this.km(pos, j), road = this.isRoad(pos, j), sp = this.step(E, kk, t, hop, this.dur(j)), arr = sp.arr, end = sp.end, f = [];
-        if (sp.dl) f.push(['warn', 'ETA +' + Math.round(sp.dl) + ' min: ' + sp.hit.map(x => (x.type === 'break' ? 'break' : 'problem') + ' ' + hm(x.at)).join(', ')]);
+        const realHit = sp.hit.filter(x => !x.planned), lunch = sp.hit.find(x => x.planned);
+        if (realHit.length) f.push(['warn', 'ETA +' + Math.round(realHit.reduce((a, x) => a + this.evDur(x), 0)) + ' min: ' + realHit.map(x => (x.type === 'break' ? 'break' : 'problem') + ' ' + hm(x.at)).join(', ')]);
+        if (lunch) f.push(['info', 'Lunch ' + hm(lunch.at) + '–' + hm(lunch.end) + ' included']);
+        if (P.ret && P.ret[k]) f.push(['info', 'On the way back to base']);
         hops++; if (road) roadHops++;
-        if (arr > cfg.cut) f.push(['bad', 'Starts ' + hm(arr) + ', after the ' + hm(cfg.cut) + ' cut-off']);
-        if (end > cfg.end) f.push([cfg.ot ? 'warn' : 'bad', 'Ends ' + hm(end) + ', after ' + hm(cfg.end)]);
+        if (arr > tLast) f.push(['bad', 'Starts ' + hm(arr) + ', later than ' + cfg.lastBefore + ' min before shift end (' + hm(tLast) + ')']);
+        if (end > tEnd) f.push(['info', 'Finishes ' + hm(end) + ', after the ' + hm(tEnd) + ' shift end']);
         if (n > 0 && hop > cfg.maxHop) f.push(['warn', hop + ' min drive, limit ' + cfg.maxHop]);
-        if (j.tier === 'VIP' && ids.slice(0, n).some(x => { const y = J.by.get(x); return y.tier !== 'VIP' && !this.locked(y) && !this.soon(y); })) f.push(['warn', 'VIP: move before the non-VIP jobs']);
+        if (j.tier === 'VIP' && this.urgent(j) && ids.slice(0, n).some(x => { const y = J.by.get(x); return !(y.tier === 'VIP' && this.urgent(y)) && !this.locked(y); })) f.push(['warn', 'Urgent VIP: move before the other jobs']);
+        if (this.breached(j)) f.push(['warn', 'SLA overdue · booster +' + this.slaBoost(j)]);
         if (this.soon(j)) { const due = this.nowMin() + this.rem(j); if (end > due) f.push(['bad', 'Misses SLA: due ' + hm(due) + ', done ' + hm(end)]); }
         if ((this.st.meta[k] || {}).conf === 'noresp') f.push(['warn', 'No answer yet: consider the end of the route']);
         work += this.dur(j); trav += hop; dist += d; t = end; pos = j;
@@ -691,14 +812,14 @@ class Dispatch {
     /* KPIs */
     const used = T.filter(t => t.ids.length), sched = used.reduce((a, t) => a + t.ids.length, 0);
     const nInt = P.next.filter(k => P.why[k] !== 'customer').length, nCus = P.next.length - nInt;
-    const CX = this.clusterInfo(B), avail = Math.max(60, cfg.end - cfg.start), flNeed = Math.ceil(CX.sparse.reduce((a, j) => a + this.dur(j), 0) / avail);
+    const CX = this.clusterInfo(B), avail = this.dayMin(), flNeed = Math.ceil(CX.sparse.reduce((a, j) => a + this.dur(j), 0) / avail);
     const needAll = CX.list.reduce((a, c) => a + c.need, 0) + flNeed, hot = G.filter(g => g.jobs.length >= 8).length;
     const soonN = J.list.filter(j => this.soon(j)).length, brN = J.list.filter(j => this.breached(j)).length;
     const breaches = T.reduce((a, t) => a + t.rows.reduce((b, r) => b + r.f.filter(f => f[0] === 'bad').length, 0), 0);
     const kpis = [
       { label: 'Open ' + this.type + ' jobs', value: fmtN(J.list.length), sub: (m.branches[bi] || '') + ' · last ' + cfg.maxAge + ' days' },
       { label: 'Grid cells with work', value: fmtN(G.length), sub: hot + ' red or dark red (8+ WO)' },
-      { label: 'Teams needed', value: fmtN(needAll), sub: CX.list.length + ' anchor blocks + ' + flNeed + ' floater · ' + cfg.teams + ' available' + (needAll > cfg.teams ? ' · short by ' + (needAll - cfg.teams) : '') },
+      { label: 'Teams needed', value: fmtN(needAll), sub: CX.list.length + ' busy cells (>' + cfg.gridMin + ' WO) + ' + flNeed + ' floater · ' + cfg.teams + ' available' + (needAll > cfg.teams ? ' · short by ' + (needAll - cfg.teams) : '') },
       { label: 'Near SLA breach', value: fmtN(soonN), sub: cfg.nearH + ' h or less left · ' + fmtN(brN) + ' already breached' },
       { label: 'Scheduled today', value: fmtN(sched), sub: used.length + ' of ' + cfg.teams + ' teams used' + (breaches ? ' · ' + breaches + ' hour breaches' : '') },
       { label: 'Deferred to H+1', value: fmtN(P.next.length), sub: nInt + ' internal (aging) · ' + nCus + ' customer' },
@@ -715,7 +836,7 @@ class Dispatch {
         e('span', { key: 'pd', style: { font: MONO, color: C.ink } }, new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })),
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
         btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
-        btn('td', 'Tidy all routes', () => { P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i)) : ids); this.changed('All routes tidied by nearest next stop; VIP rules kept.'); }),
+        btn('td', 'Tidy all routes', () => { P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i), P.ret) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
         btn('st', this.ui.settings ? 'Hide settings ▴' : 'Settings ▾', () => { this.ui.settings = !this.ui.settings; if (this.ui.settings) this.ui.draft = JSON.parse(JSON.stringify(cfg)); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
       ]),
       row('Road', [e('span', { key: 'rs', style: { font: SANS, color: rd.err && !rd.m.size && cfg.roadOn ? C.bad : busy ? C.warn : C.muted } }, roadTxt + (P.prov ? ' · plan is provisional until road times load' : ''))]),
@@ -739,17 +860,17 @@ class Dispatch {
       host.card('IDS ' + this.type + ' map', {
         span: 12, meta: fmtN(J.list.length) + ' open jobs · ' + G.length + ' cells of ' + cfg.gridKm + ' km',
         body: host.mapFrame(controls, ctx.mapBox, ctx.full, ctx.hideF, SANS),
-        note: 'Jobs: the latest ' + this.type + ' work order per CID by timestamp, kept only while that order is open' + (cfg.prog ? ' or in progress' : '') + ', dated within the last ' + cfg.maxAge + ' days, on ' + (cfg.blocked ? 'Active and Blocked' : 'Active') + ' accounts' + (J.skipped.old ? ' (' + fmtN(J.skipped.old) + ' older open orders left out)' : '') + '. Job score = ticket priority (' + tierTxt + ') + job type + aging (' + AGING + ' per day carried over for an internal reason). Cell colour and rank = number of open WO in the cell (density); VIP does not change the colour. Inside each team route, VIP jobs go first. Hover a cell for its numbers.' + (J.skipped.unknown ? ' ' + fmtN(J.skipped.unknown) + ' job' + (J.skipped.unknown > 1 ? 's have' : ' has') + ' an unrecognised category and count as Low/Unknown.' : '') + (J.skipped.noPrio ? ' ' + fmtN(J.skipped.noPrio) + ' job' + (J.skipped.noPrio > 1 ? 's have' : ' has') + ' no readable priority and count as Normal.' : ''),
+        note: 'Jobs: the latest ' + this.type + ' work order per CID by timestamp, kept only while that order is open' + (cfg.prog ? ' or in progress' : '') + ', dated within the last ' + cfg.maxAge + ' days, on ' + (cfg.blocked ? 'Active and Blocked' : 'Active') + ' accounts' + (J.skipped.old ? ' (' + fmtN(J.skipped.old) + ' older open orders left out)' : '') + '. Job score = ticket priority (' + tierTxt + ') + job type + aging (' + AGING + ' per day carried over for an internal reason) + SLA overdue booster (+' + cfg.slaB0 + ' once breached, +' + cfg.slaBd + ' per working day past it). Cell colour and rank = number of open WO in the cell (density); VIP does not change the colour. Inside each team route the highest score goes first; urgent VIP (Wiredown, Power) at the front, non-urgent VIP after the existing work. Hover a cell for its numbers.' + (J.skipped.unknown ? ' ' + fmtN(J.skipped.unknown) + ' job' + (J.skipped.unknown > 1 ? 's have' : ' has') + ' an unrecognised category and count as Low/Unknown.' : '') + (J.skipped.noPrio ? ' ' + fmtN(J.skipped.noPrio) + ' job' + (J.skipped.noPrio > 1 ? 's have' : ' has') + ' no readable priority and count as Normal.' : ''),
       }),
       host.card('Priority by grid cell', {
         span: 12, meta: 'densest first (most WO) · ' + (this.ui.cellsAll || G.length <= 25 ? G.length : '25 of ' + G.length) + ' cells',
         body: this.cellTable(e, P, host, col, G),
-        note: 'Anchor block = a cell plus its 8 neighbours holding ' + cfg.anchorH + ' h of work or more; the block is named after its centre cell. Every block gets one anchor team first, in order of the job closest to SLA breach (SLA ' + cfg.sla + ' h, VIP ' + cfg.slaVip + ' h, counted from WO Created inside ' + hm(cfg.start) + '–' + hm(cfg.end) + ' and paused while the customer asks to reschedule), then is topped up to its Teams needed = the fewest teams that fit every job of the block between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + '. Teams left over become floaters for cells outside any block. Teams with hours left take leftovers from neighbouring cells within ' + cfg.hop2 + ' min; jobs with ' + cfg.nearH + ' h or less to SLA breach go first and to the nearest team. ' + (cfg.rebOn ? 'The plan is re-run once at ' + hm(cfg.rebAt) + ' unless it has manual changes. ' : '') + 'Remaining jobs go to H+1.',
+        note: 'A busy cell holds more than ' + cfg.gridMin + ' open WO, or an urgent VIP (Wiredown, Power), and gets its own anchor team. Busy cells are staffed in order of the total score of their jobs, then topped up to Teams needed = the fewest teams that fit every job of the cell between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + ' after lunch. ' + (cfg.floatPct ? cfg.floatPct + '% of the teams are kept as floaters for isolated jobs. ' : '') + 'Anchor teams with hours left take jobs from the 8 neighbouring cells only, highest score first; floaters take what is left anywhere, highest score first, and every team with hours left picks up WO on the way back to base (at most ' + cfg.homeDetour + ' min extra per stop). A WO may start up to ' + cfg.lastBefore + ' min before the team\u2019s own shift end and may finish after it. SLA ' + cfg.sla + ' h, VIP ' + cfg.slaVip + ' h, counted from WO Created inside ' + hm(cfg.start) + '–' + hm(cfg.end) + ' and paused while the customer asks to reschedule; overdue jobs get the booster. ' + (cfg.rebOn ? 'The plan is re-run once at ' + hm(cfg.rebAt) + ' unless it has manual changes. ' : '') + 'Remaining jobs go to H+1.',
       }),
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: this.board(e, P, T, B, pill, col),
-        note: 'Team 1 works the densest cell. Click a team name to rename it. Within a route: locked jobs, then VIP, then nearest next stop, then customers who did not answer. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. Drive times marked "est." are straight-line estimates. Plans are saved in this browser for now.',
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. Drive times marked "est." are straight-line estimates. Plans are saved in this browser for now.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];
@@ -757,8 +878,9 @@ class Dispatch {
   }
 
   board(e, P, T, B, pill, col) {
-    const J = this._J, cols = [], span = this.st.cfg.end - this.st.cfg.start;
+    const J = this._J, cols = [];
     T.forEach((t, n) => {
+      const span = Math.max(60, this.tend(n) - this.tstart(n));
       const home = P.home[n] ? this.M.cellLabel(P.home[n]) : null;
       const est = t.rows.filter(r => !r.road).length;
       cols.push(this.column(e, n, this.nameInput(e, n), col(n), [this.baseRow(e, P, n, home), this.evRow(e, P, n)].concat(t.ids.length ? [
@@ -766,7 +888,7 @@ class Dispatch {
           e('div', { style: { width: Math.min(100, t.work / span * 100) + '%', background: C.ink } }),
           e('div', { style: { width: Math.max(0, Math.min(100 - t.work / span * 100, t.trav / span * 100)) + '%', background: C.acc } })),
         e('div', { key: 'mt', style: { display: 'flex', flexWrap: 'wrap', gap: '2px 10px', font: MONO, color: C.muted } },
-          e('span', null, nf1(t.work / 60) + ' h work'), e('span', null, t.trav + ' min · ' + nf1(t.dist) + ' km' + (est ? ' (' + est + ' est.)' : '')), e('span', { style: { color: t.finish > this.st.cfg.end ? C.bad : C.muted } }, 'done ' + hm(t.finish))),
+          e('span', null, nf1(t.work / 60) + ' h work'), e('span', null, t.trav + ' min · ' + nf1(t.dist) + ' km' + (est ? ' (' + est + ' est.)' : '')), e('span', { style: { color: t.finish > this.tend(n) ? C.warn : C.muted } }, 'done ' + hm(t.finish) + (t.finish > this.tend(n) ? ' (after shift end ' + hm(this.tend(n)) + ')' : ''))),
         e('div', { key: 'cl', style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' } },
           e('button', { key: 'tidy', type: 'button', onClick: () => { P.teams[n] = this.tidy(P.teams[n], this.tbase(P, n)); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
       ] : [e('span', { key: 'idle', style: { font: SANS, color: C.muted } }, 'Standby')]),
@@ -788,7 +910,7 @@ class Dispatch {
         style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 170 } },
         ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name)))
         : e('span', null, 'From ' + (BS[0] ? BS[0].name : 'base')),
-      e('span', null, '· shift ' + hm(this.tstart(n))));
+      e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))));
   }
   evRow(e, P, n) {
     const L = this.evList(P, n), br = this.activeEv(P, n, 'break'), pr = this.activeEv(P, n, 'problem');
@@ -875,7 +997,7 @@ class Dispatch {
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
             sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
             e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
-        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : C.warn } }, f[1]))) : null,
+        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : C.warn } }, f[1]))) : null,
         e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
           sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation'),
           sel('stat', mt.stat || 'none', STAT, ev => { this.meta(j.key).stat = ev.target.value; this.changed(j.wo + ': technician status ' + STAT[ev.target.value] + (ev.target.value !== 'none' ? ' (locked)' : '') + '.'); }, 'Technician status'),
@@ -897,8 +1019,8 @@ class Dispatch {
       fmtN(g.jobs.length),
       g.vip ? e('span', { style: { color: C.vip, fontWeight: 600 } }, String(g.vip)) : '0',
       nf1(g.work / 60) + ' h',
-      g.ctr ? e('span', { style: { color: C.ink, fontWeight: 600, whiteSpace: 'nowrap' } }, 'Anchor · ' + nf1(g.cl.load / 60) + ' h')
-        : g.cl ? e('span', { style: { color: C.muted, whiteSpace: 'nowrap' } }, 'in ' + this.M.cellLabel(g.cl.key)) : e('span', { style: { color: C.warn } }, 'Floater'),
+      g.ctr ? e('span', { style: { color: C.ink, fontWeight: 600, whiteSpace: 'nowrap' } }, 'Busy · own team')
+        : e('span', { style: { color: C.warn, whiteSpace: 'nowrap' } }, 'Neighbour / floater'),
       g.ctr ? e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, String(g.need) + (g.left ? ' +' : '')) : '—',
       g.ctr ? e('span', { style: { whiteSpace: 'nowrap', color: g.finish > cfg.end ? C.bad : C.text } }, dh(g.finish - cfg.start) + ' · done ' + hm(g.finish)) : '—',
       g.tms.length ? e('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } }, ...g.tms.map(n => e('span', { key: n, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, e('span', { style: { width: 8, height: 8, borderRadius: 2, background: col(n) } }), this.tn(n))))
@@ -906,7 +1028,7 @@ class Dispatch {
       g.nx ? e('span', { style: { color: C.warn, fontWeight: 600 } }, String(g.nx)) : '0',
     ]);
     return e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-      host.table(['#', 'Cell', 'Area', 'WO', 'VIP', 'Work', 'Block', 'Teams needed', 'Est. duration', 'Assigned', 'H+1'], rows, { minWidth: 1000, maxHeight: 520 }),
+      host.table(['#', 'Cell', 'Area', 'WO', 'VIP', 'Work', 'Cell type', 'Teams needed', 'Est. duration', 'Assigned', 'H+1'], rows, { minWidth: 1000, maxHeight: 520 }),
       G.length > 25 ? e('button', { type: 'button', onClick: () => { this.ui.cellsAll = !this.ui.cellsAll; this.onChange(); }, style: { alignSelf: 'flex-start', padding: '5px 11px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, this.ui.cellsAll ? 'Show top 25' : 'Show all ' + G.length + ' cells') : null);
   }
   logView(e) {
@@ -943,24 +1065,32 @@ class Dispatch {
             ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Base ' + (k + 1))))),
           lab('Shift start', 'cs' + n),
           e('input', { key: 'ct', type: 'time', value: hm(st), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ start: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
+          lab('end', 'ce' + n),
+          e('input', { key: 'cte', type: 'time', value: hm(isFinite(cr.end) && cr.end !== '' && cr.end !== null ? +cr.end : st + (d.end - d.start)), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ end: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
           lab('App ID', 'ca' + n),
           e('input', { key: 'cap', type: 'text', defaultValue: cr.app || '', placeholder: 'technician app / device ID', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
         ], 'crew' + n);
       }),
+      row('Lunch', [lab('Planned lunch from', 'lu1'), time('lunchAt'), lab('for', 'lu2'), num('lunchMin', 56, 5), lab('min in the default shift; other shifts take it the same time after their start (0 = none). Replaced by the real break once the technician app reports one.', 'lu3')]),
       row('Breaks', [lab('Break estimate', 'be'), num('breakEst', 56, 5), lab('min · Problem estimate', 'pe'), num('probEst', 56, 5),
         lab('min. Used until the technician app sends the end; after that the real duration counts.', 'bx')]),
       row('Road', [chip('ro', d.roadOn, 'Road drive times (OSRM)', null, null, () => set('roadOn', !d.roadOn)),
         e('input', { key: 'osrm', type: 'text', value: d.osrm, onChange: ev => set('osrm', ev.target.value), placeholder: 'https://router.project-osrm.org',
           style: { width: 260, padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
-        lab('Traffic factor ×', 'l6'), num('traffic', 60, 0.05)]),
-      row('Fallback', [lab('If no road time: straight line ×', 'l7'), num('road', 60, 0.05), lab('at', 'l7b'), num('speed', 56), lab('km/h', 'l7c')]),
+        lab('Car route times are free-flow; traffic is added by zone below.', 'l6')]),
+      row('Traffic', [lab('Tourist centre ×', 'z1'), num('zTour', 60, 0.05), lab('within', 'z1b'), num('tR', 52, 0.5), lab('km · Dense ×', 'z2'), num('zDense', 60, 0.05),
+        lab('· Medium ×', 'z3'), num('zMid', 60, 0.05), lab('· Open land ×', 'z4'), num('zOpen', 60, 0.05),
+        lab('Dense / medium / open from customer density per cell. Assumed; calibrate with Traccar drive times.', 'z5')]),
+      row('Fallback', [lab('If no road time: straight line ×', 'l7'), num('road', 60, 0.05), lab('at', 'l7b'), num('speed', 56), lab('km/h by car, before traffic', 'l7c')]),
       row('Reach', [lab('New jobs during the day join a team within', 'l8'), num('ring', 48), lab('cells and', 'l9'), num('maxHop', 56), lab('min', 'l10'),
-        lab('· Teams with hours left take leftovers within', 'l11'), num('ring2', 48), lab('cells and', 'l12'), num('hop2', 56), lab('min', 'l13')]),
-      row('Anchor', [lab('A block (cell + 8 neighbours) gets an anchor team from', 'an1'), num('anchorH', 56, 0.5), lab('h of work. Teams left over become floaters.', 'an2')]),
-      row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left (goes first)', 's4')]),
+        lab('· Anchor teams with hours left take jobs within', 'l11'), num('ring2', 48), lab('cells (1 = the 8 neighbours) · a floater drives at most', 'l12'), num('hop2', 56), lab('min between jobs', 'l13')]),
+      row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
+      row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
+      row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
+      row('Overdue', [lab('SLA booster +', 'ob1'), num('slaB0', 64, 50), lab('once breached, then +', 'ob2'), num('slaBd', 64, 50), lab('per working day past the SLA (added to the job score)', 'ob3')]),
       row('Rebalance', [chip('rb', d.rebOn, 'Re-plan once at', null, null, () => set('rebOn', !d.rebOn)), time('rebAt'), lab('skipped when the plan has manual changes', 'rb2')]),
-      row('Hours', [lab('Start', 'l14'), time('start'), lab('Last start', 'l15'), time('cut'), lab('End', 'l16'), time('end'),
-        chip('ot', d.ot, 'Allow overtime', null, null, () => set('ot', !d.ot))]),
+      row('Hours', [lab('Default shift', 'l14'), time('start'), lab('to', 'l16'), time('end'),
+        lab('· a WO may start up to', 'l15'), num('lastBefore', 56, 15), lab('min before the team\u2019s own shift end and may finish after it. Each team\u2019s shift is set under Crew.', 'l17')]),
       row('Duration', Object.keys(CATS).map(k => e('span', { key: 'd' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.muted } }, k, num(k, 60, 5, d.dur, 'dur' + k), 'min',
         e('span', { style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: CATS[k].src === 'assumed' ? C.warn : C.good } }, CATS[k].src)))),
       ...bl.map((b, n) => row(n ? '' : 'Bases', [
@@ -981,23 +1111,26 @@ class Dispatch {
     if (osrm !== c.osrm) { this.road = new Road(fin => this.roadTick(fin)); this._tq.clear(); this._rq.clear(); }
     Object.assign(c, {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
-      speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), traffic: clean(d.traffic, 0.5, 3, DEF.traffic), roadOn: !!d.roadOn, osrm,
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2),
-      start: d.start, cut: Math.max(d.start, d.cut), end: Math.max(d.start + 60, d.end), ot: !!d.ot, maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
+      speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
+      zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour),
+      start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (c.names || []).slice(),
-      crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, app: x.app || '' } : null),
+      crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
       breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst),
-      anchorH: clean(d.anchorH, 0.5, 24, DEF.anchorH), sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
+      gridMin: Math.round(clean(d.gridMin, 0, 50, DEF.gridMin)), floatPct: clean(d.floatPct, 0, 50, DEF.floatPct),
+      lunchAt: clean(d.lunchAt, 0, 1439, DEF.lunchAt), lunchMin: clean(d.lunchMin, 0, 180, DEF.lunchMin), slaB0: clean(d.slaB0, 0, 5000, DEF.slaB0), slaBd: clean(d.slaBd, 0, 5000, DEF.slaBd),
+      sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
       rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt),
       dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean(d.dur[k], 10, 720, CATS[k].d)])),
     });
-    this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null; this._layer = null;
+    this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null; this._layer = null; this._zone = null; this._zf = null;
     const { m, bi } = this._ctx;
     try {
       const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0], P = this.st.plans[m.branches[bi]];
       this.ensureRoad(J, B);
       if (P) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
-      this.changed('Settings changed and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, anchor ' + c.anchorH + ' h).');
+      this.changed('Settings changed and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, busy cell >' + c.gridMin + ' WO, ' + c.floatPct + '% floaters).');
     } catch (err) {
       console.error('IDS re-plan failed', err);
       this.changed('Settings saved, but the re-plan failed: ' + (err && err.message || err) + '. Press Re-plan automatically or reload.');
@@ -1016,7 +1149,7 @@ class Dispatch {
       key: k, name: x.name, fit, size: cfg.gridKm * 1000, cellA: cfg.cellA ?? 0.36, routeA: cfg.routeA ?? 1,
       cells: this._cells.map(g => ({ key: g.key, color: g.band.color, rank: g.rank,
         tip: [this.M.cellLabel(g.key) + ' · priority #' + g.rank, fmtN(g.jobs.length) + ' WO' + (g.vip ? ' · ' + g.vip + ' VIP (worked first)' : ''),
-          g.ctr ? 'Anchor block · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : g.cl ? 'In anchor block ' + this.M.cellLabel(g.cl.key) : 'Outside blocks · floater work', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
+          g.ctr ? 'Busy cell (>' + cfg.gridMin + ' WO) · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : 'Neighbouring anchor team or floater', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
       teams: P.teams.map((ids, n) => ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, x.B)) || null : null,
         pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j) })) })).filter(t => t.pts.length),

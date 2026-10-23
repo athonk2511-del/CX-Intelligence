@@ -166,7 +166,7 @@ export class TrackStore {
   }
   base(c = this.cfg) { return String(c.server || '').trim().replace(/\/+$/, ''); }
   async api(path, c = this.cfg) {
-    const r = await fetch(this.base(c) + path, { headers: { Authorization: 'Bearer ' + c.token, Accept: 'application/json' }, credentials: 'include' });
+    const r = await fetch(this.base(c) + path, { headers: { Authorization: 'Bearer ' + String(c.token || '').trim(), Accept: 'application/json' }, credentials: 'include' });
     if (r.status === 401) throw new Error('Token rejected (401) — generate a new one for the service user');
     if (!r.ok) throw new Error('HTTP ' + r.status + ' on ' + path);
     return r.json();
@@ -227,7 +227,8 @@ export class TrackStore {
       const sr = await fetch(this.base(c) + '/api/server');
       if (!sr.ok) throw new Error('HTTP ' + sr.status + ' on /api/server');
       const s = await sr.json();
-      const u = await this.api('/api/session', c);
+      // GET /api/session ignores the Authorization header (cookie or ?token= only), so pass the token as a query parameter.
+      const u = await this.api('/api/session?token=' + encodeURIComponent(String(c.token || '').trim()), c);
       const d = await this.api('/api/devices', c);
       return { ok: true, text: 'Connected as ' + (u.name || u.email) + (s.version ? ' · Traccar ' + s.version : '') + ' · ' + d.length + ' devices' };
     } catch (e) { return { ok: false, text: this.netMsg(e) }; }
