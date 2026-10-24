@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-24 (roles)
+
+### Added
+
+- **Shared IDS plan:** one plan for everyone, kept by the Apps Script proxy (`apps-script/roles.gs`). Board, H+1, team names, crew, confirmations, statuses, breaks and settings are shared; every open screen picks up changes within about 10 seconds. Simultaneous changes are checked per part (settings, branch plan, each work order): the first is kept, card moves of the second are re-applied automatically, other overlapping changes are shown with a note. A screen with older work-order data reloads it before changing the plan. The change log shows who did what.
+- **Role management** (new page, admins only): create users with their own access key, role Admin or Dispatcher, and the menus they may open. Disable, new key and remove take effect at once. Needs the Apps Script update in `ROLE_SETUP.md` (`apps-script/roles.gs`); until then every key works as before (owner = Admin).
+- The proxy answers only the sheet tabs a user's menus need; AI notes are for admins only.
+- Header shows who is signed in, with **Log out**.
+
+### Changed
+
+- **Dispatchers on IDS pages** see the map and the dispatch board only. The settings button becomes **Teams & crew**: number of available teams and the crew (team name, hub, shift, app ID). Other planner settings, KPI tiles, the cell table, the change log and AI notes stay with admins. Dispatchers read the sheet through the proxy (no Google sign-in).
+- **Crew**: team names are editable in the crew setup (and still on the board).
+- **Defer to H+1**: the column is now first and stays in view while the board scrolls; the board scrolls by itself while a card is dragged near its edge; a search box finds a deferred job by WO, CID, UID or name; **Move to** offers each team's *next stop* (right after jobs already started) or *last stop*.
+
+### Fixed
+
+- The planned lunch showed as "Break … · undefined" on every team; it now reads "Lunch 12:00–13:00 · 60 min · planned".
+
 ## 2026-10-24
 
 ### Changed

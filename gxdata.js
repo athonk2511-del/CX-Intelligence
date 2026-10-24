@@ -88,6 +88,10 @@ const DRIVE_AUTH = GOOGLE_CLIENT_ID ? { token: googleToken } : { key: DRIVE_API_
 const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', [TABS.csat]: 'csat', wo: 'wo' };
 const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders', csat: 'CSAT' };
 let CSV = null, setsP = null, setP = {}, csvFailed = {};
+// Drive CSV can be switched off per user (dispatchers read the sheet through the key-checked proxy instead,
+// so they need no access to the Drive folder and no Google sign-in).
+let driveOn = true;
+export function setDrive(on) { driveOn = !!on; csvInfo.on = !!CSV_FOLDER && driveOn; }
 export const csvInfo = { on: !!CSV_FOLDER, folder: CSV_FOLDER, files: 0, rows: 0, phase: '', error: null, sets: {}, text: '' };
 function csvSummary() {
   const S = Object.entries(csvInfo.sets).filter(([, v]) => v.total);
@@ -143,14 +147,14 @@ function csvSet(name, full) {
 // Work-order CSV table, or null (no files / unreachable) so callers use ticket column AC.
 // Churn Model outputs: the file list of the Drive set and a reader for one file (CSV text or JSON).
 export async function churnFiles() {
-  if (!CSV_FOLDER) return { files: [], error: 'No Drive CSV folder configured.' };
+  if (!CSV_FOLDER || !driveOn) return { files: [], error: 'No Drive CSV folder configured.' };
   try { const s = await driveSets(); return { files: s.churn || [] }; }
   catch (e) { return { files: [], error: e.message }; }
 }
 export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.fileText(f, DRIVE_AUTH); }
 export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.parseCSV(text); }
 export async function woTable() {
-  if (!CSV_FOLDER || csvFailed.wo) return null;
+  if (!CSV_FOLDER || !driveOn || csvFailed.wo) return null;
   try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }
 }
 export async function woQuery(tq) {
@@ -229,7 +233,7 @@ export async function gviz(gid, tq, full) {
   const key = SHEET_ID + '|' + gid + '|' + tq + (full ? '|F' : '');
   if (cache.has(key)) return cache.get(key);
   const setName = SET_OF[String(gid)];
-  if (CSV_FOLDER && setName && setName !== 'wo' && !csvFailed[setName]) {
+  if (CSV_FOLDER && driveOn && setName && setName !== 'wo' && !csvFailed[setName]) {
     let t = null;
     try { t = await csvSet(setName, full); }
     catch (e) { csvFailed[setName] = true; console.warn(setName + ' CSV unavailable, reading the sheet instead:', e.message); }
@@ -1273,6 +1277,7 @@ export async function loadMap() {
   const wo = { n: evs.length, pt: Int32Array.from(evs, e => ptOf.get(e[0])), type: Uint8Array.from(evs, e => e[1]), t: Float64Array.from(evs, e => e[2]) };
   const products = [...prodMap.keys()].map((key, i) => ({ key, color: PRODUCT_COLORS[key] || PRODUCT_EXTRA[i % PRODUCT_EXTRA.length] }));
   return {
+    loadedAt: Date.now(),
     start: start.subarray(0, j), blockAt: blockAt.subarray(0, j), endAt: endAt.subarray(0, j), mrc: mrc.subarray(0, j), wo,
     count: j, lat: lat.subarray(0, j), lng: lng.subarray(0, j), status: st.subarray(0, j), product: pr.subarray(0, j), branch: br.subarray(0, j), cid: cid.slice(0, j), uid: uid.slice(0, j), name: name.slice(0, j), area: area.slice(0, j), variant: variant.slice(0, j),
     wd, wdInfo, wdStatuses: WD_STATUS, wdTotal: wdBy.size, wdMatched, cm, cmInfo, cmTotal: cmBy.size, cmMatched,
@@ -1529,4 +1534,62 @@ export async function aiComplete(body) {
   let out; try { out = JSON.parse(text); } catch (e) { throw new Error('The proxy has no AI endpoint yet. Add doPost from AI_SETUP.md to the Apps Script and redeploy.'); }
   if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Access key rejected' : out.error);
   return out.text || '';
+}
+
+/* ---------- users and roles (Apps Script proxy) ----------
+   whoami: the proxy answers which user the access key belongs to: { gxUser: { name, role, menus } }.
+   An older proxy without role support answers something else; the key then counts as the owner (admin),
+   which is what every key was before roles existed. See ROLE_SETUP.md. */
+export const ROLE_ADMIN = 'admin';
+export async function whoami() {
+  if (!useProxy()) return { name: 'Owner', role: ROLE_ADMIN, menus: '*', legacy: true };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let k = readKey();
+    if (!k) k = await askKey('Enter your access key to open the dashboard.');
+    let text = '';
+    try {
+      const res = await fetch(`${PROXY_URL}?action=whoami&key=${encodeURIComponent(k)}`);
+      text = await res.text();
+    } catch (e) { throw new Error('The Apps Script proxy did not answer. Check the connection and press Re-sync data.'); }
+    if (text.indexOf('"UNAUTHORIZED"') !== -1) { forgetKey(); await askKey(attempt ? 'That access key is not active. Ask the dashboard admin for a new one.' : 'That access key was not accepted. Please try again.'); continue; }
+    let out = null; try { out = JSON.parse(text); } catch (e) {}
+    const u = out && out.gxUser;
+    if (!u) return { name: 'Owner', role: ROLE_ADMIN, menus: '*', legacy: true };
+    return { name: String(u.name || 'User'), role: u.role === ROLE_ADMIN ? ROLE_ADMIN : 'dispatcher', menus: u.role === ROLE_ADMIN ? '*' : (Array.isArray(u.menus) ? u.menus.map(String) : []) };
+  }
+  throw new Error('Access key rejected');
+}
+export function logout() { forgetKey(); googleSignOut(); }
+// Admin only: op = 'list' | 'save' | 'delete' | 'rekey'. The proxy checks that the caller's key belongs to an admin.
+export async function users(op, data) {
+  if (!useProxy()) throw new Error('Role management needs the Apps Script proxy.');
+  const k = readKey();
+  let res;
+  try { res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'users', op, key: k, data: data || null }) }); }
+  catch (e) { throw new Error('The Apps Script proxy did not answer. Add the role functions from ROLE_SETUP.md and deploy a new version.'); }
+  const text = await res.text();
+  let out; try { out = JSON.parse(text); } catch (e) { throw new Error('The proxy has no role management yet. Add the role functions from ROLE_SETUP.md and deploy a new version.'); }
+  if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Only an admin can manage users.' : out.error);
+  return out;
+}
+
+/* ---------- shared IDS plan (Apps Script proxy) ----------
+   idsGet: { ids: { rev, same } } or { ids: <whole plan> }; an older proxy answers without "ids" → null (plan stays local).
+   idsPost: sends changed parts with the revision they were made on; answers the merged plan and any conflicts. */
+export async function idsGet(type, since) {
+  if (!useProxy()) return null;
+  const k = readKey(); if (!k) return null;
+  const res = await fetch(`${PROXY_URL}?action=ids&type=${encodeURIComponent(type)}&key=${encodeURIComponent(k)}${since != null ? '&since=' + since : ''}`);
+  const text = await res.text();
+  let out = null; try { out = JSON.parse(text); } catch (e) { return null; }
+  if (out && out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Access key rejected' : out.error);
+  return out && out.ids ? out.ids : null;
+}
+export async function idsPost(body) {
+  const k = readKey();
+  const res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'ids', key: k, ...body }) });
+  const text = await res.text();
+  let out; try { out = JSON.parse(text); } catch (e) { throw new Error('The proxy did not answer the shared plan request.'); }
+  if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Access key rejected' : out.error);
+  return out;
 }

@@ -50,6 +50,12 @@
         <span style="width:6px;height:6px;border-radius:50%;background:#2E6B34;animation:gxpulse 2.4s ease-in-out infinite"></span>
         {{ syncLine }}
       </span>
+      <sc-if value="{{ meName }}" hint-placeholder-val="{{ false }}">
+        <span style="display:flex;align-items:center;gap:8px;font:500 12px 'IBM Plex Sans',system-ui,sans-serif;color:#1F1F1D;white-space:nowrap">
+          {{ meName }}
+          <button type="button" onClick="{{ onLogout }}" style="padding:4px 9px;border:1px solid #DCDCD8;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;cursor:pointer">Log out</button>
+        </span>
+      </sc-if>
       <button type="button" onClick="{{ onRefresh }}" style="padding:5px 11px;border:1px solid #1F1F1D;border-radius:3px;background:#1F1F1D;color:#FFFFFF;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;cursor:pointer;white-space:nowrap" style-hover="background:#3A3A37">Re-sync data</button>
     </div>
   </header>
@@ -175,6 +181,7 @@
 class Component extends DCLogic {
   state = {
     view: 'overview', period: 'all', branch: 'all', navOpen: true, mapShowF: false,
+    me: null, rolesDraft: null, rolesMsg: null, rolesKey: null, rolesBusy: false, rolesArm: null,
     dspTick: 0,
     index: null, data: {}, busy: true, error: null,
     trk: { sel: null, day: 0, t: null, playing: false, speed: 180, show: true }, tDraft: null, tMsg: null,
@@ -228,10 +235,15 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-21c'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24b'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
+      // Who is this access key? Decides the menus and, for non-admins, reads the sheet through the proxy only.
+      const me = D.whoami ? await D.whoami() : { name: 'Owner', role: 'admin', menus: '*' };
+      if (me.role !== 'admin' && D.setDrive) D.setDrive(false);
+      const view = this.canSee(this.state.view, me) ? this.state.view : this.firstView(me);
+      this.setState({ me, view });
       const index = await D.loadIndex();
       const current = index.periods.find(p => p.sort <= index.nowKey);
       const period = current ? current.key : 'all';
@@ -255,7 +267,7 @@ class Component extends DCLogic {
   }
 
   key(view) {
-    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map' };
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map', roles: 'roles', none: 'none' };
     return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
   }
 
@@ -284,6 +296,8 @@ class Component extends DCLogic {
       map: () => D.loadMap(),
       dispatch: () => D.loadMap(),
       dispatchWcm: () => D.loadMap(),
+      roles: () => D.users('list').catch(e => ({ error: e.message })),
+      none: () => Promise.resolve({}),
     };
     try {
       const seg = this.seg(view);
@@ -1402,6 +1416,99 @@ class Component extends DCLogic {
     return { controls, cards };
   }
 
+  /* ---------- role management (admin only) ---------- */
+
+  async rolesDo(op, data, label) {
+    if (this.state.rolesBusy) return;
+    this.setState({ rolesBusy: true, rolesMsg: null, rolesArm: null });
+    try {
+      const out = await this.D.users(op, data);
+      this.setState(s => ({
+        data: { ...s.data, roles: { ...(s.data.roles || {}), users: out.users || [], error: null } },
+        rolesKey: out.newKey ? { name: label || (data && data.name) || '', key: out.newKey } : (op === 'save' || op === 'delete' ? null : s.rolesKey),
+        rolesDraft: null, rolesBusy: false,
+        rolesMsg: { ok: true, text: { save: 'Saved.', rekey: 'New key created. The old key no longer works.', delete: 'User removed. Their key no longer works.' }[op] || 'Done.' },
+      }));
+    } catch (e) { this.setState({ rolesBusy: false, rolesMsg: { ok: false, text: e.message } }); }
+  }
+
+  rolesView(d) {
+    const e = React.createElement, h = this.h.bind(this), S = this.state;
+    const sans = "500 13px 'IBM Plex Sans',system-ui,sans-serif", mono = "500 12px 'IBM Plex Mono',ui-monospace,monospace", small = "400 12px/1.55 'IBM Plex Sans',system-ui,sans-serif";
+    const btn = (key, label, onClick, dark, disabled, danger) => e('button', { key, type: 'button', onClick, disabled, style: { padding: '6px 11px', borderRadius: 3, cursor: disabled ? 'default' : 'pointer', border: '1px solid ' + (danger ? '#9B2C1F' : dark ? '#1F1F1D' : '#DCDCD8'), background: dark ? '#1F1F1D' : danger ? '#FBF1EF' : '#FFFFFF', color: dark ? '#FFFFFF' : danger ? '#9B2C1F' : '#1F1F1D', font: "500 12px 'IBM Plex Mono',ui-monospace,monospace", opacity: disabled ? 0.45 : 1, whiteSpace: 'nowrap' } }, label);
+    const badge = (t, c, bg) => e('span', { style: { font: "600 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 3, color: c, background: bg, textTransform: 'uppercase', whiteSpace: 'nowrap' } }, t);
+    const label = id => (Component.MENUS.find(m => m[0] === id) || [id, id])[1];
+    if (!d || d.error) {
+      return { kpis: [], cards: [this.card('Role management is not set up yet', { span: 12, meta: 'Apps Script proxy',
+        body: h('div', { display: 'flex', flexDirection: 'column', gap: 10 },
+          h('p', { margin: 0, font: sans, color: '#9B2C1F' }, (d && d.error) || 'No answer from the proxy.'),
+          h('p', { margin: 0, font: small, color: '#3A3A37' }, 'Add apps-script/roles.gs from the repository to the Apps Script proxy, rename the existing doGet to doGetData_ (and doPost to doPostData_), set GX_DATA_KEY in Script properties, then Deploy → Manage deployments → edit → New version. The steps are in ROLE_SETUP.md.'),
+          h('div', null, btn('retry', 'Try again', () => this.setState(s => { const data = { ...s.data }; delete data.roles; return { data }; }, () => this.load())))) })] };
+    }
+    const users = d.users || [];
+    const D0 = S.rolesDraft;
+    const kpis = [
+      { label: 'Users', value: String(users.length), sub: 'role-managed keys' },
+      { label: 'Dispatchers', value: String(users.filter(u => u.role !== 'admin').length), sub: users.filter(u => u.role !== 'admin' && u.disabled).length + ' disabled' },
+      { label: 'Admins', value: String(users.filter(u => u.role === 'admin').length), sub: 'plus the owner key(s)' },
+    ];
+    const cards = [];
+    if (!d.dataKey) cards.push(this.card('One step left on the proxy', { span: 12, body: h('p', { margin: 0, font: small, color: '#7A4A10' }, 'GX_DATA_KEY is not set in Script properties. Until it is, users created here can sign in but cannot load any data. Set it to one of your existing owner keys (ROLE_SETUP.md, step 3).') }));
+    if (S.rolesKey) {
+      const k = S.rolesKey;
+      cards.push(this.card('Access key for ' + (k.name || 'the user'), { span: 12, meta: 'shown once',
+        body: h('div', { display: 'flex', flexDirection: 'column', gap: 10 },
+          h('div', { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
+            e('code', { style: { padding: '8px 12px', background: '#F4F4F2', border: '1px solid #DCDCD8', borderRadius: 3, font: "600 14px 'IBM Plex Mono',ui-monospace,monospace", color: '#1F1F1D', userSelect: 'all', wordBreak: 'break-all' } }, k.key),
+            btn('copy', S.rolesCopied ? 'Copied' : 'Copy', () => { try { navigator.clipboard.writeText(k.key); } catch (x) {} this.setState({ rolesCopied: true }); setTimeout(() => this.setState({ rolesCopied: false }), 1500); }),
+            btn('done', 'Done', () => this.setState({ rolesKey: null }))),
+          h('p', { margin: 0, font: small, color: '#3A3A37' }, 'Copy it now and send it to ' + (k.name || 'the user') + ' privately. It is not shown again; if it is lost, use New key. The user opens the dashboard, types this key once, and sees only the menus given to them.')) }));
+    }
+    const rows = users.map(u => {
+      const arm = S.rolesArm === u.id;
+      return [
+        h('div', { display: 'flex', flexDirection: 'column', gap: 2 }, h('span', { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif" }, u.name), h('span', { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#5F5F5B' }, 'key ' + u.keyHint)),
+        u.role === 'admin' ? badge('Admin', '#7A5E00', '#FBF3D6') : badge('Dispatcher', '#1C64B4', '#E6EEF8'),
+        u.role === 'admin' ? h('span', { color: '#5F5F5B' }, 'All menus + Role management') : (u.menus && u.menus.length ? u.menus.map(label).join(', ') : h('span', { color: '#9B2C1F' }, 'None')),
+        u.disabled ? badge('Disabled', '#9B2C1F', '#F7E6E3') : badge('Active', '#2E6B34', '#E7F2E8'),
+        u.updated ? new Date(u.updated).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
+        h('div', { display: 'flex', flexWrap: 'wrap', gap: 6 },
+          btn('ed' + u.id, 'Edit', () => this.setState({ rolesDraft: { id: u.id, name: u.name, role: u.role, menus: (u.menus || []).slice(), disabled: u.disabled }, rolesMsg: null }), false, S.rolesBusy),
+          btn('di' + u.id, u.disabled ? 'Enable' : 'Disable', () => this.rolesDo('save', { id: u.id, name: u.name, role: u.role, menus: u.menus, disabled: !u.disabled }), false, S.rolesBusy),
+          btn('rk' + u.id, 'New key', () => this.rolesDo('rekey', { id: u.id }, u.name), false, S.rolesBusy),
+          btn('rm' + u.id, arm ? 'Click again to remove' : 'Remove', () => arm ? this.rolesDo('delete', { id: u.id }) : this.setState({ rolesArm: u.id }), false, S.rolesBusy, true)),
+      ];
+    });
+    cards.push(this.card('Users', { span: 12, meta: users.length + ' users',
+      body: h('div', { display: 'flex', flexDirection: 'column', gap: 10 },
+        users.length ? this.table(['User', 'Role', 'Menus', 'Status', 'Last change', ''], rows, { numeric: false, minWidth: 900 }) : h('p', { margin: 0, font: small, color: '#5F5F5B' }, 'No users yet. Add the first dispatcher below.'),
+        S.rolesMsg ? h('span', { font: small, color: S.rolesMsg.ok ? '#2E6B34' : '#9B2C1F' }, S.rolesMsg.text) : null,
+        D0 ? null : h('div', null, btn('add', '+ Add user', () => this.setState({ rolesDraft: { name: '', role: 'dispatcher', menus: ['dispatch', 'dispatchWcm'], disabled: false }, rolesMsg: null, rolesKey: null }), true, S.rolesBusy))),
+      note: 'Owner keys already kept in the Apps Script stay admins and do not appear here. Disable or Remove stops a key at once; New key replaces it. Menus decide what a user sees, and the proxy only answers the sheet tabs those menus need. Dispatchers on an IDS page see the map, the dispatch board and team setup (available teams and crew); other planner settings stay with admins.' }));
+    if (D0) {
+      const set = p => this.setState(s => ({ rolesDraft: { ...s.rolesDraft, ...p } }));
+      const admin = D0.role === 'admin';
+      const seg = (v, l) => e('button', { key: v, type: 'button', onClick: () => set({ role: v }), style: { padding: '7px 14px', border: 'none', borderLeft: v === 'admin' ? '1px solid #DCDCD8' : 'none', background: D0.role === v ? '#1F1F1D' : '#FFFFFF', color: D0.role === v ? '#FFFFFF' : '#1F1F1D', font: sans, cursor: 'pointer' } }, l);
+      const box = ([id, l]) => e('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, font: sans, color: admin ? '#8A8A85' : '#1F1F1D', cursor: admin ? 'default' : 'pointer' } },
+        e('input', { type: 'checkbox', disabled: admin, checked: admin || D0.menus.indexOf(id) !== -1, onChange: ev => set({ menus: ev.target.checked ? D0.menus.concat([id]) : D0.menus.filter(x => x !== id) }), style: { accentColor: '#1F1F1D' } }), l);
+      const lab = t => h('span', { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' }, t);
+      cards.push(this.card(D0.id ? 'Edit ' + D0.name : 'Add user', { span: 12,
+        body: h('div', { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 760 },
+          h('label', { display: 'flex', flexDirection: 'column', gap: 6 }, lab('Name'),
+            e('input', { type: 'text', value: D0.name, placeholder: 'e.g. Dispatcher Bali · Andi', onChange: ev => set({ name: ev.target.value }), style: { width: '100%', maxWidth: 360, boxSizing: 'border-box', padding: '8px 11px', border: '1px solid #DCDCD8', borderRadius: 3, font: sans, outline: 'none' } })),
+          h('div', { display: 'flex', flexDirection: 'column', gap: 6 }, lab('Role'),
+            h('div', { display: 'flex', alignSelf: 'flex-start', border: '1px solid #DCDCD8', borderRadius: 3, overflow: 'hidden' }, seg('dispatcher', 'Dispatcher'), seg('admin', 'Admin')),
+            h('span', { font: small, color: '#5F5F5B' }, admin ? 'Admin: every menu, every planner setting and Role management.' : 'Dispatcher: only the menus ticked below. On IDS pages: the map, the dispatch board and team setup.')),
+          h('div', { display: 'flex', flexDirection: 'column', gap: 8 }, lab('Menus'),
+            h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: '8px 16px' }, ...Component.MENUS.map(box))),
+          h('div', { display: 'flex', flexWrap: 'wrap', gap: 8 },
+            btn('sv', D0.id ? 'Save changes' : 'Create user and key', () => this.rolesDo('save', D0), true, S.rolesBusy || !String(D0.name).trim() || (!admin && !D0.menus.length)),
+            btn('cx', 'Cancel', () => this.setState({ rolesDraft: null }), false, S.rolesBusy)),
+          !admin && !D0.menus.length ? h('span', { font: small, color: '#9B2C1F' }, 'Tick at least one menu.') : null) }));
+    }
+    return { kpis, cards };
+  }
+
   /* ---------- dispatch planner (IDS) ---------- */
 
   isDsp(v) { v = v || this.state.view; return v === 'dispatch' || v === 'dispatchWcm'; }
@@ -1409,11 +1516,14 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-24b'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-24d'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
         d.onLocate = i => { if (this.mapApi) this.mapApi.focus(i); if (this.mapFrameEl) this.mapFrameEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+        // One shared plan for everyone, kept by the Apps Script proxy.
+        if (this.D && this.D.idsGet) d.api = { get: (t, since) => this.D.idsGet(t, since), post: b => this.D.idsPost(b) };
+        d.user = (this.state.me && this.state.me.name) || '';
         return d;
       };
       this.DSPS = { WWR: mk('WWR'), WCM: mk('WCM') };
@@ -1439,6 +1549,9 @@ class Component extends DCLogic {
         body: this.mapFrame(h('div', { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 },
           h('span', { font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", color: this.dspError ? '#9B2C1F' : '#5F5F5B' }, this.dspError || 'Loading the dispatch planner…')), mapBox, full, hideF, "500 12px 'IBM Plex Sans',system-ui,sans-serif") })] };
     }
+    this.DSP.limited = !this.isAdmin();
+    Object.values(this.DSPS).forEach(d => { d.active = d === this.DSP; });
+    this.DSP.dataAt = (m && m.loadedAt) || this._mapAt || (this._mapAt = Date.now());
     return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m) });
   }
 
@@ -1879,7 +1992,31 @@ class Component extends DCLogic {
     });
   };
 
-  go = view => this.setState({ view }, () => this.load());
+  go = view => { if (!this.canSee(view)) return; if (this.DSPS && !this.isDsp(view)) Object.values(this.DSPS).forEach(d => { d.active = false; }); this.setState({ view }, () => this.load()); };
+  // The shared IDS plan was built from newer work-order data than this screen holds: reload the data once.
+  idsBehind() {
+    const now = Date.now();
+    if (now - (this._idsRefreshAt || 0) < 120000) { if (this.DSP) this.DSP.skewOK = true; return; }
+    this._idsRefreshAt = now;
+    setTimeout(() => { this.D.clearCache(); this.setState(s => { const data = { ...s.data }; delete data.map; return { data }; }, () => this.load()); }, 0);
+  }
+
+  /* ---------- users and roles ---------- */
+  // Menus a non-admin can be given. Role management itself is admin only.
+  static MENUS = [['overview', 'Executive overview'], ['tickets', 'Trouble tickets'], ['chat', 'Chat omnichannel'], ['csat', 'CSAT'],
+    ['growth', 'Growth & churn · Retail'], ['intracity', 'Growth & churn · Intracity'], ['churnRisk', 'Churn risk'], ['map', 'Customer map'],
+    ['dispatch', 'IDS · WWR wiredown'], ['dispatchWcm', 'IDS · WCM maintenance'], ['settings', 'Tracking setup']];
+  isAdmin(me) { me = me || this.state.me; return !!me && me.role === 'admin'; }
+  canSee(id, me) {
+    me = me || this.state.me;
+    if (!me) return false;
+    if (me.role === 'admin') return id !== 'none';
+    if (id === 'roles') return false;
+    if (id === 'none') return true;
+    return Array.isArray(me.menus) && me.menus.indexOf(id) !== -1;
+  }
+  firstView(me) { return Component.MENUS.map(m => m[0]).find(id => this.canSee(id, me)) || 'none'; }
+  logout = () => { try { this.D && this.D.logout && this.D.logout(); } catch (e) {} location.href = location.pathname; };
   navEnter = () => { clearTimeout(this.navTimer); if (!this.state.navOpen) this.setState({ navOpen: true }); };
   navLeave = () => { clearTimeout(this.navTimer); this.navTimer = setTimeout(() => this.setState({ navOpen: false }), 1500); };
   setPeriod = e => this.setState({ period: e.target.value }, () => this.load());
@@ -2867,9 +3004,11 @@ class Component extends DCLogic {
       { id: 'map', label: 'Customer map', tag: '07', kicker: 'Customer base', title: 'Customer locations', sub: 'Every account with coordinates in the customer sheet, plotted on OpenStreetMap by current status and package, with field technicians from Traccar. Follows the branch filter; the period filter does not apply.' },
       { id: 'dispatch', label: 'IDS · WWR wiredown', tag: '08', kicker: 'Intelligence Dispatch System', title: 'IDS · WWR wiredown', sub: 'Open WWR work orders grouped into fixed grid cells. Each cell is coloured and ranked by the total priority score of its jobs, with the number of teams it needs and how long the work takes. Teams go to the highest-scoring cells first, on road drive times. Follows the branch filter; the period filter does not apply.' },
       { id: 'dispatchWcm', label: 'IDS · WCM maintenance', tag: '09', kicker: 'Intelligence Dispatch System', title: 'IDS · WCM maintenance', sub: 'Open WCM work orders, planned separately from wiredown with their own teams, grid priorities and board. Follows the branch filter; the period filter does not apply.' },
+      { id: 'roles', label: 'Role management', tag: '11', kicker: 'Access', title: 'Role management', sub: 'Give dispatchers and other colleagues their own access key and choose which menus they see. Only admins can open this page.' },
+      { id: 'none', label: 'No access', tag: '—', kicker: 'Access', title: 'No menus yet', sub: 'Your access key works, but no menus have been given to it yet.' },
       { id: 'settings', label: 'Tracking setup', tag: '10', kicker: 'Field team', title: 'Tracking setup', sub: 'Connect the dashboard to your own Traccar server. Settings are saved in this browser; demo data runs until a server is connected.' },
     ];
-    const view = views.find(v => v.id === S.view) || views[0];
+    const view = views.find(v => v.id === S.view) || (S.me ? views.find(v => v.id === this.firstView()) : null) || views[0];
     const key = this.key(S.view);
     const payload = S.data[key];
     let built = { kpis: [], cards: [] };
@@ -2902,13 +3041,15 @@ class Component extends DCLogic {
             dispatch: () => this.dispatchView(payload),
             dispatchWcm: () => this.dispatchView(payload),
             settings: () => this.settingsView(),
+            roles: () => this.rolesView(payload),
+            none: () => ({ kpis: [], cards: [this.card('No menus yet', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: '#3A3A37' } }, 'Ask the dashboard admin to give your access key one or more menus in Role management, then press Re-sync data.') })] }),
           })[S.view]();
           const at = { tickets: 1, csat: 2 }[S.view];
           if (at != null) built.cards.splice(at, 0, ...(S.view === 'overview'
             ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
             : [this.opsCompareCard(S.view, 12)]));
           if (S.view === 'growth' || S.view === 'intracity') built.cards.splice(1, 0, this.growthCompareCard(payload, this.seg(S.view), 12));
-          if (S.view !== 'overview' && S.view !== 'settings' && !payload.error) {
+          if (S.view !== 'overview' && S.view !== 'settings' && S.view !== 'roles' && S.view !== 'none' && this.isAdmin() && !payload.error) {
             const ready = !built.cards.some(c => c && /^loading/i.test(String(c.meta || '')));
             const facts = ready ? this.pageFacts(view, built) : null;
             const sig = facts ? S.view + '-' + this.hashStr(JSON.stringify(facts)) : null;
@@ -2936,7 +3077,8 @@ class Component extends DCLogic {
     const sync = D && D.stats.lastSync ? D.stats.lastSync : null;
     return {
       nav: (() => {
-        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity'], ['churnRisk', 'Churn risk']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchWcm', 'WCM · maintenance']]], ['settings']];
+        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity'], ['churnRisk', 'Churn risk']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchWcm', 'WCM · maintenance']]], ['settings'], ['roles']]
+          .map(g => g[1] ? [g[0], g[1].filter(c => this.canSee(c[0]))] : g).filter(g => g[1] ? g[1].length : this.canSee(g[0]));
         const by = id => views.find(v => v.id === id), og = S.navGroups || {};
         return G.map((g, i) => {
           const tag = String(i + 1).padStart(2, '0');
@@ -2948,6 +3090,7 @@ class Component extends DCLogic {
         });
       })(),
       navEnter: this.navEnter, navLeave: this.navLeave,
+      meName: S.me ? S.me.name + ' · ' + (S.me.role === 'admin' ? 'Admin' : 'Dispatcher') : '', onLogout: this.logout,
       navX: S.navOpen ? 'translateX(0)' : 'translateX(-196px)', navShadow: S.navOpen ? '4px 0 18px rgba(0,0,0,0.10)' : 'none',
       viewTitle: view.title, viewSub: view.sub,
       viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),

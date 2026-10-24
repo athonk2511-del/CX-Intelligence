@@ -53,6 +53,9 @@ const BASES = [
 // Bumped when the built-in hubs change: saved Bali hub lists are replaced by the built-in ones and team hub assignments are
 // cleared once (hub numbers change), so every browser starts from the same official hubs.
 const HUB_V = '2026-10-24b';
+// Settings that stay in this browser (view preferences and migration markers); everything else is shared.
+const LOCAL_CFG = ['branch', 'cellA', 'routeA', 'defV', 'hubV'];
+const POLL_MS = 10000;
 // Tourist centres in Bali, approximate. Within tR km of one of these, drives get the tourist traffic factor. Assumption to be
 // calibrated against real Traccar drive times.
 const TOURIST = [
@@ -144,6 +147,10 @@ class Dispatch {
     this.road = new Road(fin => this.roadTick(fin));
     this.ui = { settings: false, drag: null, drop: null, armed: false, msg: null, draft: null, nextAll: false, cellsAll: false };
     this.ver = 1; this._rq = new Set(); this._tq = new Set();
+    // Shared plan: set by the host (api = { get(type, since), post(body) }); without it the plan stays in this browser.
+    this.api = null; this.user = ''; this.active = false; this.dataAt = 0;
+    this.shInit();
+    this._poll = setInterval(() => this.shPoll(false), POLL_MS);
     // Hook for the technician mobile app: window.GXIDS.WWR.event({ app | team, type, time, note }).
     if (typeof window !== 'undefined') { window.GXIDS = window.GXIDS || {}; window.GXIDS[this.type] = { event: o => this.appEvent(o), types: ['break_start', 'break_end', 'problem_start', 'problem_end'] }; }
     this._tick = setInterval(() => { const P = this._ctx && this._ctx.P; if (P && Object.values(P.ev || {}).some(l => l.some(e => e.end == null))) { this.ver++; this.onChange(); } }, 60000);
@@ -166,16 +173,167 @@ class Dispatch {
     cfg.bases = { ...((s.cfg || {}).bases || {}) };
     return { cfg, plans: s.plans || {}, meta: s.meta || {}, log: Array.isArray(s.log) ? s.log.slice(0, 200) : [] };
   }
-  save() { store.save(this.LS, this.st); }
+  save() {
+    store.save(this.LS, this.st);
+    if (this.sh && this.sh.on) { clearTimeout(this._pushT); this._pushT = setTimeout(() => this.shPush(), 400); }
+  }
   changed(msg) { if (msg) this.note(msg); this.ver++; this.save(); this.onChange(); }
   note(msg) {
     const d = new Date();
-    this.st.log.unshift({ t: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()), msg });
+    this.st.log.unshift({ id: d.getTime().toString(36) + Math.random().toString(36).slice(2, 7), at: d.getTime(), by: this.user || '', t: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()), msg });
     this.st.log = this.st.log.slice(0, 200);
   }
   tn(n) { const v = (this.st.cfg.names || [])[n]; return v && String(v).trim() ? String(v).trim() : 'Team ' + (n + 1); }
-  setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; this.ver++; this.save(); this.onChange(); }
+  setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; if (this.ui.draft) { const b = (this.ui.draft.names || []).slice(); b[n] = a[n]; this.ui.draft.names = b; } this.ver++; this.save(); this.onChange(); }
   meta(key) { return this.st.meta[key] || (this.st.meta[key] = { conf: 'none', stat: 'none', aging: [] }); }
+
+  /* ---------- shared plan (Apps Script) ----------
+     The plan is split into parts: 'cfg' (settings shared by everyone), 'plan:<branch>' and 'meta:<WO>' (confirmation,
+     technician status, aging). sh.snap holds the JSON of each part as last agreed with the server, sh.revs its server
+     revision. A part whose JSON differs from its snapshot is an unsent change. Changes are sent with the revision they
+     were made on; the server refuses a part that someone else changed in the meantime (a conflict), and this screen then
+     shows their version. Every screen polls for changes every few seconds. */
+  shInit() { this.sh = { on: false, ready: false, unsupported: false, rev: null, revs: {}, snap: {}, logSent: new Set(), busy: false, dirty: false, err: null, msg: null, at: 0, by: '', lastOk: 0 }; }
+  sharedCfg(c) { const o = { ...c }; LOCAL_CFG.forEach(k => { delete o[k]; }); return o; }
+  localParts() {
+    const out = { cfg: JSON.stringify(this.sharedCfg(this.st.cfg)) };
+    Object.keys(this.st.plans).forEach(n => { out['plan:' + n] = JSON.stringify(this.st.plans[n]); });
+    Object.keys(this.st.meta).forEach(k => { out['meta:' + k] = JSON.stringify(this.st.meta[k]); });
+    return out;
+  }
+  serverParts(ids) {
+    const out = {};
+    if (ids.cfg) out.cfg = JSON.stringify(ids.cfg);
+    Object.keys(ids.plans || {}).forEach(n => { out['plan:' + n] = JSON.stringify(ids.plans[n]); });
+    Object.keys(ids.meta || {}).forEach(k => { out['meta:' + k] = JSON.stringify(ids.meta[k]); });
+    return out;
+  }
+  hasUnsent() {
+    const cur = this.localParts(), sn = this.sh.snap;
+    if (Object.keys(cur).some(id => cur[id] !== sn[id]) || Object.keys(sn).some(id => !(id in cur) && id !== 'cfg')) return true;
+    return this.st.log.some(e => e.id && !this.sh.logSent.has(e.id));
+  }
+  setPart(id, json) {
+    const v = json == null ? null : JSON.parse(json);
+    if (id === 'cfg') {
+      if (!v) return;
+      const keep = {}; LOCAL_CFG.forEach(k => { if (k in this.st.cfg) keep[k] = this.st.cfg[k]; });
+      this.st.cfg = { ...DEF, ...v, dur: { ...DEF.dur, ...(v.dur || {}) }, bases: { ...(v.bases || {}) }, ...keep };
+    } else if (id.startsWith('plan:')) { const n = id.slice(5); if (v) this.st.plans[n] = v; else delete this.st.plans[n]; }
+    else if (id.startsWith('meta:')) { const k = id.slice(5); if (v) this.st.meta[k] = v; else delete this.st.meta[k]; }
+  }
+  mergeLog(server) {
+    const sh = this.sh, ids = new Set((server || []).map(e => e.id));
+    (server || []).forEach(e => sh.logSent.add(e.id));
+    const mine = this.st.log.filter(e => e.id && !ids.has(e.id) && !sh.logSent.has(e.id));
+    this.st.log = mine.concat(server || []).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 200);
+  }
+  afterSync(ids) {
+    const sh = this.sh;
+    sh.rev = ids.rev || 0; sh.at = ids.at || 0; sh.by = ids.by || ''; sh.lastOk = Date.now(); sh.err = null;
+    this._jobs = null; this._need = null; this._zone = null; this._zf = null; this._layer = null;
+    store.save(this.LS, this.st); this.ver++;
+  }
+  // First contact: the server plan replaces whatever this browser had (an empty server is seeded from this browser).
+  shTakeAll(ids) {
+    const sh = this.sh, srv = this.serverParts(ids);
+    this.st.plans = {}; this.st.meta = {};
+    Object.keys(srv).forEach(id => this.setPart(id, srv[id]));
+    sh.snap = { ...srv }; sh.revs = { ...(ids.revs || {}) };
+    this.st.log = []; this.mergeLog(ids.log);
+    this.afterSync(ids);
+  }
+  // Merge a newer server plan. sent = the parts this screen just sent (JSON), conflicts = parts the server refused.
+  shApply(ids, sent, conflicts, ops) {
+    const sh = this.sh, cur = this.localParts(), srv = this.serverParts(ids), cf = new Set(conflicts || []), lost = [];
+    const all = new Set([...Object.keys(srv), ...Object.keys(cur), ...Object.keys(sh.snap)]);
+    all.forEach(id => {
+      const local = cur[id] ?? null, server = srv[id] ?? null, rev = (ids.revs || {})[id] || 0, wasSent = !!sent && Object.prototype.hasOwnProperty.call(sent, id);
+      if (wasSent && !cf.has(id)) {
+        if (local !== sent[id]) { sh.snap[id] = sent[id] ?? undefined; if (sent[id] == null) delete sh.snap[id]; sh.revs[id] = rev; return; } // edited again since: keep it
+      } else if (!wasSent && local !== (sh.snap[id] ?? null)) return; // a local change not sent yet: keep it
+      if (cf.has(id) && local !== server) lost.push(id);
+      if (id === 'cfg' && server == null) return;
+      this.setPart(id, server);
+      if (server == null) { delete sh.snap[id]; delete sh.revs[id]; } else { sh.snap[id] = server; sh.revs[id] = rev; }
+    });
+    this.mergeLog(ids.log);
+    this.afterSync(ids);
+    const replayable = new Set((ops || []).map(o => 'plan:' + o.plan));
+    const shown = lost.filter(id => !replayable.has(id));
+    if (shown.length) {
+      const what = shown.map(id => id === 'cfg' ? 'the settings' : id.startsWith('plan:') ? 'the ' + id.slice(5) + ' plan' : 'work order ' + id.slice(5));
+      sh.msg = { at: Date.now(), text: (ids.by ? ids.by : 'Someone') + ' changed ' + [...new Set(what)].join(', ') + ' at the same time. Their version is shown; redo your change if it is still needed.' };
+    }
+    return lost;
+  }
+  // Re-apply this screen's card moves on top of the plan someone else just saved.
+  replay(ops, lost) {
+    const J = this._J, done = [], skipped = [];
+    this._replaying = true;
+    try {
+      ops.forEach(o => {
+        if (lost.indexOf('plan:' + o.plan) === -1) return;
+        const P = this.st.plans[o.plan], j = J && J.by.get(o.key);
+        if (!P || !j || this.locked(j) || (o.dest !== 'next' && !P.teams[o.dest])) { skipped.push(o.key); return; }
+        const list = (o.dest === 'next' ? P.next : P.teams[o.dest]).filter(k => k !== o.key);
+        let idx = o.before ? list.indexOf(o.before) : list.length;
+        if (idx < 0) idx = o.idx == null ? list.length : Math.min(o.idx, list.length);
+        this.move(P, o.key, o.dest, idx, (j.wo || o.key) + ' move re-applied after a simultaneous change by ' + (this.sh.by || 'someone') + '.');
+        done.push(o.key);
+      });
+    } finally { this._replaying = false; }
+    if (skipped.length) this.sh.msg = { at: Date.now(), text: (this.sh.by || 'Someone') + ' changed the plan at the same time. ' + skipped.length + ' of your moves could not be re-applied (job started or gone); check the board.' };
+    else if (done.length) this.sh.msg = { at: Date.now(), text: 'Merged with ' + (this.sh.by || 'someone') + '\u2019s change made at the same time; your ' + (done.length === 1 ? 'move was' : done.length + ' moves were') + ' re-applied.' };
+  }
+  shPush() {
+    const sh = this.sh;
+    if (!this.api || !sh.on) return;
+    if (sh.busy) { sh.dirty = true; return; }
+    const cur = this.localParts(), parts = {}, base = {}, sent = {};
+    new Set([...Object.keys(cur), ...Object.keys(sh.snap)]).forEach(id => {
+      const l = cur[id] ?? null;
+      if (l === (sh.snap[id] ?? null) || (id === 'cfg' && l == null)) return;
+      parts[id] = l == null ? null : JSON.parse(l); base[id] = sh.revs[id] || 0; sent[id] = l;
+    });
+    const log = this.st.log.filter(e => e.id && !sh.logSent.has(e.id)).map(e => ({ id: e.id, at: e.at, t: e.t, msg: e.msg }));
+    if (!Object.keys(parts).length && !log.length) return;
+    sh.busy = true; sh.dirty = false;
+    const ops = (sh.ops || []).splice(0);
+    this.api.post({ type: this.type, base, parts, log }).then(out => {
+      log.forEach(e => sh.logSent.add(e.id));
+      const lost = this.shApply(out.ids, sent, out.conflicts, ops);
+      if (lost.length) this.replay(ops, lost);
+    }).catch(err => { sh.err = err.message || String(err); sh.dirty = true; sh.ops = ops.concat(sh.ops || []); })
+      .finally(() => { sh.busy = false; this.onChange(); if (sh.dirty) { clearTimeout(this._pushT); this._pushT = setTimeout(() => this.shPush(), sh.err ? 8000 : 50); } });
+  }
+  shPoll(force) {
+    const sh = this.sh;
+    if (!this.api || sh.busy || sh.unsupported) return;
+    if (!force && (!this.active || (typeof document !== 'undefined' && document.visibilityState === 'hidden'))) return;
+    if (this._polling) return;
+    this._polling = true;
+    this.api.get(this.type, sh.rev).then(ids => {
+      if (!ids) { sh.unsupported = true; sh.ready = true; return; }
+      const first = sh.rev === null;
+      sh.on = true; sh.ready = true;
+      if (first) { if ((ids.rev || 0) === 0) { sh.rev = 0; sh.lastOk = Date.now(); this.shPush(); } else this.shTakeAll(ids); }
+      else if (!ids.same) this.shApply(ids);
+      else { sh.lastOk = Date.now(); sh.err = null; }
+      if (!sh.busy && this.hasUnsent()) this.shPush();
+    }).catch(err => { sh.err = err.message || String(err); sh.ready = true; })
+      .finally(() => { this._polling = false; this.onChange(); });
+  }
+  syncText() {
+    const sh = this.sh;
+    if (!this.api) return null;
+    if (sh.unsupported) return ['warn', 'This plan is saved in this browser only. Update the Apps Script proxy (ROLE_SETUP.md, step 1) to share it.'];
+    if (!sh.on) return sh.err ? ['bad', 'Shared plan not reachable: ' + sh.err + '. Changes stay on this screen until it is back.'] : ['muted', 'Connecting to the shared plan…'];
+    const t = sh.at ? new Date(sh.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    if (sh.err) return ['bad', 'Shared plan offline (' + sh.err + '). Your changes are kept and will be sent when it is back.'];
+    if (sh.busy || this.hasUnsent()) return ['muted', 'Shared plan · saving…'];
+    return ['good', 'Shared plan · everyone sees the same board · last change ' + (t || '—') + (sh.by ? ' by ' + sh.by : '')];
+  }
 
   /* ---------- jobs from the map data ---------- */
   branchIdx(m, hostBi) {
@@ -481,6 +639,7 @@ class Dispatch {
     if (!P) {
       P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: this.nowMin() >= this.st.cfg.rebAt ? day : null };
       this.autoPlan(P, J, B, false);
+      P.dataAt = this.dataAt || 0; P.gone = {};
       this.note(this.type + ' plan for ' + name + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
       this.save();
       return P;
@@ -488,11 +647,22 @@ class Dispatch {
     if (!Array.isArray(P.tb)) P.tb = P.teams.map(() => 0);
     if (!Array.isArray(P.role)) P.role = P.teams.map((t, i) => P.home[i] ? 'anchor' : null);
     const known = new Set([...P.teams.flat(), ...P.next]);
-    let drop = false;
-    P.teams = P.teams.map(t => t.filter(k => J.by.has(k) || !(drop = true)));
-    P.next = P.next.filter(k => J.by.has(k) || !(drop = true));
+    // Work orders that this screen's data does not have (unknown) or has but the plan does not (fresh). When the plan was
+    // last built from newer data than this screen holds, this screen reloads its data first instead of changing the plan,
+    // so an older screen never removes new work orders or brings back closed ones.
+    const gone = P.gone || (P.gone = {});
+    const unknown = [...known].filter(k => !J.by.has(k));
+    const fresh = J.list.filter(j => !known.has(j.key) && !gone[j.key]);
+    this.behind = (unknown.length > 0 || fresh.length > 0) && (P.dataAt || 0) > (this.dataAt || 0) + 60000 && !this.skewOK;
+    if (this.behind) return P;
+    let drop = unknown.length > 0;
+    const now = Date.now();
+    unknown.forEach(k => { gone[k] = now; });
+    Object.keys(gone).forEach(k => { if (now - gone[k] > 3 * 864e5) delete gone[k]; });
+    P.teams = P.teams.map(t => t.filter(k => J.by.has(k)));
+    P.next = P.next.filter(k => J.by.has(k));
     P.teams.forEach((t, i) => { if (!t.length) P.home[i] = null; });
-    const fresh = J.list.filter(j => !known.has(j.key));
+    if (drop || fresh.length) P.dataAt = Math.max(P.dataAt || 0, this.dataAt || 0);
     if (fresh.length) {
       fresh.sort(this.cmp).forEach(j => { if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
       this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan.');
@@ -619,6 +789,7 @@ class Dispatch {
     rest3k.concat(overk, orphan).forEach(k => { P.why[k] = 'internal'; });
     hold.forEach(k => { P.why[k] = 'customer'; });
     P.next = rest3k.concat(overk, orphan, hold);
+    P.dataAt = Math.max(P.dataAt || 0, this.dataAt || 0);
     if (orphan.length) this.note(orphan.length + ' started job' + (orphan.length > 1 ? 's' : '') + ' belonged to a removed team; moved to H+1 for the dispatcher to reassign.');
   }
   // Walk a route in order. A job not yet started that no longer fits the working day is dropped; started jobs always stay.
@@ -754,6 +925,8 @@ class Dispatch {
   move(P, key, dest, idx, label) {
     const J = this._J, j = J.by.get(key);
     if (!j || this.locked(j)) return;
+    // Remembered until the server has it, so it can be re-applied on top of someone else's simultaneous change.
+    if (this.sh && this.sh.on) (this.sh.ops = this.sh.ops || []).push({ plan: this._ctx && this._ctx.name, key, dest, idx, before: this.neighbour(P, key, dest, idx) });
     const from = P.next.includes(key) ? 'H+1' : this.tn(P.teams.findIndex(t => t.includes(key)));
     P.teams = P.teams.map(t => t.filter(k => k !== key));
     P.next = P.next.filter(k => k !== key);
@@ -767,7 +940,20 @@ class Dispatch {
     const to = dest === 'next' ? 'H+1' : this.tn(dest);
     this.changed(label || (j.wo + ' (' + (j.uid || j.cid) + ') ' + (from === to ? 'moved to position ' + (list.indexOf(key) + 1) + ' in ' + to : 'moved from ' + from + ' to ' + to) + (dest === 'next' ? ', reason ' + P.why[key] : '') + '.'));
   }
+  // The job that will follow a moved job, so the move can be re-applied at the same spot in a changed route.
+  neighbour(P, key, dest, idx) {
+    const list = (dest === 'next' ? P.next : P.teams[dest] || []).filter(k => k !== key);
+    const i = Math.max(0, Math.min(idx == null ? list.length : idx, list.length));
+    return list[i] || null;
+  }
+  // Position right after the started (locked) jobs at the front of a team's route: the team's next stop.
+  nextSlot(P, t, key) {
+    const ids = (P.teams[t] || []).filter(k => k !== key);
+    let n = 0; while (n < ids.length && (j => !!j && this.locked(j))(this._J.by.get(ids[n]))) n++;
+    return n;
+  }
   replan() {
+    if (this.behind) return;
     if (!this.ui.armed) { this.ui.armed = true; clearTimeout(this._arm); this._arm = setTimeout(() => { this.ui.armed = false; this.onChange(); }, 4000); this.onChange(); return; }
     clearTimeout(this._arm); this.ui.armed = false;
     const { P, B } = this._ctx;
@@ -810,8 +996,15 @@ class Dispatch {
     const BS = this._BS = this.bases(m, bi, J), B = BS[0];
     this.ensureRoad(J, B);
     this._ctx = { m, bi, B, name: m.branches[bi] };
+    const note = (title, text, tone) => ({ kpis: [], cards: [host.card(title, { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: tone || C.text } }, text) })] });
+    // Wait for the shared plan before showing (or changing) anything, so this screen never starts from an old plan.
+    if (this.api && !this.sh.ready) { this.shPoll(true); return note('Shared plan', 'Loading the shared ' + this.type + ' plan…', C.muted); }
     const P = this.plan(m, bi, J, B);
     this._ctx.P = P;
+    if (this.behind) {
+      if (host.idsBehind) host.idsBehind();
+      return note('Shared plan', 'Someone updated the plan with newer work orders than this screen has loaded. Loading the latest data, then the board appears…', C.muted);
+    }
     if (cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt) {
       P.reb = P.date;
       if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, J, B, true); this.note('Rebalance ' + hm(cfg.rebAt) + ': plan re-run on the current spread of open WO. Locked jobs and customer reschedules kept.'); }
@@ -870,8 +1063,18 @@ class Dispatch {
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
         btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
         btn('td', 'Tidy all routes', () => { P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i), P.ret) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
-        btn('st', this.ui.settings ? 'Hide settings ▴' : 'Settings ▾', () => { this.ui.settings = !this.ui.settings; if (this.ui.settings) this.ui.draft = JSON.parse(JSON.stringify(cfg)); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
+        btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { this.ui.settings = !this.ui.settings; if (this.ui.settings) this.ui.draft = JSON.parse(JSON.stringify(cfg)); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
       ]),
+      ...(() => {
+        const st = this.syncText(), msg = this.sh.msg && Date.now() - this.sh.msg.at < 120000 ? this.sh.msg : null;
+        if (!st && !msg) return [];
+        const tone = { good: C.good, bad: C.bad, warn: C.warn, muted: C.muted };
+        return [row('Shared', [
+          st ? e('span', { key: 'sy', style: { display: 'flex', alignItems: 'center', gap: 6, font: SANS, color: tone[st[0]] } }, st[0] === 'good' ? e('span', { style: { width: 7, height: 7, borderRadius: '50%', background: C.good, flex: 'none' } }) : null, st[1]) : null,
+          msg ? e('span', { key: 'cf', style: { display: 'flex', alignItems: 'center', gap: 8, padding: '3px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.warnBg, font: SANS, color: C.warn } }, msg.text,
+            e('button', { type: 'button', onClick: () => { this.sh.msg = null; this.onChange(); }, style: { border: 'none', background: 'none', color: C.warn, cursor: 'pointer', font: MONO } }, '×')) : null,
+        ], 'sync')];
+      })(),
       row('Road', [e('span', { key: 'rs', style: { font: SANS, color: rd.err && !rd.m.size && cfg.roadOn ? C.bad : busy ? C.warn : C.muted } }, roadTxt + (P.prov ? ' · plan is provisional until road times load' : ''))]),
       this.ui.settings ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
@@ -903,10 +1106,12 @@ class Dispatch {
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: this.board(e, P, T, B, pill, col),
-        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. Drive times marked "est." are straight-line estimates. Plans are saved in this browser for now.',
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];
+    // Dispatchers (non-admin): the map and the dispatch board only; team setup opens from the map controls.
+    if (this.limited) return { kpis: [], cards: [cards[0], cards[2]] };
     return { kpis, cards };
   }
 
@@ -928,11 +1133,26 @@ class Dispatch {
       pill(t.ids.length ? t.ids.length + ' jobs' : 'Idle', t.ids.length ? 'good' : null),
       t.rows.map((r, i) => this.cardEl(e, P, r.j, r, n, i, pill)), P));
     });
-    const shown = this.ui.nextAll ? P.next : P.next.slice(0, 60);
-    cols.push(this.column(e, 'next', 'Defer to H+1', '#D9480F', [e('span', { key: 'nx', style: { font: SANS, color: C.warn } }, 'Internal reasons add aging +' + AGING + ' tomorrow. Customer requests do not.')],
-      pill(P.next.length + ' jobs', 'warn'),
-      shown.map((k, i) => this.cardEl(e, P, J.by.get(k), null, 'next', i, pill)).concat(P.next.length > shown.length ? [e('button', { key: 'more', type: 'button', onClick: () => { this.ui.nextAll = true; this.onChange(); }, style: { padding: '6px', border: '1px dashed ' + C.warnLine, borderRadius: 3, background: 'transparent', font: SANS, color: C.warn, cursor: 'pointer' } }, 'Show all ' + P.next.length)] : []), P, true));
-    return e('div', { style: { display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6, alignItems: 'flex-start' } }, ...cols);
+    // H+1 sits first and stays in view while the board scrolls, so a deferred job can be dragged into any team.
+    const q = String(this.ui.nextQ || '').trim().toLowerCase();
+    const hit = k => { if (!q) return true; const j = J.by.get(k); return !!j && [j.wo, j.cid, j.uid, j.name, j.area, j.prob, j.cat, j.tier].some(v => String(v || '').toLowerCase().includes(q)); };
+    const found = P.next.filter(hit), shown = this.ui.nextAll || q ? found : found.slice(0, 60);
+    const search = e('input', { key: 'nq', type: 'search', value: this.ui.nextQ || '', placeholder: 'Find WO, CID, UID, name…', 'aria-label': 'Find a deferred job',
+      onChange: ev => { this.ui.nextQ = ev.target.value; this.onChange(); },
+      style: { width: '100%', boxSizing: 'border-box', padding: '5px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.white, color: C.ink, font: SANS, outline: 'none' } });
+    const nextCol = this.column(e, 'next', 'Defer to H+1', '#D9480F', [
+        e('span', { key: 'nx', style: { font: SANS, color: C.warn } }, 'Internal reasons add aging +' + AGING + ' tomorrow. Customer requests do not.'),
+        e('span', { key: 'nx2', style: { font: SANS, color: C.muted } }, 'Drag a card into any team, or use Move to.'),
+        search],
+      pill((q ? found.length + ' of ' : '') + P.next.length + ' jobs', 'warn'),
+      shown.map(k => this.cardEl(e, P, J.by.get(k), null, 'next', P.next.indexOf(k), pill)).concat(!q && P.next.length > shown.length ? [e('button', { key: 'more', type: 'button', onClick: () => { this.ui.nextAll = true; this.onChange(); }, style: { padding: '6px', border: '1px dashed ' + C.warnLine, borderRadius: 3, background: 'transparent', font: SANS, color: C.warn, cursor: 'pointer' } }, 'Show all ' + P.next.length)] : []), P, true);
+    const edge = ev => {
+      if (!this.ui.drag) return;
+      const el = ev.currentTarget, r = el.getBoundingClientRect(), x = ev.clientX;
+      if (x > r.right - 80) el.scrollLeft += 28;
+      else if (x < r.left + 288 + 60 && el.scrollLeft > 0) el.scrollLeft -= 28;
+    };
+    return e('div', { onDragOverCapture: edge, style: { display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6, alignItems: 'flex-start' } }, nextCol, ...cols);
   }
 
   baseRow(e, P, n, home) {
@@ -953,7 +1173,8 @@ class Dispatch {
         b('br', br ? 'End break' : 'Break', !!br, () => br ? this.endEv(P, n, 'break') : this.startEv(P, n, 'break')),
         b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem'))),
       ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.end == null ? C.bad : C.muted } },
-        (x.type === 'break' ? 'Break ' : 'Problem ') + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + x.src)));
+        x.planned ? 'Lunch ' + hm(x.at) + '–' + hm(x.end) + ' · ' + Math.round(this.evDur(x)) + ' min · planned'
+          : (x.type === 'break' ? 'Break ' : 'Problem ') + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + (x.src || 'dispatcher'))));
   }
   nameInput(e, n) {
     return e('input', { key: 'nm' + n + '|' + this.tn(n), type: 'text', defaultValue: this.tn(n), placeholder: 'Team ' + (n + 1), title: 'Team name: click to edit',
@@ -965,7 +1186,7 @@ class Dispatch {
     const drop = this.ui.drop, active = drop && drop.col === id;
     const onDragOver = ev => { if (!this.ui.drag) return; ev.preventDefault(); if (!cards.length || ev.target === ev.currentTarget) this.setDrop(id, cards.length); };
     const onDrop = ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); };
-    return e('div', { key: 'col' + id, style: { flex: '0 0 288px', display: 'flex', flexDirection: 'column', background: warn ? C.warnBg : C.paper, border: '1px solid ' + (active ? C.ink : warn ? C.warnLine : C.line), borderRadius: 3 } },
+    return e('div', { key: 'col' + id, style: { flex: '0 0 288px', display: 'flex', flexDirection: 'column', background: warn ? C.warnBg : C.paper, border: '1px solid ' + (active ? C.ink : warn ? C.warnLine : C.line), borderRadius: 3, ...(warn ? { position: 'sticky', left: 0, zIndex: 3, boxShadow: '6px 0 10px -6px rgba(0,0,0,0.18)', maxHeight: 900, overflowY: 'auto' } : {}) } },
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '9px 10px', borderBottom: '1px solid ' + (warn ? C.warnLine : C.line) } },
         e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
           e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: C.ink } },
@@ -991,7 +1212,7 @@ class Dispatch {
       ...Object.entries(opts).map(([k, v]) => e('option', { key: k, value: k }, v)));
     const mini = (key, label, onClick, title) => e('button', { key, type: 'button', onClick, title, style: { padding: '2px 7px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO, cursor: 'pointer' } }, label);
     const nT = P.teams.length;
-    const moveOpts = { '': 'Move to…' }; for (let n = 0; n < nT; n++) moveOpts[n] = this.tn(n) + (P.home[n] ? ' · ' + this.M.cellLabel(P.home[n]) : ''); moveOpts.next = 'Defer H+1';
+    const moveOpts = { '': 'Move to…' }; for (let n = 0; n < nT; n++) { const at = P.home[n] ? ' · ' + this.M.cellLabel(P.home[n]) : ''; moveOpts[n + ':next'] = this.tn(n) + at + ' · next stop'; moveOpts[n + ':last'] = this.tn(n) + at + ' · last stop'; } if (colId !== 'next') moveOpts.next = 'Defer H+1';
     const chips = [pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
       pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', CATS[j.cat].lvl === 'Critical' ? 'bad' : CATS[j.cat].lvl === 'High' ? 'warn' : null, 'c'),
       pill(this.cellName(j), null, 'g')];
@@ -1036,7 +1257,7 @@ class Dispatch {
           sel('stat', mt.stat || 'none', STAT, ev => { this.meta(j.key).stat = ev.target.value; this.changed(j.wo + ': technician status ' + STAT[ev.target.value] + (ev.target.value !== 'none' ? ' (locked)' : '') + '.'); }, 'Technician status'),
           lk ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
           lk ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
-          lk ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; this.move(P, j.key, v === 'next' ? 'next' : +v, null); }, 'Move to'),
+          lk ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
           mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))));
   }
 
@@ -1069,7 +1290,7 @@ class Dispatch {
     if (!L.length) return e('div', { style: { font: SANS, color: C.muted } }, 'No changes yet.');
     return e('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' } },
       ...L.slice(0, 80).map((l, n) => e('div', { key: n, style: { display: 'grid', gridTemplateColumns: '92px minmax(0,1fr)', gap: 8, font: "400 12.5px/1.5 'IBM Plex Sans',system-ui,sans-serif", color: C.text, paddingBottom: 6, borderBottom: '1px solid ' + C.soft } },
-        e('span', { style: { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, l.t), e('span', null, l.msg))));
+        e('span', { style: { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, l.t), e('span', null, l.by ? e('strong', { style: { fontWeight: 600, color: C.ink } }, l.by + ': ') : null, l.msg))));
   }
 
   settings(e, row, chip, btn) {
@@ -1083,17 +1304,14 @@ class Dispatch {
     const name = m.branches[bi];
     const bl = this.draftBases(d, name), setB = () => { d.bases = { ...d.bases, [name]: bl }; this.onChange(); };
     const tx = { padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO };
-    return e('div', { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } },
-      row('Scope', [lab('Open orders from the last', 'l1'), num('maxAge', 60), lab('days', 'l2'),
-        chip('sb', d.blocked, 'Include Blocked accounts', null, null, () => set('blocked', !d.blocked)),
-        chip('sp', d.prog, 'Include In Progress orders', null, null, () => set('prog', !d.prog))]),
-      row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('Cell size', 'l5'),
-        ...[1, 2, 3, 5].map(v => chip('gk' + v, d.gridKm === v, v + ' km', null, null, () => set('gridKm', v)))]),
-      ...Array.from({ length: Math.max(1, Math.round(+d.teams || 1)) }, (_, n) => {
+    const crewRows = Array.from({ length: Math.max(1, Math.round(+d.teams || 1)) }, (_, n) => {
         const cr = (d.crew || [])[n] || {}, upd = p => { const a = (d.crew || []).slice(); a[n] = { ...(a[n] || {}), ...p }; d.crew = a; this.onChange(); };
         const st = isFinite(cr.start) && cr.start !== '' ? +cr.start : d.start;
+        const nm = (d.names || [])[n] || '';
         return row(n ? '' : 'Crew', [
-          e('span', { key: 'cn', style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 110 } }, this.tn(n)),
+          e('input', { key: 'cn', type: 'text', value: nm, placeholder: 'Team ' + (n + 1), 'aria-label': 'Team ' + (n + 1) + ' name', maxLength: 40,
+            onChange: ev => { const a = (d.names || []).slice(); a[n] = ev.target.value; d.names = a; this.onChange(); },
+            style: { ...tx, width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif" } }),
           e('select', { key: 'cb', value: cr.base || 0, onChange: ev => upd({ base: +ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, maxWidth: 260 } },
             ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Hub ' + (k + 1)) + (k === 0 ? ' (default)' : '')))),
           lab('Shift start', 'cs' + n),
@@ -1103,7 +1321,21 @@ class Dispatch {
           lab('App ID', 'ca' + n),
           e('input', { key: 'cap', type: 'text', defaultValue: cr.app || '', placeholder: 'technician app / device ID', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
         ], 'crew' + n);
-      }),
+      });
+    const actions = row('', [btn('ap', 'Apply and re-plan', () => this.apply(), true), btn('cx', 'Cancel', () => { this.ui.settings = false; this.ui.draft = null; this.onChange(); }),
+      this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act');
+    const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
+    // Dispatchers: the number of available teams and the crew (names, hub, shift, app ID) only.
+    if (this.limited) return e('div', box,
+      row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('teams today. Name each team, its hub and shift below.', 'l3b')]),
+      ...crewRows, actions);
+    return e('div', box,
+      row('Scope', [lab('Open orders from the last', 'l1'), num('maxAge', 60), lab('days', 'l2'),
+        chip('sb', d.blocked, 'Include Blocked accounts', null, null, () => set('blocked', !d.blocked)),
+        chip('sp', d.prog, 'Include In Progress orders', null, null, () => set('prog', !d.prog))]),
+      row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('Cell size', 'l5'),
+        ...[1, 2, 3, 5].map(v => chip('gk' + v, d.gridKm === v, v + ' km', null, null, () => set('gridKm', v)))]),
+      ...crewRows,
       row('Lunch', [lab('Planned lunch from', 'lu1'), time('lunchAt'), lab('for', 'lu2'), num('lunchMin', 56, 5), lab('min in the default shift; other shifts take it the same time after their start (0 = none). Replaced by the real break once the technician app reports one.', 'lu3')]),
       row('Breaks', [lab('Break estimate', 'be'), num('breakEst', 56, 5), lab('min · Problem estimate', 'pe'), num('probEst', 56, 5),
         lab('min. Used until the technician app sends the end; after that the real duration counts.', 'bx')]),
@@ -1138,8 +1370,7 @@ class Dispatch {
       ], 'base' + n)),
       row('', [btn('ab', '+ Add hub', () => { const l = bl[bl.length - 1] || { lat: -8.67, lng: 115.17 }; bl.push({ name: 'Hub ' + (bl.length + 1), lat: l.lat, lng: l.lng }); setB(); }),
         lab('Every team departs from and returns to the first (default) hub unless another hub is assigned to it under Crew or on the board. Way-back pick-ups head to the team\u2019s own hub. Removing a hub moves its teams back to the default hub. Paste coordinates from Google Maps as "lat, lng".', 'bh')], 'addb'),
-      row('', [btn('ap', 'Apply and re-plan', () => this.apply(), true), btn('cx', 'Cancel', () => { this.ui.settings = false; this.ui.draft = null; this.onChange(); }),
-        btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act'));
+      actions);
   }
   apply() {
     const d = this.ui.draft; if (!d) return;
@@ -1152,7 +1383,7 @@ class Dispatch {
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
       maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
-      blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (c.names || []).slice(),
+      blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
       breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst),
       gridMin: Math.round(clean(d.gridMin, 0, 50, DEF.gridMin)), floatPct: clean(d.floatPct, 0, 50, DEF.floatPct),
