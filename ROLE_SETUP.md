@@ -55,6 +55,12 @@ The user opens the dashboard, types the key once, and sees only their menus. Dis
 - What a user may read is decided per menu: IDS and Customer map read the Customers and Tickets tabs; Tickets is always allowed because every page reads it for the period list. The Tickets tab holds full ticket rows, so a dispatcher key can read ticket data, but not CSAT, chat, FRT/RT, DotAI or human-handled tabs unless those menus are given.
 - AI consultant notes are for admins only.
 
+## Shared technician tracking
+
+- The Traccar connection an admin saves on **Tracking setup** is kept on the proxy (`GX_TRACK`) and used by every screen with Customer map or IDS. Only admins can change it.
+- An admin browser that already has a live Traccar connection shares it automatically the first time it opens the dashboard after this update.
+- The read-only Traccar token reaches the browsers of users with those menus. Use the read-only "dashboard" Traccar user with an expiry date, and generate a new token if it leaks.
+
 ## Shared IDS plan
 
 - One plan per work-order type (WWR, WCM) for everyone. Board, H+1, team names, crew, customer confirmations, technician statuses, breaks and problems are shared. Map view preferences (opacity, branch chip) stay per screen.

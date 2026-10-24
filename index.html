@@ -235,7 +235,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24b'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24c'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -1516,7 +1516,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-24d'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-24e'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -1552,7 +1552,13 @@ class Component extends DCLogic {
     this.DSP.limited = !this.isAdmin();
     Object.values(this.DSPS).forEach(d => { d.active = d === this.DSP; });
     this.DSP.dataAt = (m && m.loadedAt) || this._mapAt || (this._mapAt = Date.now());
-    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m) });
+    const T = this.track, L = T && T.link;
+    const trackLine = !T || !L ? ['muted', 'Loading technician tracking…']
+      : L.state === 'live' || L.state === 'polling' ? ['good', 'Live from Traccar · ' + T.devices.filter(d => d.state === 'online').length + ' of ' + T.devices.length + ' technicians online']
+      : L.state === 'demo' ? ['warn', 'Simulated technicians (demo), not real positions. Set a live Traccar server in Tracking setup.']
+      : L.state === 'error' ? ['bad', 'Traccar not reachable: ' + (L.msg || 'error')]
+      : ['muted', L.msg || 'Tracking off'];
+    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine });
   }
 
   mapView(m) {
@@ -1664,10 +1670,19 @@ class Component extends DCLogic {
     if (this.track) { if (this.state.data.map) this.track.setMap(this.state.data.map); return; }
     if (this.trackLoading) return;
     this.trackLoading = true;
-    import('./gxtrack.js').then(TK => {
-      this.TK = TK; this.track = new TK.TrackStore(this.D);
+    import('./gxtrack.js?v=2026-10-24a').then(TK => {
+      const shared = !!(this.D && this.D.trackGet), admin = this.isAdmin();
+      this.TK = TK; this.track = new TK.TrackStore(this.D, { wait: shared || !admin });
       this.track.subscribe(() => this.setState({ trkTick: Date.now() }));
       if (this.state.data.map) this.track.setMap(this.state.data.map); else this.track.start();
+      // One Traccar connection for every screen: the settings an admin saved on the proxy. An admin whose browser already
+      // has a live connection but the proxy has none yet publishes it once. Non-admins never see simulated technicians.
+      const T = this.track, live = c => !!(c && c.mode === 'live' && c.server && c.token);
+      (shared ? this.D.trackGet() : Promise.resolve(null)).catch(() => null).then(sh => {
+        if (live(sh)) return T.applyShared(sh);
+        if (admin && live(T.cfg)) { if (shared) this.D.trackPut(T.cfg).catch(() => {}); return T.applyShared(T.cfg); }
+        T.applyShared(admin ? T.cfg : { mode: 'none' });
+      });
       this.forceUpdate();
     }).catch(e => { this.trackLoading = false; console.warn('tracking', e); });
   }
@@ -1886,7 +1901,13 @@ class Component extends DCLogic {
       e('input', { type: 'checkbox', checked: !!dr[k], onChange: ev => setD({ [k]: ev.target.checked }), style: { accentColor: '#1F1F1D', marginTop: 3 } }),
       e('span', null, e('strong', { style: { fontWeight: 600 } }, strong), ' — ' + rest));
     const msg = this.state.tMsg;
-    const save = () => { T.saveConfig(dr); this.setState({ tDraft: null, tMsg: { ok: true, text: dr.mode === 'demo' ? 'Saved. Demo data is running.' : 'Saved. Connecting to ' + dr.server + '…' } }); };
+    const save = () => {
+      T.saveConfig(dr);
+      this.setState({ tDraft: null, tMsg: { ok: true, text: dr.mode === 'demo' ? 'Saved. Demo data is running on this screen only; other users see no technicians until a live server is set.' : 'Saved. Connecting to ' + dr.server + '…' } });
+      if (this.D.trackPut && this.isAdmin()) this.D.trackPut(dr.mode === 'live' ? T.cfg : null)
+        .then(() => { if (dr.mode === 'live') this.setState({ tMsg: { ok: true, text: 'Saved and shared: every dashboard user (Customer map and IDS) now uses ' + dr.server + '.' } }); })
+        .catch(e => this.setState({ tMsg: { ok: false, text: 'Saved on this screen, but not shared: ' + e.message } }));
+    };
     const test = async () => {
       if (dr.mode === 'demo') { this.setState({ tMsg: { ok: false, text: 'Switch the mode to Live Traccar to test a server.' } }); return; }
       if (!dr.server || !dr.token) { this.setState({ tMsg: { ok: false, text: 'Fill in the server URL and token first.' } }); return; }

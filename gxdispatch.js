@@ -1075,6 +1075,8 @@ class Dispatch {
             e('button', { type: 'button', onClick: () => { this.sh.msg = null; this.onChange(); }, style: { border: 'none', background: 'none', color: C.warn, cursor: 'pointer', font: MONO } }, '×')) : null,
         ], 'sync')];
       })(),
+      ctx.trackLine ? row('Technicians', [e('span', { key: 'tk', style: { display: 'flex', alignItems: 'center', gap: 6, font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[ctx.trackLine[0]] } },
+        ctx.trackLine[0] === 'good' ? e('span', { style: { width: 7, height: 7, borderRadius: '50%', background: C.good, flex: 'none' } }) : null, ctx.trackLine[1])], 'trk') : null,
       row('Road', [e('span', { key: 'rs', style: { font: SANS, color: rd.err && !rd.m.size && cfg.roadOn ? C.bad : busy ? C.warn : C.muted } }, roadTxt + (P.prov ? ' · plan is provisional until road times load' : ''))]),
       this.ui.settings ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },

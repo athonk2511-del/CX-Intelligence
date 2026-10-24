@@ -1593,3 +1593,21 @@ export async function idsPost(body) {
   if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Access key rejected' : out.error);
   return out;
 }
+
+/* ---------- shared live-tracking settings (Apps Script proxy) ----------
+   trackGet: the Traccar settings an admin saved for everyone, null when none (or an older proxy). trackPut: admins only. */
+export async function trackGet() {
+  if (!useProxy()) return null;
+  const k = readKey(); if (!k) return null;
+  const res = await fetch(`${PROXY_URL}?action=track&key=${encodeURIComponent(k)}`);
+  let out = null; try { out = JSON.parse(await res.text()); } catch (e) { return null; }
+  if (!out || out.error) return null;
+  return out.track || null;
+}
+export async function trackPut(cfg) {
+  const k = readKey();
+  const res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'track', key: k, cfg }) });
+  let out; try { out = JSON.parse(await res.text()); } catch (e) { throw new Error('The proxy did not answer. Update the Apps Script (roles.gs) and deploy a new version.'); }
+  if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Only an admin can change the tracking settings.' : out.error);
+  return out.track;
+}

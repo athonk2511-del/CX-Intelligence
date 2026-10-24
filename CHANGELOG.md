@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-24 (tracking for everyone)
+
+### Fixed
+
+- **Technician tracking was set per browser:** the Traccar connection lived only in the admin's browser, so dispatchers saw simulated (demo) technicians. The connection an admin saves on Tracking setup is now kept on the Apps Script proxy and used by every screen with Customer map or IDS. An admin browser that already has a live connection shares it automatically the first time it opens the dashboard.
+- Non-admins never see simulated technicians: without a shared live server they see none, with a note.
+- IDS map shows a **Technicians** line: live from Traccar (online count), demo, or not set up.
+
 ## 2026-10-24 (roles)
 
 ### Added

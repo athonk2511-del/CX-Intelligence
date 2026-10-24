@@ -6,6 +6,7 @@
  *
  * Script properties used:
  *   GX_USERS     JSON list of users, written by the dashboard's Role management page. Do not edit by hand.
+ *   GX_TRACK     Live tracking (Traccar) settings saved by an admin on the Tracking setup page.
  *   GX_IDS_*     The shared IDS plan (WWR and WCM), written by the dashboard. Do not edit by hand.
  *   GX_DATA_KEY  One of your existing (owner) access keys. After the role check, requests made with a
  *                user's key are passed to doGetData_ / doPostData_ with this key, so your original key
@@ -94,6 +95,7 @@ function doGet(e) {
   }
   if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
   if (p.action === 'ids') return gxIdsGet_(user, p);
+  if (p.action === 'track') return gxTrackGet_(user);
   if (!gxCanReadGid_(user, p.gid)) return gxJson_({ status: 'error', errors: [{ message: 'Your account has no access to this data. Ask the dashboard admin.' }] });
   if (user.managed) {
     const dk = gxDataKey_();
@@ -111,6 +113,7 @@ function doPost(e) {
   const user = gxUser_(req.key);
   if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
   if (req.action === 'ids') return gxIdsPost_(user, req);
+  if (req.action === 'track') return gxTrackPost_(user, req);
   if (req.action === 'ai' && user.role !== 'admin') return gxJson_({ error: 'AI notes are available to admins only.' });
   if (typeof doPostData_ !== 'function') return gxJson_({ error: 'Unknown action' });
   if (user.managed) {
@@ -263,4 +266,23 @@ function gxIdsPost_(user, req) {
     }
     return gxJson_({ ids: st, conflicts: conflicts });
   } finally { lock.releaseLock(); }
+}
+
+/* ---------- shared live-tracking settings ----------
+ * The Traccar connection an admin sets on the Tracking setup page, so every screen that shows technicians
+ * (Customer map, IDS) uses the same live server. Readable by users with those menus; only admins can change it.
+ */
+const GX_TRACK_MENUS = ['map', 'dispatch', 'dispatchWcm', 'settings'];
+function gxTrackGet_(user) {
+  if (user.role !== 'admin' && !(user.menus || []).some(m => GX_TRACK_MENUS.indexOf(m) !== -1)) return gxJson_({ error: 'UNAUTHORIZED' });
+  let t = null;
+  try { t = JSON.parse(gxProps_().getProperty('GX_TRACK') || 'null'); } catch (e) {}
+  return gxJson_({ track: t });
+}
+function gxTrackPost_(user, req) {
+  if (user.role !== 'admin') return gxJson_({ error: 'UNAUTHORIZED' });
+  const s = JSON.stringify(req.cfg || null);
+  if (s.length > 8000) return gxJson_({ error: 'Tracking settings are too large.' });
+  gxProps_().setProperty('GX_TRACK', s);
+  return gxJson_({ track: req.cfg || null });
 }

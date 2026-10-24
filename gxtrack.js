@@ -129,8 +129,9 @@ class Demo {
 
 /* ---------- store ---------- */
 export class TrackStore {
-  constructor(D) {
-    this.D = D; this.cfg = loadConfig(); this.subs = new Set(); this.devices = []; this.link = { state: 'idle', reconnects: 0 };
+  // opts.wait: hold off until applyShared() hands over the settings shared on the proxy.
+  constructor(D, opts) {
+    this.D = D; this.cfg = loadConfig(); this.waiting = !!(opts && opts.wait); this.subs = new Set(); this.devices = []; this.link = { state: 'idle', reconnects: 0 };
     this.cache = new Map(); this.pending = new Set(); this.map = null; this.rawDev = new Map(); this.rawPos = new Map();
   }
   subscribe(f) { this.subs.add(f); return () => this.subs.delete(f); }
@@ -138,9 +139,13 @@ export class TrackStore {
   setMap(m) { if (!m || this.map === m) return; this.map = m; this.cidIdx = null; if (this.cfg.mode === 'demo' || !this.started) this.restart(); }
   saveConfig(c) { this.cfg = { ...DEFAULTS, ...c }; localStorage.setItem(KEY, JSON.stringify(this.cfg)); this.restart(); }
   restart() { this.stop(); this.cache.clear(); this.devices = []; this.start(); }
+  // Settings shared by an admin for every screen. mode 'none' = no live tracking set up: no demo, no technicians.
+  applyShared(c) { this.waiting = false; this.shared = true; this.cfg = { ...DEFAULTS, ...(c || { mode: 'none' }) }; this.restart(); }
   start() {
     this.started = true;
     const c = this.cfg;
+    if (this.waiting) { this.link = { state: 'waiting', msg: 'Loading the shared tracking settings…', reconnects: 0 }; this.emit(); return; }
+    if (c.mode === 'none') { this.link = { state: 'off', msg: 'Live technician tracking has not been set up by the admin yet.', reconnects: 0 }; this.emit(); return; }
     if (c.mode === 'demo') {
       if (!this.map) { this.link = { state: 'waiting', msg: 'Waiting for customer locations to build the demo' }; this.emit(); return; }
       this.demo = new Demo(this.map);
