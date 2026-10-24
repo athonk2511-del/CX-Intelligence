@@ -668,13 +668,16 @@ class Dispatch {
     if (!P) {
       P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: this.nowMin() >= this.st.cfg.rebAt ? day : null };
       this.autoPlan(P, J, B, false);
-      P.dataAt = this.dataAt || 0; P.gone = {};
+      P.dataAt = this.dataAt || 0; P.gone = {}; P.goneV = 2;
       this.note(this.type + ' plan for ' + name + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
       this.save();
       return P;
     }
     if (!Array.isArray(P.tb)) P.tb = P.teams.map(() => 0);
     if (!Array.isArray(P.role)) P.role = P.teams.map((t, i) => P.home[i] ? 'anchor' : null);
+    // One-time repair (2026-10-25): screens that read work orders from the old sheet marked CSV work orders as
+    // closed. Forget those marks so the missing work orders are added back.
+    if (P.goneV !== 2) { P.gone = {}; P.goneV = 2; }
     const known = new Set([...P.teams.flat(), ...P.next]);
     // Work orders that this screen's data does not have (unknown) or has but the plan does not (fresh). When the plan was
     // last built from newer data than this screen holds, this screen reloads its data first instead of changing the plan,
@@ -1028,6 +1031,9 @@ class Dispatch {
     const note = (title, text, tone) => ({ kpis: [], cards: [host.card(title, { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: tone || C.text } }, text) })] });
     // Wait for the shared plan before showing (or changing) anything, so this screen never starts from an old plan.
     if (this.api && !this.sh.ready) { this.shPoll(true); return note('Shared plan', 'Loading the shared ' + this.type + ' plan…', C.muted); }
+    // Work orders could not be read from the CSV files: show nothing rather than plan from partial data, which would
+    // remove work orders from the shared plan for everyone.
+    if (ctx.dataProblem) return note('Work orders not loaded', 'The work-order files could not be read on this screen, so the board is hidden to keep the shared plan safe. ' + ctx.dataProblem + ' Reload the page; if this stays, ask the dashboard admin.', C.bad || '#9B2C1F');
     const P = this.plan(m, bi, J, B);
     this._ctx.P = P;
     if (this.behind) {

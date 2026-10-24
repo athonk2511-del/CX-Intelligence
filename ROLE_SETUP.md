@@ -36,6 +36,8 @@ After the role check, data requests from role-managed users are passed to your o
 
 Deploy → Manage deployments → edit the current deployment → Version: **New version** → Deploy. Keep "Who has access: Anyone". The URL stays the same.
 
+Since 2026-10-25 `roles.gs` reads the Drive CSV folder for dispatchers. The first time, Apps Script asks for permission: **Review permissions** → choose the account that owns the proxy (it must be able to open the CSV folder) → **Advanced** → **Go to … (unsafe)** → **Allow**. If no prompt appears, run any function once from the editor (for example select `doGet` → Run) to trigger it, then deploy the new version again.
+
 ## 5. Add users
 
 Open the dashboard with your owner key → **Role management** → **+ Add user**:
@@ -45,7 +47,7 @@ Open the dashboard with your owner key → **Role management** → **+ Add user*
 3. Menus: a new dispatcher starts with *IDS · WWR wiredown* and *IDS · WCM maintenance*.
 4. **Create user and key**. Copy the key and send it to the user privately. It is shown once.
 
-The user opens the dashboard, types the key once, and sees only their menus. Dispatchers read the sheet through the proxy, so they need no Google sign-in and no access to the Drive folder.
+The user opens the dashboard, types the key once, and sees only their menus. Dispatchers read the data through the proxy (the same Drive CSV files as admins), so they need no Google sign-in and no access to the Drive folder.
 
 **Disable** stops a key at once, **New key** replaces it, **Remove** deletes the user.
 
@@ -53,6 +55,8 @@ The user opens the dashboard, types the key once, and sees only their menus. Dis
 
 - Owner keys (the keys your original code accepts) are always Admin and are not listed on the page.
 - What a user may read is decided per menu: IDS and Customer map read the Customers and Tickets tabs; Tickets is always allowed because every page reads it for the period list. The Tickets tab holds full ticket rows, so a dispatcher key can read ticket data, but not CSAT, chat, FRT/RT, DotAI or human-handled tabs unless those menus are given.
+- Drive CSV files (proxy actions `csvls` / `csvget`): a user gets only the data sets of their menus. IDS and Customer map: customers and work orders. Tickets, CSAT and churn files only with those menus. Files are cached in each browser and downloaded again only when they change in Drive.
+- If the proxy cannot give the work-order files (not updated, not authorized, Drive error), the IDS board is hidden with the reason instead of planning from old data.
 - AI consultant notes are for admins only.
 
 ## Shared technician tracking

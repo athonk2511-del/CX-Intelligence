@@ -84,13 +84,52 @@ export function googleSignOut() {
   gTok = null; try { sessionStorage.removeItem(TOKEN_STORE); } catch (e) {}
 }
 try { if (/[?&]logout\b/.test(location.search)) googleSignOut(); } catch (e) {}
-const DRIVE_AUTH = GOOGLE_CLIENT_ID ? { token: googleToken } : { key: DRIVE_API_KEY };
+let DRIVE_AUTH = GOOGLE_CLIENT_ID ? { token: googleToken } : { key: DRIVE_API_KEY };
+/* Users without access to the Drive folder (dispatchers) read the same CSV files through the Apps Script proxy,
+   so every screen plans from the same work orders. Drive API URLs are mapped to proxy actions; the answers have
+   the same shape as the Drive API's. */
+export function useProxyDrive() {
+  if (!useProxy()) { setDrive(false); return; }
+  const call = async (q, tries = 3) => {
+    for (let i = 0; ; i++) {
+      try {
+        const r = await fetch(`${PROXY_URL}?${q}&key=${encodeURIComponent(readKey())}`);
+        if (r.ok || i >= tries - 1) return r;
+      } catch (e) { if (i >= tries - 1) throw e; }
+      await new Promise(res => setTimeout(res, 800 * (i + 1)));
+    }
+  };
+  const proxy = async url => {
+    const ls = /[?&]q=([^&]*)/.exec(url), media = /\/files\/([^/?]+)\?alt=media/.exec(url);
+    if (media) {
+      const r = await call('action=csvget&id=' + encodeURIComponent(media[1]));
+      const text = await r.text();
+      // The proxy answers errors as JSON; file contents as plain text.
+      if (/^\s*\{"error"/.test(text)) { let m = 'not allowed'; try { m = JSON.parse(text).error.message || m; } catch (e) {} return { ok: false, status: 403, text: async () => text, json: async () => ({ error: { message: m } }), statusText: m }; }
+      return { ok: r.ok, status: r.status, text: async () => text };
+    }
+    if (ls) {
+      const folder = (/'([^']+)' in parents/.exec(decodeURIComponent(ls[1])) || [])[1] || '';
+      const r = await call('action=csvls&folder=' + encodeURIComponent(folder));
+      const j = await r.json().catch(() => ({ error: { message: 'proxy HTTP ' + r.status } }));
+      if (j.error && typeof j.error === 'string') j.error = { message: j.error === 'UNAUTHORIZED' ? 'This access key cannot read the data files.' : j.error };
+      // An Apps Script proxy without the CSV actions answers something else: say so instead of showing no data.
+      if (!j.error && !Array.isArray(j.files)) j.error = { message: 'The Apps Script proxy has no CSV access for users yet. Paste the new roles.gs and deploy a new version (ROLE_SETUP.md).' };
+      return { ok: !j.error, status: j.error ? 400 : 200, json: async () => j };
+    }
+    throw new Error('Unsupported Drive request');
+  };
+  DRIVE_AUTH = { proxy };
+  setDrive(true);
+}
 const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', [TABS.csat]: 'csat', wo: 'wo' };
 const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders', csat: 'CSAT' };
 let CSV = null, setsP = null, setP = {}, csvFailed = {};
 // Drive CSV can be switched off per user (dispatchers read the sheet through the key-checked proxy instead,
 // so they need no access to the Drive folder and no Google sign-in).
 let driveOn = true;
+// Why the work-order CSV could not be read (null when it loaded or Drive is not used).
+export function woProblem() { return CSV_FOLDER && driveOn && csvFailed.wo ? String(csvFailed.wo) : null; }
 export function setDrive(on) { driveOn = !!on; csvInfo.on = !!CSV_FOLDER && driveOn; }
 export const csvInfo = { on: !!CSV_FOLDER, folder: CSV_FOLDER, files: 0, rows: 0, phase: '', error: null, sets: {}, text: '' };
 function csvSummary() {
@@ -112,7 +151,7 @@ function dropPartial(name) {
   [...cache.keys()].forEach(k => { if (k.startsWith(pre) && !k.endsWith('|F')) cache.delete(k); });
 }
 function driveSets() {
-  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat, s.churn || [])); return s; })()
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat, s.churn || [])); return s; })()
     .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
   return setsP;
 }
@@ -151,11 +190,11 @@ export async function churnFiles() {
   try { const s = await driveSets(); return { files: s.churn || [] }; }
   catch (e) { return { files: [], error: e.message }; }
 }
-export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.fileText(f, DRIVE_AUTH); }
-export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-10-19d'); return CSV.parseCSV(text); }
+export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); return CSV.fileText(f, DRIVE_AUTH); }
+export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); return CSV.parseCSV(text); }
 export async function woTable() {
   if (!CSV_FOLDER || !driveOn || csvFailed.wo) return null;
-  try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = true; console.warn('Work order CSV unavailable:', e.message); return null; }
+  try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = e.message || 'failed'; console.warn('Work order CSV unavailable:', e.message); return null; }
 }
 export async function woQuery(tq) {
   const t = await woTable(); if (!t) return null;
@@ -236,7 +275,7 @@ export async function gviz(gid, tq, full) {
   if (CSV_FOLDER && driveOn && setName && setName !== 'wo' && !csvFailed[setName]) {
     let t = null;
     try { t = await csvSet(setName, full); }
-    catch (e) { csvFailed[setName] = true; console.warn(setName + ' CSV unavailable, reading the sheet instead:', e.message); }
+    catch (e) { csvFailed[setName] = e.message || 'failed'; console.warn(setName + ' CSV unavailable, reading the sheet instead:', e.message); }
     if (t) {
       stats.queries++;
       const out = CSV.runQuery(t, tq);
@@ -1262,7 +1301,7 @@ export async function loadMap() {
   });
   // Latest non-cancelled WWR work order per CID → 0 open, 1 in progress, 2 closed.
   // Same for WCM (maintenance) → cm / cmInfo.
-  const woAll = await wdP.catch(() => ({ WWR: new Map(), WCM: new Map() }));
+  const woAll = await wdP.catch(e => ({ WWR: new Map(), WCM: new Map(), failed: (e && e.message) || 'failed' }));
   const wdBy = woAll.WWR, cmBy = woAll.WCM;
   const wd = new Int8Array(j).fill(-1), wdInfo = new Array(j), cm = new Int8Array(j).fill(-1), cmInfo = new Array(j);
   let wdMatched = 0, cmMatched = 0;
@@ -1277,7 +1316,7 @@ export async function loadMap() {
   const wo = { n: evs.length, pt: Int32Array.from(evs, e => ptOf.get(e[0])), type: Uint8Array.from(evs, e => e[1]), t: Float64Array.from(evs, e => e[2]) };
   const products = [...prodMap.keys()].map((key, i) => ({ key, color: PRODUCT_COLORS[key] || PRODUCT_EXTRA[i % PRODUCT_EXTRA.length] }));
   return {
-    loadedAt: Date.now(),
+    loadedAt: Date.now(), woSrc: woAll.src === 'wo' ? 'csv' : 'sheet', woProblem: woProblem() || (woAll.failed ? 'Work orders could not be read: ' + woAll.failed : null),
     start: start.subarray(0, j), blockAt: blockAt.subarray(0, j), endAt: endAt.subarray(0, j), mrc: mrc.subarray(0, j), wo,
     count: j, lat: lat.subarray(0, j), lng: lng.subarray(0, j), status: st.subarray(0, j), product: pr.subarray(0, j), branch: br.subarray(0, j), cid: cid.slice(0, j), uid: uid.slice(0, j), name: name.slice(0, j), area: area.slice(0, j), variant: variant.slice(0, j),
     wd, wdInfo, wdStatuses: WD_STATUS, wdTotal: wdBy.size, wdMatched, cm, cmInfo, cmTotal: cmBy.size, cmMatched,

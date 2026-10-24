@@ -96,6 +96,8 @@ function doGet(e) {
   if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
   if (p.action === 'ids') return gxIdsGet_(user, p);
   if (p.action === 'track') return gxTrackGet_(user);
+  if (p.action === 'csvls') return gxCsvList_(user, p);
+  if (p.action === 'csvget') return gxCsvGet_(user, p);
   if (!gxCanReadGid_(user, p.gid)) return gxJson_({ status: 'error', errors: [{ message: 'Your account has no access to this data. Ask the dashboard admin.' }] });
   if (user.managed) {
     const dk = gxDataKey_();
@@ -285,4 +287,72 @@ function gxTrackPost_(user, req) {
   if (s.length > 8000) return gxJson_({ error: 'Tracking settings are too large.' });
   gxProps_().setProperty('GX_TRACK', s);
   return gxJson_({ track: req.cfg || null });
+}
+
+/* ---------- Drive CSV files for users without Drive access ----------
+ * The dashboard reads tickets, customers and work orders from CSV files in one Drive folder. Admins read them with
+ * their own Google sign-in. Other users get the same files through this proxy (which runs as the owner), limited to
+ * the datasets their menus need, so every screen plans from the same work-order data.
+ */
+const GX_CSV_FOLDER = '1XPOvL9Tcqsq7JKKd76m_tKz7pNBPyv3g';
+const GX_FOLDER_MIME = 'application/vnd.google-apps.folder';
+const GX_MENU_SETS = {
+  overview: ['tickets', 'csat', 'customers', 'wo'], tickets: ['tickets', 'wo'], chat: ['tickets'], csat: ['csat'],
+  growth: ['customers', 'wo'], intracity: ['customers', 'wo'], churnRisk: ['customers', 'churn'],
+  map: ['customers', 'wo'], dispatch: ['customers', 'wo'], dispatchWcm: ['customers', 'wo'], settings: [],
+};
+// Same rules as kindOf() in gxcsv.js.
+function gxKindOf_(name, inFolder) {
+  const n = String(name || '').toLowerCase();
+  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
+  return /csat/.test(n) ? 'csat' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
+}
+function gxCsvKinds_(user) {
+  if (user.role === 'admin') return null;            // everything
+  const k = {};
+  (user.menus || []).forEach(m => (GX_MENU_SETS[m] || []).forEach(x => { k[x] = true; }));
+  return k;
+}
+function gxCsvAllowed_(kinds, kind) { return !!kind && (kinds === null || !!kinds[kind]); }
+function gxDriveJson_(o) { return gxJson_(o); }
+function gxCsvErr_(msg) { return gxJson_({ error: { message: msg } }); }
+
+// Drive-API-shaped folder listing: the CSV root, or one of its direct subfolders.
+function gxCsvList_(user, p) {
+  const kinds = gxCsvKinds_(user);
+  if (kinds !== null && !Object.keys(kinds).length) return gxCsvErr_('No data sets for this account');
+  const root = DriveApp.getFolderById(GX_CSV_FOLDER), fid = String(p.folder || GX_CSV_FOLDER), out = [];
+  const add = (f, folder) => out.push({ id: f.getId(), name: f.getName(), size: folder ? 0 : String(f.getSize()), modifiedTime: f.getLastUpdated().toISOString(), mimeType: folder ? GX_FOLDER_MIME : 'text/csv' });
+  if (fid === GX_CSV_FOLDER) {
+    const fs = root.getFolders();
+    while (fs.hasNext()) { const d = fs.next(); if (gxCsvAllowed_(kinds, gxKindOf_(d.getName(), true))) add(d, true); }
+    const xs = root.getFiles();
+    while (xs.hasNext()) { const f = xs.next(); if (/\.csv$/i.test(f.getName()) && gxCsvAllowed_(kinds, gxKindOf_(f.getName(), false))) add(f, false); }
+    return gxDriveJson_({ files: out });
+  }
+  const sub = DriveApp.getFolderById(fid), parents = sub.getParents();
+  let ok = false;
+  while (parents.hasNext()) if (parents.next().getId() === GX_CSV_FOLDER) ok = true;
+  if (!ok || !gxCsvAllowed_(kinds, gxKindOf_(sub.getName(), true))) return gxCsvErr_('Folder not allowed');
+  const xs = sub.getFiles();
+  while (xs.hasNext()) { const f = xs.next(); if (/\.(csv|json)$/i.test(f.getName())) add(f, false); }
+  return gxDriveJson_({ files: out });
+}
+
+// File contents, only for files in the CSV root (by file name) or an allowed subfolder.
+function gxCsvGet_(user, p) {
+  const kinds = gxCsvKinds_(user);
+  let f;
+  try { f = DriveApp.getFileById(String(p.id || '')); } catch (e) { return gxCsvErr_('File not found'); }
+  let kind = null;
+  const parents = f.getParents();
+  while (parents.hasNext()) {
+    const d = parents.next();
+    if (d.getId() === GX_CSV_FOLDER) { kind = gxKindOf_(f.getName(), false); break; }
+    const pp = d.getParents();
+    while (pp.hasNext()) if (pp.next().getId() === GX_CSV_FOLDER) kind = gxKindOf_(d.getName(), true);
+    if (kind) break;
+  }
+  if (!gxCsvAllowed_(kinds, kind)) return gxCsvErr_('File not allowed');
+  return ContentService.createTextOutput(f.getBlob().getDataAsString()).setMimeType(ContentService.MimeType.TEXT);
 }

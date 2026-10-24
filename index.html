@@ -235,13 +235,14 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24d'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-25a'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
-      // Who is this access key? Decides the menus and, for non-admins, reads the sheet through the proxy only.
+      // Who is this access key? Decides the menus. Non-admins read the same Drive CSV files through the proxy
+      // (no Google sign-in), so every screen plans from the same work orders.
       const me = D.whoami ? await D.whoami() : { name: 'Owner', role: 'admin', menus: '*' };
-      if (me.role !== 'admin' && D.setDrive) D.setDrive(false);
+      if (me.role !== 'admin') { if (D.useProxyDrive) D.useProxyDrive(); else if (D.setDrive) D.setDrive(false); }
       const view = this.canSee(this.state.view, me) ? this.state.view : this.firstView(me);
       this.setState({ me, view });
       const index = await D.loadIndex();
@@ -1516,7 +1517,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-24f'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-25a'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -1560,7 +1561,9 @@ class Component extends DCLogic {
       : ['muted', L.msg || 'Tracking off'];
     const sh = this.trackShare;
     if (this.isAdmin() && sh && sh.state !== 'ok' && sh.msg) trackLine[1] += ' · ' + sh.msg;
-    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine });
+    // Work orders not read from the CSV files: this screen must not change the shared plan.
+    const dataProblem = m && m.woProblem ? m.woProblem : null;
+    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine, dataProblem });
   }
 
   mapView(m) {

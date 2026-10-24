@@ -209,6 +209,7 @@ export function kindOf(name, inFolder) {
 }
 // auth: { key } for an API key, or { token: async (renew) => accessToken } for Google sign-in.
 async function driveFetch(url, auth, retry = true) {
+  if (auth.proxy) return auth.proxy(url);
   if (auth.key) return fetch(url + (url.includes('?') ? '&' : '?') + 'key=' + auth.key);
   const t = await auth.token(false);
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + t } });

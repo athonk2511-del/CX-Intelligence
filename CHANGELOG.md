@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-25 (work orders for dispatchers)
+
+### Fixed
+
+- **WWR / WCM work orders missing on IDS:** dispatchers read work orders from the old Google Sheet while admins read the Drive CSV files. The two screens disagreed, and the shared plan dropped work orders the sheet did not have, for everyone. Dispatchers now read the same Drive CSV files (work orders and customers) through the Apps Script proxy, without Google sign-in. Needs the new `apps-script/roles.gs` (see ROLE_SETUP.md, step 4: authorize Drive access).
+- Work orders removed by that mismatch come back automatically the first time an updated screen opens IDS (one-time repair of the shared plan).
+- A screen that cannot read the work-order files (proxy not updated, Drive error) no longer plans from partial data: the IDS board is hidden with the reason, and the shared plan is left unchanged.
+
+### Changed
+
+- The proxy gives each user only the CSV data sets their menus need (IDS and Customer map: customers and work orders).
+
 ## 2026-10-24 (map toggles)
 
 ### Added
