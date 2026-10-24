@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-24
+
+### Changed
+
+- **IDS hubs (`gxdispatch.js`)**
+  - Every team departs from and returns to the default hub (the first one: GlobalXtreme HQ Jl. Raya Kerobokan) unless another hub is assigned to it in Settings → Crew or on the board. There is no automatic hub switching.
+  - Busy cells that hold an urgent VIP get the team that reaches them soonest. The other busy cells are matched to teams across the board, shortest drive from each team's own hub first, so hub teams serve the cells near their hub.
+  - Teams needed per cell is estimated from the nearest hub that has teams assigned.
+  - Removing a hub moves its teams back to the default hub and keeps the other assignments correct. The default hub cannot be removed.
+  - Settings: "Bases" renamed "Hubs"; the default hub is labelled.
+
 ## 2026-10-23
 
 ### Changed

@@ -211,7 +211,13 @@ class Dispatch {
   base(m, bi, J) { return this.bases(m, bi, J)[0]; }
   // Per-team setup: start base, shift start and the technician app ID that sends break / problem events.
   crew(i) { return (this.st.cfg.crew || [])[i] || {}; }
-  tbase(P, i) { const BS = this._BS || [], c = this.crew(i); return BS[c.base != null ? c.base : 0] || BS[0]; }
+  // Departure hub of a team: the hub assigned in Crew settings (or on the board), else the first hub = default
+  // (GlobalXtreme HQ Kerobokan for Bali). The team departs from and returns to this hub every day.
+  hubOf(i) { const BS = this._BS || [], b = this.crew(i).base; return b != null && b !== '' && +b >= 0 && BS[+b] ? +b : 0; }
+  tbase(P, i) { const BS = this._BS || []; return BS[this.hubOf(i)] || BS[0]; }
+  // Hubs in use by the available teams: used to estimate how many teams a cell needs.
+  usedHubs() { const BS = this._BS || [], n = Math.max(1, Math.round(+this.st.cfg.teams || 1)), set = new Set(); for (let i = 0; i < n; i++) set.add(this.hubOf(i)); return [...set].map(k => BS[k]).filter(Boolean); }
+  nearUsedHub(j, B) { let best = null, bt = Infinity; this.usedHubs().forEach(h => { const t = this.travel(h, j); if (t < bt) { bt = t; best = h; } }); return best || B; }
   tstart(i) { const c = this.crew(i); return isFinite(c.start) && c.start !== '' ? +c.start : this.st.cfg.start; }
   // Shift end of a team: its own end time, else its start plus the default shift length.
   tend(i) {
@@ -435,7 +441,7 @@ class Dispatch {
       // A cell holding an urgent VIP (Wiredown / Power) always counts as busy, so it gets a team even when it is quiet.
       if (g.jobs.length <= min && !g.jobs.some(j => j.tier === 'VIP' && this.urgent(j))) { sparse.push(...g.jobs); return; }
       const jobs = g.jobs.slice().sort(this.cmp), live = jobs.map(j => this.rem(j)).filter(r => r >= 0);
-      const nd = this.needOf(jobs, (this._BS || [])[this.nearBase(jobs[0])] || B);
+      const nd = this.needOf(jobs, this.nearUsedHub(jobs[0], B));
       out.push({ key: g.key, cells: [g.key], vipOnly: g.jobs.length <= min, jobs, load: jobs.reduce((a, j) => a + this.dur(j), 0), total: g.score, minRem: live.length ? Math.min(...live) : Infinity, breached: jobs.filter(j => this.breached(j)).length, need: nd.n, finish: nd.finish, left: nd.left });
     });
     out.sort((a, b) => b.total - a.total || b.jobs.length - a.jobs.length);
@@ -508,7 +514,7 @@ class Dispatch {
       placed.add(k);
       if (i >= nT) { orphan.push(k); return; } // its team was removed: never pile these onto another team
       P.teams[i].push(k);
-      if (!P.home[i]) { P.home[i] = oldHome[i] || j.cell.key; P.tb[i] = oldTb[i] || 0; P.role[i] = oldRole[i] || 'anchor'; }
+      if (!P.home[i]) { P.home[i] = oldHome[i] || j.cell.key; P.tb[i] = this.hubOf(i); P.role[i] = oldRole[i] || 'anchor'; }
     }));
     const hold = (keepLocked ? P.next || [] : []).filter(k => oldWhy[k] === 'customer' && J.by.has(k) && !placed.has(k));
     hold.forEach(k => placed.add(k));
@@ -517,14 +523,26 @@ class Dispatch {
     let gridLeft = nT - reserve - P.home.filter(Boolean).length;
     const free = () => P.teams.map((t, i) => i).filter(i => !P.home[i] && !P.teams[i].length);
     const reach = (i, j) => this.tstart(i) + this.travel(this.tbase(P, i), j);
+    const assign = (i, c) => { P.home[i] = c.key; P.tb[i] = this.hubOf(i); P.role[i] = 'anchor'; c.mine.push(i); gridLeft--; };
     const take = c => {
       if (gridLeft <= 0) return false;
       const f = free(); if (!f.length) return false;
       f.sort((a, b) => reach(a, c.jobs[0]) - reach(b, c.jobs[0]));
-      const i = f[0]; P.home[i] = c.key; P.tb[i] = this.nearBase(c.jobs[0]); P.role[i] = 'anchor'; c.mine.push(i); gridLeft--; return true;
+      assign(f[0], c); return true;
     };
     CX.list.forEach(c => { c.mine = P.home.map((h, i) => h === c.key ? i : -1).filter(i => i >= 0); });
-    CX.list.forEach(c => { if (!c.mine.length) take(c); });
+    // First team per busy cell. Which cells get a team is decided by score (CX.list order); which team goes where is then
+    // matched across all those cells, shortest drive from the team's own hub first, so a hub team serves the cells near it.
+    // Cells holding an urgent VIP (Wiredown, Power) are served first, by the team that reaches them soonest.
+    CX.list.forEach(c => { if (!c.mine.length && c.jobs.some(j => j.tier === 'VIP' && this.urgent(j))) take(c); });
+    const want = [];
+    CX.list.forEach(c => { if (!c.mine.length && want.length < Math.min(gridLeft, free().length)) want.push(c); });
+    while (want.length && gridLeft > 0) {
+      let best = null;
+      free().forEach(i => want.forEach((c, n) => { const r = reach(i, c.jobs[0]); if (!best || r < best.r) best = { i, c, n, r }; }));
+      if (!best) break;
+      assign(best.i, best.c); want.splice(best.n, 1);
+    }
     CX.list.forEach(c => { while (c.mine.length < c.need && take(c)); });
     const S = new Map(), st = i => { if (!S.has(i)) S.set(i, this.state(P.teams[i], this.tbase(P, i), i, P)); return S.get(i); };
     let rest = [];
@@ -553,7 +571,7 @@ class Dispatch {
       });
       if (!best) { rest3.push(j); return; }
       this.put(best.s, j, best.f);
-      if (!P.home[best.i]) { P.home[best.i] = j.cell.key; P.role[best.i] = 'floater'; P.tb[best.i] = this.crew(best.i).base || 0; }
+      if (!P.home[best.i]) { P.home[best.i] = j.cell.key; P.role[best.i] = 'floater'; P.tb[best.i] = this.hubOf(best.i); }
     });
     P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i)) : ids);
     const over = [];
@@ -619,7 +637,7 @@ class Dispatch {
     }
     const i = P.teams.findIndex((ids, n) => !P.home[n] && !ids.length);
     if (i >= 0 && this.ok(this.fit(this.fresh(i, P, this.tbase(P, i)), j))) {
-      P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = this.crew(i).base || 0; if (P.role) P.role[i] = 'floater'; return true;
+      P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = this.hubOf(i); if (P.role) P.role[i] = 'floater'; return true;
     }
     return false;
   }
@@ -726,7 +744,7 @@ class Dispatch {
     P.next = P.next.filter(k => k !== key);
     const list = dest === 'next' ? P.next : P.teams[dest];
     list.splice(Math.max(0, Math.min(idx == null ? list.length : idx, list.length)), 0, key);
-    if (dest !== 'next' && !P.home[dest]) { P.home[dest] = j.cell.key; P.tb[dest] = this.nearBase(j); }
+    if (dest !== 'next' && !P.home[dest]) { P.home[dest] = j.cell.key; P.tb[dest] = this.hubOf(dest); }
     P.teams.forEach((t, i) => { if (!t.length) P.home[i] = null; });
     if (dest === 'next') { if (!P.why[key]) P.why[key] = (this.meta(key).conf === 'resched') ? 'customer' : 'internal'; }
     else delete P.why[key];
@@ -906,9 +924,9 @@ class Dispatch {
     const BS = this._BS || [], cur = this.crew(n).base || 0;
     return e('div', { key: 'hb', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: MONO, color: C.muted } },
       home ? e('span', { style: { color: (P.role || [])[n] === 'floater' ? C.warn : C.ink } }, ((P.role || [])[n] === 'floater' ? 'Floater · from ' : 'Anchor · ') + home) : null,
-      BS.length > 1 ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now starts from ' + BS[+ev.target.value].name + '.'); },
+      BS.length > 1 ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
         style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 170 } },
-        ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name)))
+        ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name + (i === 0 ? ' (default)' : ''))))
         : e('span', null, 'From ' + (BS[0] ? BS[0].name : 'base')),
       e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))));
   }
@@ -1062,7 +1080,7 @@ class Dispatch {
         return row(n ? '' : 'Crew', [
           e('span', { key: 'cn', style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 110 } }, this.tn(n)),
           e('select', { key: 'cb', value: cr.base || 0, onChange: ev => upd({ base: +ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, maxWidth: 260 } },
-            ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Base ' + (k + 1))))),
+            ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Hub ' + (k + 1)) + (k === 0 ? ' (default)' : '')))),
           lab('Shift start', 'cs' + n),
           e('input', { key: 'ct', type: 'time', value: hm(st), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ start: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
           lab('end', 'ce' + n),
@@ -1093,14 +1111,18 @@ class Dispatch {
         lab('· a WO may start up to', 'l15'), num('lastBefore', 56, 15), lab('min before the team\u2019s own shift end and may finish after it. Each team\u2019s shift is set under Crew.', 'l17')]),
       row('Duration', Object.keys(CATS).map(k => e('span', { key: 'd' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.muted } }, k, num(k, 60, 5, d.dur, 'dur' + k), 'min',
         e('span', { style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: CATS[k].src === 'assumed' ? C.warn : C.good } }, CATS[k].src)))),
-      ...bl.map((b, n) => row(n ? '' : 'Bases', [
+      ...bl.map((b, n) => row(n ? '' : 'Hubs', [
         e('input', { key: 'bn' + n + '|' + bl.length, type: 'text', defaultValue: b.name, placeholder: 'Base name', onBlur: ev => { bl[n] = { ...bl[n], name: ev.target.value.trim() || 'Base ' + (n + 1) }; setB(); }, style: { ...tx, width: 170, font: SANS } }),
         e('input', { key: 'bl' + n + '|' + bl.length, type: 'text', defaultValue: (+b.lat).toFixed(5) + ', ' + (+b.lng).toFixed(5), placeholder: 'lat, lng',
           onBlur: ev => { const p = String(ev.target.value).split(/[,;\s]+/).filter(Boolean).map(Number); if (p.length >= 2 && isFinite(p[0]) && isFinite(p[1])) { bl[n] = { ...bl[n], lat: p[0], lng: p[1] }; setB(); } }, style: { ...tx, width: 200 } }),
-        bl.length > 1 ? btn('rm' + n, 'Remove', () => { bl.splice(n, 1); setB(); }) : null,
+        n === 0 ? lab('default hub', 'bd' + n) : btn('rm' + n, 'Remove', () => {
+          bl.splice(n, 1);
+          d.crew = (d.crew || []).map(x => !x || x.base == null || x.base === '' ? x : +x.base === n ? { ...x, base: 0 } : +x.base > n ? { ...x, base: +x.base - 1 } : x);
+          setB();
+        }),
       ], 'base' + n)),
-      row('', [btn('ab', '+ Add base', () => { const l = bl[bl.length - 1] || { lat: -8.67, lng: 115.17 }; bl.push({ name: 'Base ' + (bl.length + 1), lat: l.lat, lng: l.lng }); setB(); }),
-        lab('Each team starts from the base nearest to its first cell, or the one picked on the board. Paste coordinates from Google Maps as "lat, lng".', 'bh')], 'addb'),
+      row('', [btn('ab', '+ Add hub', () => { const l = bl[bl.length - 1] || { lat: -8.67, lng: 115.17 }; bl.push({ name: 'Hub ' + (bl.length + 1), lat: l.lat, lng: l.lng }); setB(); }),
+        lab('Every team departs from and returns to the first (default) hub unless another hub is assigned to it under Crew or on the board. Way-back pick-ups head to the team\u2019s own hub. Removing a hub moves its teams back to the default hub. Paste coordinates from Google Maps as "lat, lng".', 'bh')], 'addb'),
       row('', [btn('ap', 'Apply and re-plan', () => this.apply(), true), btn('cx', 'Cancel', () => { this.ui.settings = false; this.ui.draft = null; this.onChange(); }),
         btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act'));
   }
