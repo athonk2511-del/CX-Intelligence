@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-25 (check-out time)
+
+### Added
+
+- **IDS · Check-out time:** setting a job to *Checked out* shows a **Check-out** box (hh:mm, prefilled with the current time) for the dispatcher to type the real time. It must lie between the team's shift start and now.
+- Every check-out change recalculates the plan at once, not only at the 12:00 rebalance:
+  - The job shows its actual finish ("Checked out 11:30, 26 min later than projected"). The ETAs after it, the team's working time and its finish move with it.
+  - Plans without manual changes are re-run in full (like the 12:00 rebalance; started and checked-out jobs stay with their team).
+  - Plans with manual changes keep each team's order. Jobs that no longer fit move to another team or H+1. A team that finishes earlier takes more work from H+1 (internal reason only; jobs deferred by hand or at the customer's request stay).
+  - The change log says what moved, for example "Team 1 +1, H+1 −1".
+- A job *Checked in* (or In Progress) that runs past its projected finish now pushes the next ETAs back automatically; a job *On the way* cannot arrive before now. The card shows "Still working: … min past the projected finish".
+- Started jobs are ordered as they really happened: checked out (by check-out time), then the job in progress, then the one the team is driving to.
+- The check-out time is part of the shared plan and resets at the start of the next day. Changing the status away from Checked out removes the time.
+
 ## 2026-10-25 (work orders for dispatchers)
 
 ### Fixed

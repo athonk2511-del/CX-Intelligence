@@ -443,7 +443,25 @@ class Dispatch {
   }
   // A team's running state for planning: { ids, t (free from), pos, E (breaks/problems), k (cursor into E) }.
   fresh(i, P, B) { return { i, ids: [], t: i != null ? this.tstart(i) : this.st.cfg.start, last: this.tlast(i), pos: B, E: i != null ? this.evList(P, i) : this.lunchE(), k: { i: 0 } }; }
-  fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.step(s.E, k, s.t, hop, this.dur(j)); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
+  fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.real(j, s.E, k, this.step(s.E, k, s.t, hop, this.dur(j))); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
+  // Check-out time typed by the dispatcher for today (minutes since midnight), or null.
+  coOf(j) { const mt = this.st.meta[j.key]; return mt && mt.stat === 'checkout' && mt.co != null && mt.coDay === this.today() ? +mt.co : null; }
+  // Replace the projection with what really happened: a checked-out job ends at its check-out time (earlier or later than
+  // projected); a job checked in, or on the way, is still running, so it cannot end before now (+ its work time when the
+  // technician has not arrived yet). Everything after it in the route moves with it.
+  real(j, E, k, sp) {
+    const st = (this.st.meta[j.key] || {}).stat, co = this.coOf(j), proj = sp.end;
+    if (co != null) {
+      sp.arr = Math.min(sp.arr, co); sp.end = co;
+      while (k.i < E.length && E[k.i].at < co) k.i++;   // breaks / problems before the check-out are inside the real time
+    } else if (st === 'checkin' || (j.prog && st !== 'start')) {
+      sp.end = Math.max(sp.end, this.nowMin());
+    } else if (st === 'start') {
+      sp.arr = Math.max(sp.arr, this.nowMin()); sp.end = Math.max(sp.end, sp.arr + this.dur(j));
+    }
+    sp.proj = proj;
+    return sp;
+  }
   // A job fits when it can start by the team's last-start time; finishing after the shift end is allowed.
   ok(f) { return f.arr <= f.last; }
   put(s, j, f) { s.ids.push(j.key); s.t = f.end; s.pos = j; s.k.i = f.ki; }
@@ -475,6 +493,16 @@ class Dispatch {
   urgent(j) { return CATS[j.cat].s >= 400; }
   vipLate(j) { return j.tier === 'VIP' && !this.urgent(j); }
   locked(j) { const s = (this.st.meta[j.key] || {}).stat; return j.prog || s === 'start' || s === 'checkin' || s === 'checkout'; }
+  // Started jobs first, in the order they really happened: checked out (by check-out time), then the job the team is
+  // working on (checked in / In Progress), then the one it is driving to. The other jobs keep their order after them.
+  lockRank(j) { const co = this.coOf(j), s = (this.st.meta[j.key] || {}).stat; return co != null ? co : s === 'start' ? 3000 : 2000; }
+  lockFirst(ids) {
+    const by = k => this._J.by.get(k), lk = ids.filter(k => by(k) && this.locked(by(k)));
+    if (!lk.length) return ids;
+    const pos = new Map(ids.map((k, n) => [k, n]));
+    lk.sort((a, b) => this.lockRank(by(a)) - this.lockRank(by(b)) || pos.get(a) - pos.get(b));
+    return lk.concat(ids.filter(k => !lk.includes(k)));
+  }
   cmp = (a, b) => this.score(b) - this.score(a) || CATS[b.cat].s - CATS[a.cat].s || TIERS[b.tier].r - TIERS[a.tier].r || a.t - b.t;
   dur(j) { return +this.st.cfg.dur[j.cat] || CATS[j.cat].d; }
 
@@ -710,7 +738,7 @@ class Dispatch {
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
       if (!J.by.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
-      mt.conf = 'none'; mt.stat = 'none';
+      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
@@ -867,7 +895,7 @@ class Dispatch {
     const top = free.filter(k => !nr(k) && by(k).tier === 'VIP' && this.urgent(by(k)));
     const late = free.filter(k => !nr(k) && this.vipLate(by(k)));
     const mid = free.filter(k => !nr(k) && !top.includes(k) && !late.includes(k));
-    const out = lk.slice();
+    const out = this.lockFirst(lk);
     let pos = out.length ? by(out[out.length - 1]) : B;
     const byScore = list => {
       const L = list.map(k => ({ k, s: this.score(by(k)) }));
@@ -893,10 +921,13 @@ class Dispatch {
       const tEnd = this.tend(ti), tLast = this.tlast(ti);
       const E = this.evList(P, ti), kk = { i: 0 };
       const rows = ids.map((k, n) => {
-        const j = J.by.get(k), hop = this.travel(pos, j), d = this.km(pos, j), road = this.isRoad(pos, j), sp = this.step(E, kk, t, hop, this.dur(j)), arr = sp.arr, end = sp.end, f = [];
+        const j = J.by.get(k), hop = this.travel(pos, j), d = this.km(pos, j), road = this.isRoad(pos, j), sp = this.real(j, E, kk, this.step(E, kk, t, hop, this.dur(j))), arr = sp.arr, end = sp.end, f = [];
         const realHit = sp.hit.filter(x => !x.planned), lunch = sp.hit.find(x => x.planned);
         if (realHit.length) f.push(['warn', 'ETA +' + Math.round(realHit.reduce((a, x) => a + this.evDur(x), 0)) + ' min: ' + realHit.map(x => (x.type === 'break' ? 'break' : 'problem') + ' ' + hm(x.at)).join(', ')]);
         if (lunch) f.push(['info', 'Lunch ' + hm(lunch.at) + '–' + hm(lunch.end) + ' included']);
+        const co = this.coOf(j), dv = Math.round(end - sp.proj);
+        if (co != null) f.push(['good', 'Checked out ' + hm(co) + (Math.abs(dv) < 1 ? ', as projected' : ', ' + Math.abs(dv) + ' min ' + (dv < 0 ? 'earlier' : 'later') + ' than projected')]);
+        else if (dv >= 1) f.push(['warn', 'Still working: ' + dv + ' min past the projected finish. Next ETAs moved.']);
         if (P.ret && P.ret[k]) f.push(['info', 'On the way back to base']);
         hops++; if (road) roadHops++;
         if (arr > tLast) f.push(['bad', 'Starts ' + hm(arr) + ', later than ' + cfg.lastBefore + ' min before shift end (' + hm(tLast) + ')']);
@@ -906,7 +937,7 @@ class Dispatch {
         if (this.breached(j)) f.push(['warn', 'SLA overdue · booster +' + this.slaBoost(j)]);
         if (this.soon(j)) { const due = this.nowMin() + this.rem(j); if (end > due) f.push(['bad', 'Misses SLA: due ' + hm(due) + ', done ' + hm(end)]); }
         if ((this.st.meta[k] || {}).conf === 'noresp') f.push(['warn', 'No answer yet: consider the end of the route']);
-        work += this.dur(j); trav += hop; dist += d; t = end; pos = j;
+        work += co != null || dv >= 1 ? Math.max(0, end - arr - (co != null ? 0 : sp.dl)) : this.dur(j); trav += hop; dist += d; t = end; pos = j;
         return { k, j, hop, d, road, arr, end, f };
       });
       return { ids, rows, work, trav, dist, finish: t };
@@ -954,6 +985,70 @@ class Dispatch {
   }
 
   /* ---------- actions ---------- */
+  // Technician status. Checked out asks for the check-out time (prefilled with now); any change of a check-out time
+  // recalculates the whole plan of the branch.
+  setStat(P, j, v) {
+    const mt = this.meta(j.key), was = this.coOf(j);
+    mt.stat = v;
+    if (v === 'checkout') { if (mt.co == null || mt.coDay !== this.today()) { mt.co = Math.floor(this.nowMin()); mt.coDay = this.today(); } }
+    else { delete mt.co; delete mt.coDay; }
+    const msg = j.wo + ': technician status ' + STAT[v] + (v === 'checkout' ? ' at ' + hm(mt.co) : '') + (v !== 'none' ? ' (locked)' : '') + '.';
+    if (v === 'checkout' || was != null) return this.reflow(P, msg);
+    this.changed(msg);
+  }
+  teamOf(P, key) { const i = P.teams.findIndex(t => t.includes(key)); return i < 0 ? null : i; }
+  setCo(P, j, text) {
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(text || '').trim()), err = this.ui.coErr || (this.ui.coErr = {});
+    if (!m) { err[j.key] = 'Use hh:mm, for example 14:35.'; return this.onChange(); }
+    const v = +m[1] * 60 + +m[2], i = this.teamOf(P, j.key), mt = this.meta(j.key);
+    if (+m[1] > 23 || +m[2] > 59) { err[j.key] = 'Not a time of day.'; return this.onChange(); }
+    if (v > this.nowMin() + 5) { err[j.key] = 'Check-out cannot be later than now (' + hm(this.nowMin()) + ').'; return this.onChange(); }
+    if (v < this.tstart(i)) { err[j.key] = 'Check-out cannot be before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
+    delete err[j.key];
+    if (mt.co === v && mt.coDay === this.today()) return this.onChange();
+    const old = mt.co;
+    mt.co = v; mt.coDay = this.today();
+    this.reflow(P, j.wo + ': check-out ' + (old != null ? 'changed from ' + hm(old) + ' to ' : 'set at ') + hm(v) + '.');
+  }
+  coInput(e, P, j) {
+    const mt = this.st.meta[j.key] || {}, err = (this.ui.coErr || {})[j.key], val = mt.co != null && mt.coDay === this.today() ? hm(mt.co) : '';
+    const commit = ev => { if (ev.target.value !== val) this.setCo(P, j, ev.target.value); };
+    return e('span', { key: 'co', style: { display: 'inline-flex', flexDirection: 'column', gap: 2 } },
+      e('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Check-out',
+        e('input', { key: 'co-' + val, type: 'text', inputMode: 'numeric', defaultValue: val, placeholder: 'hh:mm', maxLength: 5, 'aria-label': 'Check-out time',
+          onMouseDown: ev => ev.stopPropagation(), onBlur: commit, onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); },
+          style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } })),
+      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
+  }
+  // Recalculate the plan after a check-out (or other real progress): every team's route is checked again against its
+  // working day. Plans without manual changes are re-run in full, like the midday rebalance (started and checked-out jobs
+  // stay). Plans with manual changes keep each team's order: jobs that no longer fit go to another team or H+1, and teams
+  // that finish earlier take more work from H+1 (internal reason) on their own cell, neighbouring cells or as floater.
+  reflow(P, msg) {
+    const J = this._J, B = this._ctx && this._ctx.B;
+    if (!J || !B) return this.changed(msg);
+    const where = () => { const m = new Map(); P.teams.forEach((t, i) => t.forEach(k => m.set(k, i))); P.next.forEach(k => m.set(k, 'next')); return m; };
+    const before = where();
+    let how;
+    if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, J, B, true); how = 'full re-plan'; }
+    else {
+      const drop = [];
+      P.teams = P.teams.map((ids, i) => { if (!ids.length) return ids; const r = this.fitRoute(P, i, this.lockFirst(ids)); drop.push(...r.drop); return r.keep; });
+      const back = P.next.filter(k => (P.why[k] || 'internal') === 'internal' && !P.manual[k] && J.by.has(k));
+      const pool = drop.concat(back.filter(k => !drop.includes(k))).map(k => J.by.get(k)).filter(Boolean).sort(this.cmp);
+      const inPool = new Set(pool.map(j => j.key)), left = [];
+      P.next = P.next.filter(k => !inPool.has(k));
+      pool.forEach(j => { if (!this.place(P, j, B)) left.push(j.key); });
+      left.forEach(k => { P.next.push(k); if (!P.why[k]) P.why[k] = 'internal'; });
+      P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; if (P.role) P.role[i] = null; } });
+      how = 'routes rechecked, manual changes kept';
+    }
+    const after = where(), diff = {};
+    const bump = (i, d) => { const n = i === 'next' ? 'H+1' : this.tn(i); diff[n] = (diff[n] || 0) + d; };
+    after.forEach((i, k) => { const b = before.get(k); if (b !== i) { bump(i, 1); if (b != null) bump(b, -1); } });
+    const ch = Object.entries(diff).filter(([, d]) => d).map(([n, d]) => n + ' ' + (d > 0 ? '+' : '') + d);
+    this.changed(msg + ' Plan recalculated (' + how + ')' + (ch.length ? ': ' + ch.join(', ') + '.' : ', no job changed team; ETAs updated.'));
+  }
   move(P, key, dest, idx, label) {
     const J = this._J, j = J.by.get(key);
     if (!j || this.locked(j)) return;
@@ -1152,7 +1247,7 @@ class Dispatch {
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: this.board(e, P, T, B, pill, col),
-        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];
@@ -1291,16 +1386,17 @@ class Dispatch {
         r ? e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8 } },
           e('div', null,
             e('span', { style: { font: "600 16px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
-            e('span', { style: { font: MONO, color: C.muted } }, ' → ' + hm(r.end)),
-            e('div', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(0) + ' · ETA')),
+            e('span', { style: { font: MONO, color: this.coOf(j) != null ? C.good : C.muted } }, ' → ' + hm(r.end) + (this.coOf(j) != null ? ' ✓' : '')),
+            e('div', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(0) + (this.coOf(j) != null ? ' · actual finish' : ' · ETA'))),
           e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, textAlign: 'right' }, title: r.road ? 'Road drive time' : 'Straight-line estimate' }, (r.road ? '+' : '~') + r.hop + ' min' + (r.road ? '' : ' est.'), e('br'), nf1(r.d) + ' km'))
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
             sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
             e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
-        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : C.warn } }, f[1]))) : null,
+        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
         e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
           sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation'),
-          sel('stat', mt.stat || 'none', STAT, ev => { this.meta(j.key).stat = ev.target.value; this.changed(j.wo + ': technician status ' + STAT[ev.target.value] + (ev.target.value !== 'none' ? ' (locked)' : '') + '.'); }, 'Technician status'),
+          sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status'),
+          mt.stat === 'checkout' ? this.coInput(e, P, j) : null,
           lk ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
           lk ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
           lk ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
