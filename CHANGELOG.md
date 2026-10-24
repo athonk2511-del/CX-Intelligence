@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Official Bali hubs built in (`gxdispatch.js`):** GX HQ · Jl. Raya Kerobokan (-8.663833, 115.167354, default), GX GWK (-8.808184, 115.163520) and GX Gatsu (-8.634803, 115.249862). Every browser now starts from these hubs. One-time update: a Bali hub list saved earlier in a browser is replaced by these three, and team hub assignments are cleared because hub numbers changed (shifts, names and app IDs stay). Hubs added after the update are kept. Malang is unchanged.
 - **IDS hubs (`gxdispatch.js`)**
   - Every team departs from and returns to the default hub (the first one: GlobalXtreme HQ Jl. Raya Kerobokan) unless another hub is assigned to it in Settings → Crew or on the board. There is no automatic hub switching.
   - Busy cells that hold an urgent VIP get the team that reaches them soonest. The other busy cells are matched to teams across the board, shortest drive from each team's own hub first, so hub teams serve the cells near their hub.

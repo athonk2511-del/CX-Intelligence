@@ -40,10 +40,19 @@ const TYPES = {
 };
 const CONF = { none: 'Not contacted', ok: 'Confirmed', noresp: 'No answer', resched: 'Asks to reschedule' };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
+// Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
+const BALI_RE = /bali|denpasar|badung|kerobokan/i;
 const BASES = [
-  [/bali|denpasar|badung|kerobokan/i, { name: 'GlobalXtreme HQ · Jl. Raya Kerobokan 388X', lat: -8.6705, lng: 115.1655 }],
-  [/malang/i, { name: 'GX Malang', lat: -7.9797, lng: 112.6304 }],
+  [BALI_RE, [
+    { name: 'GX HQ · Jl. Raya Kerobokan', lat: -8.663833327967687, lng: 115.1673543142895 },
+    { name: 'GX GWK', lat: -8.80818374437819, lng: 115.163520401385 },
+    { name: 'GX Gatsu', lat: -8.63480345205987, lng: 115.24986225895645 },
+  ]],
+  [/malang/i, [{ name: 'GX Malang', lat: -7.9797, lng: 112.6304 }]],
 ];
+// Bumped when the built-in hubs change: saved Bali hub lists are replaced by the built-in ones and team hub assignments are
+// cleared once (hub numbers change), so every browser starts from the same official hubs.
+const HUB_V = '2026-10-24b';
 // Tourist centres in Bali, approximate. Within tR km of one of these, drives get the tourist traffic factor. Assumption to be
 // calibrated against real Traccar drive times.
 const TOURIST = [
@@ -146,7 +155,13 @@ class Dispatch {
     s = s && typeof s === 'object' ? s : {};
     const DEF_V = '2026-10-23';
     if (s.cfg && s.cfg.defV !== DEF_V) { ['traffic', 'anchorH', 'speed', 'maxHop', 'ring', 'ring2', 'hop2'].forEach(k => { delete s.cfg[k]; }); s.cfg.defV = DEF_V; }
-    const cfg = { ...DEF, ...(s.cfg || {}), defV: DEF_V };
+    if (s.cfg && s.cfg.hubV !== HUB_V) {
+      const b = { ...(s.cfg.bases || {}) };
+      Object.keys(b).forEach(k => { if (BALI_RE.test(k)) delete b[k]; });
+      s.cfg.bases = b;
+      s.cfg.crew = (s.cfg.crew || []).map(x => x ? { ...x, base: undefined } : x);
+    }
+    const cfg = { ...DEF, ...(s.cfg || {}), defV: DEF_V, hubV: HUB_V };
     cfg.dur = { ...DEF.dur, ...((s.cfg || {}).dur || {}) };
     cfg.bases = { ...((s.cfg || {}).bases || {}) };
     return { cfg, plans: s.plans || {}, meta: s.meta || {}, log: Array.isArray(s.log) ? s.log.slice(0, 200) : [] };
@@ -204,7 +219,7 @@ class Dispatch {
     const list = (Array.isArray(saved) ? saved : saved ? [saved] : []).filter(b => b && isFinite(b.lat) && isFinite(b.lng));
     if (list.length) return list.map((b, n) => ({ ...b, name: b.name || name + ' base ' + (n + 1), guess: false }));
     const hit = BASES.find(([re]) => re.test(name));
-    if (hit) return [{ ...hit[1], guess: true }];
+    if (hit) return hit[1].map(b => ({ ...b, guess: false }));
     const n = J.list.length || 1;
     return [{ name: name + ' centre of jobs', lat: J.list.reduce((a, j) => a + j.lat, 0) / n || -8.67, lng: J.list.reduce((a, j) => a + j.lng, 0) / n || 115.17, guess: true }];
   }
