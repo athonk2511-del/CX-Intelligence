@@ -235,7 +235,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24c'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-24d'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -1516,7 +1516,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-24e'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-24f'), import('./gxmap.js')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -1558,6 +1558,8 @@ class Component extends DCLogic {
       : L.state === 'demo' ? ['warn', 'Simulated technicians (demo), not real positions. Set a live Traccar server in Tracking setup.']
       : L.state === 'error' ? ['bad', 'Traccar not reachable: ' + (L.msg || 'error')]
       : ['muted', L.msg || 'Tracking off'];
+    const sh = this.trackShare;
+    if (this.isAdmin() && sh && sh.state !== 'ok' && sh.msg) trackLine[1] += ' · ' + sh.msg;
     return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine });
   }
 
@@ -1670,7 +1672,7 @@ class Component extends DCLogic {
     if (this.track) { if (this.state.data.map) this.track.setMap(this.state.data.map); return; }
     if (this.trackLoading) return;
     this.trackLoading = true;
-    import('./gxtrack.js?v=2026-10-24a').then(TK => {
+    import('./gxtrack.js?v=2026-10-24b').then(TK => {
       const shared = !!(this.D && this.D.trackGet), admin = this.isAdmin();
       this.TK = TK; this.track = new TK.TrackStore(this.D, { wait: shared || !admin });
       this.track.subscribe(() => this.setState({ trkTick: Date.now() }));
@@ -1678,13 +1680,27 @@ class Component extends DCLogic {
       // One Traccar connection for every screen: the settings an admin saved on the proxy. An admin whose browser already
       // has a live connection but the proxy has none yet publishes it once. Non-admins never see simulated technicians.
       const T = this.track, live = c => !!(c && c.mode === 'live' && c.server && c.token);
-      (shared ? this.D.trackGet() : Promise.resolve(null)).catch(() => null).then(sh => {
-        if (live(sh)) return T.applyShared(sh);
-        if (admin && live(T.cfg)) { if (shared) this.D.trackPut(T.cfg).catch(() => {}); return T.applyShared(T.cfg); }
+      const share = (state, msg) => { this.trackShare = { state, msg }; this.forceUpdate(); };
+      (shared ? this.D.trackGet() : Promise.reject(new Error('this dashboard has no proxy'))).then(sh => {
+        if (live(sh)) { share('ok', 'Shared with every user: ' + sh.server); return T.applyShared(sh); }
+        if (admin && live(T.cfg)) { T.applyShared(T.cfg); return this.shareTrack(T.cfg); }
+        share(admin ? 'warn' : 'none', admin ? 'Nothing shared: this screen has no live Traccar server either. Set it in Tracking setup.' : '');
         T.applyShared(admin ? T.cfg : { mode: 'none' });
+      }, err => {
+        share('bad', 'Not shared with other users: ' + err.message + '.');
+        T.applyShared(admin ? T.cfg : { mode: 'none' }, 'Live tracking is not available: ' + err.message + '. Ask the admin.');
       });
       this.forceUpdate();
     }).catch(e => { this.trackLoading = false; console.warn('tracking', e); });
+  }
+
+  // Admin: put this screen's live Traccar connection on the proxy for every user.
+  shareTrack(cfg) {
+    const c = cfg || (this.track && this.track.cfg);
+    if (!c || c.mode !== 'live' || !c.server || !c.token) { this.trackShare = { state: 'warn', msg: 'Nothing to share: set a live Traccar server and token first.' }; this.forceUpdate(); return Promise.resolve(); }
+    this.trackShare = { state: 'busy', msg: 'Sharing with every user…' }; this.forceUpdate();
+    return this.D.trackPut(c).then(() => { this.trackShare = { state: 'ok', msg: 'Shared with every user: ' + c.server }; this.forceUpdate(); })
+      .catch(e => { this.trackShare = { state: 'bad', msg: 'Not shared with other users: ' + e.message }; this.forceUpdate(); });
   }
 
   syncTrack() {
@@ -1693,7 +1709,7 @@ class Component extends DCLogic {
     const T = this.track, api = this.mapApi, tr = this.state.trk;
     if (api && v === 'map') { if (this._trkOnMap !== false) { api.setTechs([], { colors: {}, sel: null, show: false, onClick: () => {} }); api.showRoute(null); api.setReplay(null); this._trkOnMap = false; } return; }
     this._trkOnMap = true;
-    if (T && api && this.isDsp(v)) { api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: null, show: true, onClick: () => {} }); return; }
+    if (T && api && this.isDsp(v)) { const devs = this.DSP && this.DSP.mapDevices ? this.DSP.mapDevices(T.devices) : T.devices; api.setTechs(devs, { colors: this.TK.STATE_COLORS, sel: null, show: devs.length > 0, onClick: () => {} }); return; }
     if (!T || !api || v !== 'map') return;
     api.setTechs(T.devices, { colors: this.TK.STATE_COLORS, sel: tr.sel, show: tr.show, onClick: id => this.selectTech(id) });
     const dd = tr.sel != null ? T.dayData(tr.day) : null;
@@ -1904,9 +1920,7 @@ class Component extends DCLogic {
     const save = () => {
       T.saveConfig(dr);
       this.setState({ tDraft: null, tMsg: { ok: true, text: dr.mode === 'demo' ? 'Saved. Demo data is running on this screen only; other users see no technicians until a live server is set.' : 'Saved. Connecting to ' + dr.server + '…' } });
-      if (this.D.trackPut && this.isAdmin()) this.D.trackPut(dr.mode === 'live' ? T.cfg : null)
-        .then(() => { if (dr.mode === 'live') this.setState({ tMsg: { ok: true, text: 'Saved and shared: every dashboard user (Customer map and IDS) now uses ' + dr.server + '.' } }); })
-        .catch(e => this.setState({ tMsg: { ok: false, text: 'Saved on this screen, but not shared: ' + e.message } }));
+      if (this.D.trackPut && this.isAdmin() && dr.mode === 'live') this.shareTrack(T.cfg);
     };
     const test = async () => {
       if (dr.mode === 'demo') { this.setState({ tMsg: { ok: false, text: 'Switch the mode to Live Traccar to test a server.' } }); return; }
@@ -1995,7 +2009,14 @@ class Component extends DCLogic {
         e('textarea', { value: dr.purpose || '', onChange: ev => setD({ purpose: ev.target.value }), rows: 6, style: { ...inputS, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", resize: 'vertical' } }),
         h('span', { font: small, color: '#5F5F5B' }, 'Share this with technicians before installing the app. Indonesia’s PDP law expects a stated purpose and retention period for employee location data; the server deletes positions after ' + (dr.retentionDays || 365) + ' days.')),
     });
-    return { kpis: [], cards: [connection, link, behaviour, matching, setup, phone, purpose] };
+    const sh = this.trackShare || { state: 'busy', msg: 'Checking…' };
+    const shareCard = this.card('Shared with every user', {
+      span: 12, meta: { ok: 'shared', bad: 'not shared', warn: 'not shared', busy: '…', none: '' }[sh.state] || '',
+      body: h('div', { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
+        h('span', { font: sans, color: { ok: '#2E6B34', bad: '#9B2C1F', warn: '#7A4A10' }[sh.state] || '#5F5F5B' }, sh.msg || '—'),
+        this.isAdmin() ? btn('Share this connection with everyone', () => this.shareTrack(T.cfg), true, sh.state === 'busy' || T.cfg.mode !== 'live') : null),
+    });
+    return { kpis: [], cards: [shareCard, connection, link, behaviour, matching, setup, phone, purpose] };
   }
 
   seg(view) { return view === 'growth' ? 'retail' : view === 'intracity' ? 'intracity' : null; }

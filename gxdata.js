@@ -1600,8 +1600,9 @@ export async function trackGet() {
   if (!useProxy()) return null;
   const k = readKey(); if (!k) return null;
   const res = await fetch(`${PROXY_URL}?action=track&key=${encodeURIComponent(k)}`);
-  let out = null; try { out = JSON.parse(await res.text()); } catch (e) { return null; }
-  if (!out || out.error) return null;
+  let out = null; try { out = JSON.parse(await res.text()); } catch (e) { out = null; }
+  if (!out || !('track' in out) && !out.error) throw new Error('the Apps Script proxy cannot share tracking yet (paste the latest roles.gs and deploy a New version)');
+  if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'this access key may not read the tracking settings' : out.error);
   return out.track || null;
 }
 export async function trackPut(cfg) {

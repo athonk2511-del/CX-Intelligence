@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-24 (map toggles)
+
+### Added
+
+- **IDS map · Show on map:** a checkbox per team (route, jobs and its live technician), All / None, H+1 rings and Live technicians. Remembered per screen; does not change the shared plan.
+- Live technicians are linked to a team when the crew **App ID** equals the Traccar device identifier (or the device name equals the team name); the marker label shows the team.
+- **Tracking setup · Shared with every user:** shows whether the Traccar connection is shared, why not, and a **Share this connection with everyone** button.
+
+### Fixed
+
+- Sharing the Traccar connection no longer fails silently: admins see the reason on the IDS Technicians line and on Tracking setup; dispatchers see why tracking is unavailable.
+- Route lines of teams that leave from GX GWK or GX Gatsu were never drawn (looked up with the default hub).
+
 ## 2026-10-24 (tracking for everyone)
 
 ### Fixed

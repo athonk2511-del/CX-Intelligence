@@ -140,12 +140,12 @@ export class TrackStore {
   saveConfig(c) { this.cfg = { ...DEFAULTS, ...c }; localStorage.setItem(KEY, JSON.stringify(this.cfg)); this.restart(); }
   restart() { this.stop(); this.cache.clear(); this.devices = []; this.start(); }
   // Settings shared by an admin for every screen. mode 'none' = no live tracking set up: no demo, no technicians.
-  applyShared(c) { this.waiting = false; this.shared = true; this.cfg = { ...DEFAULTS, ...(c || { mode: 'none' }) }; this.restart(); }
+  applyShared(c, why) { this.waiting = false; this.shared = true; this.noneWhy = why || ''; this.cfg = { ...DEFAULTS, ...(c || { mode: 'none' }) }; this.restart(); }
   start() {
     this.started = true;
     const c = this.cfg;
     if (this.waiting) { this.link = { state: 'waiting', msg: 'Loading the shared tracking settings…', reconnects: 0 }; this.emit(); return; }
-    if (c.mode === 'none') { this.link = { state: 'off', msg: 'Live technician tracking has not been set up by the admin yet.', reconnects: 0 }; this.emit(); return; }
+    if (c.mode === 'none') { this.link = { state: 'off', msg: this.noneWhy || 'Live technician tracking has not been set up by the admin yet.', reconnects: 0 }; this.emit(); return; }
     if (c.mode === 'demo') {
       if (!this.map) { this.link = { state: 'waiting', msg: 'Waiting for customer locations to build the demo' }; this.emit(); return; }
       this.demo = new Demo(this.map);

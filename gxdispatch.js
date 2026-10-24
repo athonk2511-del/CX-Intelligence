@@ -150,6 +150,7 @@ class Dispatch {
     // Shared plan: set by the host (api = { get(type, since), post(body) }); without it the plan stays in this browser.
     this.api = null; this.user = ''; this.active = false; this.dataAt = 0;
     this.shInit();
+    this.loadHidden();
     this._poll = setInterval(() => this.shPoll(false), POLL_MS);
     // Hook for the technician mobile app: window.GXIDS.WWR.event({ app | team, type, time, note }).
     if (typeof window !== 'undefined') { window.GXIDS = window.GXIDS || {}; window.GXIDS[this.type] = { event: o => this.appEvent(o), types: ['break_start', 'break_end', 'problem_start', 'problem_end'] }; }
@@ -186,6 +187,34 @@ class Dispatch {
   tn(n) { const v = (this.st.cfg.names || [])[n]; return v && String(v).trim() ? String(v).trim() : 'Team ' + (n + 1); }
   setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; if (this.ui.draft) { const b = (this.ui.draft.names || []).slice(); b[n] = a[n]; this.ui.draft.names = b; } this.ver++; this.save(); this.onChange(); }
   meta(key) { return this.st.meta[key] || (this.st.meta[key] = { conf: 'none', stat: 'none', aging: [] }); }
+
+  /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
+  loadHidden() {
+    const v = store.load('gx.ids.' + this.type + '.view') || {};
+    this.ui.hidden = new Set(Array.isArray(v.teams) ? v.teams : []); this.ui.hideNext = !!v.next; this.ui.hideTech = !!v.tech;
+  }
+  saveHidden() {
+    store.save('gx.ids.' + this.type + '.view', { teams: [...this.ui.hidden], next: this.ui.hideNext, tech: this.ui.hideTech });
+    this._layer = null; this.ver++; this.onChange();
+  }
+  toggleTeam(n) { if (this.ui.hidden.has(n)) this.ui.hidden.delete(n); else this.ui.hidden.add(n); this.saveHidden(); }
+  // The team a live Traccar device belongs to: the crew App ID equals the device identifier (or its Traccar id),
+  // or the device name equals the team name.
+  teamOfDevice(d) {
+    const uid = String(d.uniqueId == null ? '' : d.uniqueId).trim(), nm = String(d.name || '').trim().toLowerCase();
+    const n = Math.max(1, Math.round(+this.st.cfg.teams || 1));
+    for (let i = 0; i < n; i++) {
+      const app = String(this.crew(i).app || '').trim();
+      if ((app && (app === uid || app === String(d.id))) || (nm && this.tn(i).toLowerCase() === nm)) return i;
+    }
+    return -1;
+  }
+  // Live technicians for the IDS map: hidden teams and the "Live technicians" switch apply; team name in the label.
+  mapDevices(list) {
+    if (this.ui.hideTech) return [];
+    return (list || []).map(d => ({ d, t: this.teamOfDevice(d) })).filter(x => x.t < 0 || !this.ui.hidden.has(x.t))
+      .map(x => x.t < 0 ? x.d : { ...x.d, name: this.tn(x.t) + ' · ' + x.d.name });
+  }
 
   /* ---------- shared plan (Apps Script) ----------
      The plan is split into parts: 'cfg' (settings shared by everyone), 'plan:<branch>' and 'meta:<WO>' (confirmation,
@@ -1081,8 +1110,17 @@ class Dispatch {
       this.ui.settings ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 14, height: 10, background: b.color, opacity: 0.75, border: '1px solid ' + b.color } }), b.label)), 'bands'),
-      row('Routes', [
-        ...T.map((t, n) => t.ids.length ? e('span', { key: 'lg' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } }, sw(col(n)), this.tn(n)) : null),
+      row('Show on map', [
+        ...T.map((t, n) => t.ids.length ? e('label', { key: 'lg' + n, title: 'Show or hide ' + this.tn(n) + ': route, jobs and live technician', style: { display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px', border: '1px solid ' + (this.ui.hidden.has(n) ? C.line : C.ink), borderRadius: 3, background: this.ui.hidden.has(n) ? C.bg : C.white, font: SANS, color: this.ui.hidden.has(n) ? '#8A8A85' : C.text, cursor: 'pointer' } },
+          e('input', { type: 'checkbox', checked: !this.ui.hidden.has(n), onChange: () => this.toggleTeam(n), 'aria-label': 'Show ' + this.tn(n), style: { margin: 0, accentColor: col(n) } }), sw(col(n)), this.tn(n), e('span', { style: { font: MONO, color: C.muted } }, String(t.ids.length))) : null),
+        btn('va', 'All', () => { this.ui.hidden.clear(); this.saveHidden(); }),
+        btn('vn', 'None', () => { T.forEach((t, n) => this.ui.hidden.add(n)); this.saveHidden(); }),
+        e('label', { key: 'vh', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text, cursor: 'pointer' } },
+          e('input', { type: 'checkbox', checked: !this.ui.hideNext, onChange: () => { this.ui.hideNext = !this.ui.hideNext; this.saveHidden(); }, style: { margin: 0 } }), 'H+1'),
+        e('label', { key: 'vt', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text, cursor: 'pointer' } },
+          e('input', { type: 'checkbox', checked: !this.ui.hideTech, onChange: () => { this.ui.hideTech = !this.ui.hideTech; this.saveHidden(); }, style: { margin: 0 } }), 'Live technicians'),
+      ], 'vis'),
+      row('Legend', [
         e('span', { key: 'lgn', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } }, e('span', { style: { width: 10, height: 10, borderRadius: '50%', border: '2px solid #D9480F', boxSizing: 'border-box' } }), 'Deferred H+1'),
         e('span', { key: 'lgd', style: { font: SANS, color: C.muted } }, 'route lines appear once the road route is loaded'),
       ], 'lgd'),
@@ -1410,7 +1448,7 @@ class Dispatch {
   /* ---------- map layer ---------- */
   layer() {
     const x = this._ctx; if (!x || !this._J || !x.P || !this._cells) return null;
-    const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length;
+    const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length + '|' + [...this.ui.hidden].join(',') + '|' + this.ui.hideNext;
     if (this._layer && this._layer.key === k) return this._layer;
     const J = this._J, P = x.P, cfg = this.st.cfg;
     const tip = j => j.wo + ' · ' + (j.uid || j.cid) + ' · ' + j.tier + ' · ' + j.cat;
@@ -1421,9 +1459,9 @@ class Dispatch {
         tip: [this.M.cellLabel(g.key) + ' · priority #' + g.rank, fmtN(g.jobs.length) + ' WO' + (g.vip ? ' · ' + g.vip + ' VIP (worked first)' : ''),
           g.ctr ? 'Busy cell (>' + cfg.gridMin + ' WO) · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : 'Neighbouring anchor team or floater', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
-      teams: P.teams.map((ids, n) => ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, x.B)) || null : null,
-        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j) })) })).filter(t => t.pts.length),
-      next: P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + tip(j) })),
+      teams: P.teams.map((ids, n) => this.ui.hidden.has(n) ? null : ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, this.tbase(P, n))) || null : null,
+        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j) })) })).filter(t => t && t.pts.length),
+      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + tip(j) })),
     };
     return this._layer;
   }
