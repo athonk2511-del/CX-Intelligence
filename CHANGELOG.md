@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-10-25 (save settings)
+
+### Added
+
+- **IDS settings · Save:** a **Save** button at the top and the bottom of Settings (admins) and Teams & crew (dispatchers). It replaces "Apply and re-plan"; Cancel is now **Discard changes** / **Close**.
+- Typed changes are kept in the browser until they are saved or discarded. Closing the panel, the tab or the dashboard no longer loses them. On return an **Unsaved settings changes · Save · Discard** bar appears next to the Settings button.
+- After saving, the status reads **Settings saved for everyone · hh:mm** once the shared plan has them. It shows why if they could not be shared (offline, proxy not updated).
+
+### Fixed
+
+- Saving sends only the fields changed in the panel, on top of the latest shared settings, so an admin save no longer undoes a dispatcher's team or crew change made meanwhile (and the other way round).
+- Shared settings are compared in one canonical form (defaults filled in, keys sorted). A setting added in a newer version, or a different key order, no longer counts as a change, so screens no longer re-send the settings when they open.
+
+## 2026-10-25 (nearby first, card colours)
+
+### Added
+
+- **IDS · Nearby first** (Settings → Nearby):
+  - After each job, a job not yet started within **500 m** (`nearM`) is done next, so the technician does not drive away and come back.
+  - Safeguards: no job may miss its SLA because of it, urgent VIP (Wiredown / Power) are never delayed, every job that fitted the working day still fits, and a job with a higher score waits at most **60 min** more (`nearDelay`).
+  - The card says "Nearby: 268 m from the previous stop". The team line shows what it saves, for example "nearby first saves 29 min · 9.8 km".
+  - Applied on every automatic plan, re-plan, 12:00 rebalance, check-out recalculation and Tidy route. Set 0 m to switch it off.
+- **Suggestions for plans changed by hand:**
+  - Nothing is reordered automatically. The card of a nearby job asks "WWR… is 268 m away. Do this job right after it?", with the delay it causes to a higher-priority job, and a **Move next** button.
+  - Suggestions keep the SLA and urgent-VIP safeguards, but not the 60 min limit: the dispatcher decides.
+- **Card colours by urgency** (legend on the board):
+
+  | Colour | Label | Meaning |
+  |---|---|---|
+  | Red | Act now | SLA breached, will miss its SLA on this route, or urgent VIP |
+  | Orange | Due soon | SLA due within the near-breach hours (default 3 h) |
+  | Yellow | Due today | SLA due before the end of today's working hours |
+  | Green | Due tomorrow | SLA due during the next working day |
+  | Blue | Safe · negotiable | SLA due later: can be rescheduled with the customer |
+
+  Checked-out jobs are grey.
+
 ## 2026-10-25 (check-out time)
 
 ### Added

@@ -39,6 +39,15 @@ const TYPES = {
   WCM: { name: 'maintenance', st: 'cm', info: 'cmInfo' },
 };
 const CONF = { none: 'Not contacted', ok: 'Confirmed', noresp: 'No answer', resched: 'Asks to reschedule' };
+// Card colour by urgency (SLA left and urgent VIP). Red = do now; blue = safe, can be negotiated with the customer.
+const URG = {
+  red: { c: '#C92A2A', bg: '#FFF5F5', label: 'Act now', tip: 'SLA breached, will miss its SLA on this route, or urgent VIP (Wiredown / Power)' },
+  orange: { c: '#E8590C', bg: '#FFF4E6', label: 'Due soon', tip: 'SLA due within the near-breach hours' },
+  yellow: { c: '#E0A800', bg: '#FFFBEA', label: 'Due today', tip: 'SLA due before today\u2019s working hours end' },
+  green: { c: '#2B8A3E', bg: '#F1FAF2', label: 'Due tomorrow', tip: 'SLA due during the next working day' },
+  blue: { c: '#1971C2', bg: '#EFF6FD', label: 'Safe · negotiable', tip: 'SLA due later: can be rescheduled with the customer' },
+  done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
+};
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
 const BALI_RE = /bali|denpasar|badung|kerobokan/i;
@@ -69,7 +78,7 @@ const DEF = {
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
-  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -185,7 +194,7 @@ class Dispatch {
     this.st.log = this.st.log.slice(0, 200);
   }
   tn(n) { const v = (this.st.cfg.names || [])[n]; return v && String(v).trim() ? String(v).trim() : 'Team ' + (n + 1); }
-  setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; if (this.ui.draft) { const b = (this.ui.draft.names || []).slice(); b[n] = a[n]; this.ui.draft.names = b; } this.ver++; this.save(); this.onChange(); }
+  setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; if (this.ui.draft) { const b = (this.ui.draft.names || []).slice(); b[n] = a[n]; this.ui.draft.names = b; if (this.ui.base) { const o = JSON.parse(this.ui.base), c = (o.names || []).slice(); c[n] = a[n]; o.names = c; this.ui.base = JSON.stringify(o); } this.keepDraft(); } this.ver++; this.save(); this.onChange(); }
   meta(key) { return this.st.meta[key] || (this.st.meta[key] = { conf: 'none', stat: 'none', aging: [] }); }
 
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
@@ -224,15 +233,24 @@ class Dispatch {
      shows their version. Every screen polls for changes every few seconds. */
   shInit() { this.sh = { on: false, ready: false, unsupported: false, rev: null, revs: {}, snap: {}, logSent: new Set(), busy: false, dirty: false, err: null, msg: null, at: 0, by: '', lastOk: 0 }; }
   sharedCfg(c) { const o = { ...c }; LOCAL_CFG.forEach(k => { delete o[k]; }); return o; }
+  // One canonical text for the shared settings: defaults filled in, per-screen keys removed, keys sorted. Local and server
+  // settings are compared in this form, so key order or a default added in a newer version never counts as a change
+  // (that made screens re-send the settings every 10 s and overwrite each other's saves).
+  cfgJson(v) {
+    if (!v) return null;
+    const full = this.sharedCfg({ ...DEF, ...v, dur: { ...DEF.dur, ...(v.dur || {}) }, bases: { ...(v.bases || {}) } });
+    const sort = o => Array.isArray(o) ? o.map(sort) : o && typeof o === 'object' ? Object.keys(o).sort().reduce((a, k) => { if (o[k] !== undefined) a[k] = sort(o[k]); return a; }, {}) : o;
+    return JSON.stringify(sort(full));
+  }
   localParts() {
-    const out = { cfg: JSON.stringify(this.sharedCfg(this.st.cfg)) };
+    const out = { cfg: this.cfgJson(this.st.cfg) };
     Object.keys(this.st.plans).forEach(n => { out['plan:' + n] = JSON.stringify(this.st.plans[n]); });
     Object.keys(this.st.meta).forEach(k => { out['meta:' + k] = JSON.stringify(this.st.meta[k]); });
     return out;
   }
   serverParts(ids) {
     const out = {};
-    if (ids.cfg) out.cfg = JSON.stringify(ids.cfg);
+    if (ids.cfg) out.cfg = this.cfgJson(ids.cfg);
     Object.keys(ids.plans || {}).forEach(n => { out['plan:' + n] = JSON.stringify(ids.plans[n]); });
     Object.keys(ids.meta || {}).forEach(k => { out['meta:' + k] = JSON.stringify(ids.meta[k]); });
     return out;
@@ -685,7 +703,7 @@ class Dispatch {
     this._need = { J: this._J, rv: this.road.ver, cv: sig, v };
     return v;
   }
-  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
+  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, c.nearM, c.nearDelay, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
 
   /* ---------- planning ---------- */
   today() { return ymd(new Date()); }
@@ -845,6 +863,9 @@ class Dispatch {
         this.put(s, best.j, best.f); P.ret[best.j.key] = true; pool.splice(best.n, 1);
       }
     });
+    // 7. Nearby first: inside each route, a job within nearM metres of the one just finished is done next (with safeguards).
+    P.near = {}; P.nearSave = {};
+    P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, ids) : ids);
     const left = new Set(pool.map(j => j.key)), rest3k = rest3.map(j => j.key).filter(k => left.has(k)), overk = over.filter(k => left.has(k));
     rest3k.concat(overk, orphan).forEach(k => { P.why[k] = 'internal'; });
     hold.forEach(k => { P.why[k] = 'customer'; });
@@ -912,11 +933,104 @@ class Dispatch {
     return out.concat(back);
   }
 
+  /* ---------- nearby first ---------- */
+  // Arrival / finish of every job of a route, in order (same timing as the board).
+  sim(P, i, ids) {
+    const s = this.fresh(i, P, this.tbase(P, i)), out = new Map();
+    ids.forEach(k => { const j = this._J.by.get(k); if (!j) return; const f = this.fit(s, j); out.set(k, { arr: f.arr, end: f.end, ok: this.ok(f) || this.locked(j) }); this.put(s, j, f); });
+    return out;
+  }
+  // Minutes until the SLA is due, as a clock time today (Infinity when it is due on a later day).
+  dueToday(j) { const r = this.rem(j), left = Math.max(0, this.st.cfg.end - this.nowMin()); return r <= left ? this.nowMin() + r : Infinity; }
+  // Is order `b` acceptable compared with order `a`? Every job that fitted still fits, no job that met its SLA misses it,
+  // urgent VIP arrive no later, and a job with a higher score than the moved one waits at most nearDelay minutes more.
+  // Returns null when not allowed, else { delay, by }: the longest extra wait of a higher-priority job, and which one.
+  swapCost(P, i, a, b, moved) {
+    const A = this.sim(P, i, a), Bm = this.sim(P, i, b), J = this._J, sc = this.score(J.by.get(moved));
+    let delay = 0, by = null;
+    for (const [k, x] of A) {
+      const y = Bm.get(k), j = J.by.get(k);
+      if (!y || !j) return null;
+      if (x.ok && !y.ok) return null;
+      const due = this.dueToday(j);
+      if (x.end <= due && y.end > due) return null;
+      if (k === moved) continue;
+      if (y.arr > x.arr + 0.5) {
+        if (j.tier === 'VIP' && this.urgent(j)) return null;
+        if (this.score(j) > sc && y.arr - x.arr > delay) { delay = y.arr - x.arr; by = k; }
+      }
+    }
+    return { delay: Math.round(delay), by };
+  }
+  safeSwap(P, i, a, b, moved) { const c = this.swapCost(P, i, a, b, moved); return !!c && c.delay <= Math.max(0, +this.st.cfg.nearDelay || 0); }
+  // Metres between two jobs (straight line; the radius is about "same street", not the road network).
+  metres(a, b) { return Math.round(hav(a, b) * 1000); }
+  // A job that may be pulled forward: not started, not waiting for the customer to answer.
+  pullable(k) { const j = this._J.by.get(k); return !!j && !this.locked(j) && (this.st.meta[k] || {}).conf !== 'noresp'; }
+  // After each job, a not-yet-started job within nearM metres goes next when safeSwap allows it (nearest first).
+  // Repeats from the job pulled in, so a group of nearby jobs is done in one visit.
+  nearPass(P, i, ids) {
+    const R = Math.max(0, +this.st.cfg.nearM || 0), J = this._J;
+    if (!R || ids.length < 3) return ids;
+    let order = ids.slice();
+    const pulled = {};
+    for (let p = 0; p < order.length - 2; p++) {
+      const c = J.by.get(order[p]); if (!c) continue;
+      if (order[p + 1] && this.metres(c, J.by.get(order[p + 1])) <= R) continue;   // already next door
+      const cand = order.slice(p + 2).filter(k => this.pullable(k) && this.metres(c, J.by.get(k)) <= R)
+        .sort((x, y) => this.metres(c, J.by.get(x)) - this.metres(c, J.by.get(y)));
+      for (const k of cand) {
+        const trial = order.filter(x => x !== k); trial.splice(p + 1, 0, k);
+        if (this.lockedBefore(trial, p + 1) && this.safeSwap(P, i, order, trial, k)) { order = trial; pulled[k] = { from: order[p], m: this.metres(c, J.by.get(k)) }; break; }
+      }
+    }
+    if (Object.keys(pulled).length) {
+      const t0 = this.sim(P, i, ids), t1 = this.sim(P, i, order), fin = m => Math.max(...[...m.values()].map(x => x.end));
+      P.near = P.near || {}; Object.assign(P.near, pulled);
+      P.nearSave = P.nearSave || {};
+      const km = l => { let pos = this.tbase(P, i), d = 0; l.forEach(k => { const j = J.by.get(k); d += this.km(pos, j); pos = j; }); return d; };
+      P.nearSave[i] = { min: Math.max(0, Math.round(fin(t0) - fin(t1))), km: Math.max(0, km(ids) - km(order)) };
+    }
+    return order;
+  }
+  // Started jobs stay in front: position n may only follow started jobs or other jobs.
+  lockedBefore(ids, n) { const J = this._J; for (let x = n + 1; x < ids.length; x++) { const j = J.by.get(ids[x]); if (j && this.locked(j)) return false; } return true; }
+  // For plans changed by hand: the best nearby job to do right after stop n, as a suggestion (nothing is moved).
+  nearHint(P, i, ids) {
+    const R = Math.max(0, +this.st.cfg.nearM || 0), J = this._J, out = {};
+    if (!R || ids.length < 3) return out;
+    for (let p = 0; p < ids.length - 2; p++) {
+      const c = J.by.get(ids[p]); if (!c || this.metres(c, J.by.get(ids[p + 1])) <= R) continue;
+      const cand = ids.slice(p + 2).filter(k => !out[k] && this.pullable(k) && this.metres(c, J.by.get(k)) <= R)
+        .sort((x, y) => this.metres(c, J.by.get(x)) - this.metres(c, J.by.get(y)));
+      for (const k of cand) {
+        const trial = ids.filter(x => x !== k); trial.splice(p + 1, 0, k);
+        const cost = this.lockedBefore(trial, p + 1) ? this.swapCost(P, i, ids, trial, k) : null;
+        if (cost) { out[k] = { after: ids[p], idx: p + 1, m: this.metres(c, J.by.get(k)), delay: cost.delay, by: cost.by }; break; }
+      }
+    }
+    return out;
+  }
+  // Urgency colour of a job: red = act now, blue = safe to negotiate with the customer.
+  urgency(j, end) {
+    if (this.breached(j)) return 'red';
+    if (j.tier === 'VIP' && this.urgent(j)) return 'red';
+    const due = this.dueToday(j);
+    if (end != null && end > due) return 'red';
+    if (this.soon(j)) return 'orange';
+    const r = this.rem(j), left = Math.max(0, this.st.cfg.end - this.nowMin()), day = Math.max(60, this.st.cfg.end - this.st.cfg.start);
+    if (r <= left) return 'yellow';
+    if (r <= left + day) return 'green';
+    return 'blue';
+  }
+
   /* ---------- timeline ---------- */
   calc(P, B) {
     const cfg = this.st.cfg, J = this._J;
     let hops = 0, roadHops = 0;
+    const manual = Object.keys(P.manual || {}).length > 0;
     const T = P.teams.map((ids, ti) => {
+      const hints = manual ? this.nearHint(P, ti, ids) : {};
       let t = this.tstart(ti), pos = this.tbase(P, ti), work = 0, trav = 0, dist = 0;
       const tEnd = this.tend(ti), tLast = this.tlast(ti);
       const E = this.evList(P, ti), kk = { i: 0 };
@@ -938,7 +1052,9 @@ class Dispatch {
         if (this.soon(j)) { const due = this.nowMin() + this.rem(j); if (end > due) f.push(['bad', 'Misses SLA: due ' + hm(due) + ', done ' + hm(end)]); }
         if ((this.st.meta[k] || {}).conf === 'noresp') f.push(['warn', 'No answer yet: consider the end of the route']);
         work += co != null || dv >= 1 ? Math.max(0, end - arr - (co != null ? 0 : sp.dl)) : this.dur(j); trav += hop; dist += d; t = end; pos = j;
-        return { k, j, hop, d, road, arr, end, f };
+        const nr = P.near && P.near[k] && n > 0 && ids[n - 1] === P.near[k].from ? P.near[k] : null;
+        if (nr) f.push(['info', 'Nearby: ' + nr.m + ' m from the previous stop, done in the same visit']);
+        return { k, j, hop, d, road, arr, end, f, urg: co != null ? 'done' : this.urgency(j, end), near: nr, hint: hints[k] || null };
       });
       return { ids, rows, work, trav, dist, finish: t };
     });
@@ -1192,8 +1308,11 @@ class Dispatch {
         e('span', { key: 'pd', style: { font: MONO, color: C.ink } }, new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })),
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
         btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
-        btn('td', 'Tidy all routes', () => { P.teams = P.teams.map((ids, i) => ids.length ? this.tidy(ids, this.tbase(P, i), P.ret) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
-        btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { this.ui.settings = !this.ui.settings; if (this.ui.settings) this.ui.draft = JSON.parse(JSON.stringify(cfg)); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
+        btn('td', 'Tidy all routes', () => { P.near = {}; P.nearSave = {}; P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, this.tidy(ids, this.tbase(P, i), P.ret)) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
+        btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { if (this.ui.settings) this.ui.settings = false; else this.openSettings(); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
+        this.draftDirty() && !this.ui.settings ? e('span', { key: 'dd', style: { display: 'inline-flex', alignItems: 'center', gap: 6, font: SANS, color: C.warn } }, 'Unsaved settings changes',
+          btn('dsv', 'Save', () => this.saveSettings(), true), btn('ddc', 'Discard', () => this.discardSettings())) : null,
+        this.saveState() ? e('span', { key: 'ss', style: { font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[this.saveState()[0]] } }, this.saveState()[1]) : null,
       ]),
       ...(() => {
         const st = this.syncText(), msg = this.sh.msg && Date.now() - this.sh.msg.at < 120000 ? this.sh.msg : null;
@@ -1211,6 +1330,8 @@ class Dispatch {
       this.ui.settings ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 14, height: 10, background: b.color, opacity: 0.75, border: '1px solid ' + b.color } }), b.label)), 'bands'),
+      row('Card colour', Object.entries(URG).filter(([k]) => k !== 'done').map(([k, u]) => e('span', { key: 'u' + k, title: u.tip, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
+        e('span', { style: { width: 12, height: 12, borderRadius: 2, background: u.c } }), u.label)), 'urg'),
       row('Show on map', [
         ...T.map((t, n) => t.ids.length ? e('label', { key: 'lg' + n, title: 'Show or hide ' + this.tn(n) + ': route, jobs and live technician', style: { display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px', border: '1px solid ' + (this.ui.hidden.has(n) ? C.line : C.ink), borderRadius: 3, background: this.ui.hidden.has(n) ? C.bg : C.white, font: SANS, color: this.ui.hidden.has(n) ? '#8A8A85' : C.text, cursor: 'pointer' } },
           e('input', { type: 'checkbox', checked: !this.ui.hidden.has(n), onChange: () => this.toggleTeam(n), 'aria-label': 'Show ' + this.tn(n), style: { margin: 0, accentColor: col(n) } }), sw(col(n)), this.tn(n), e('span', { style: { font: MONO, color: C.muted } }, String(t.ids.length))) : null),
@@ -1267,9 +1388,10 @@ class Dispatch {
           e('div', { style: { width: Math.min(100, t.work / span * 100) + '%', background: C.ink } }),
           e('div', { style: { width: Math.max(0, Math.min(100 - t.work / span * 100, t.trav / span * 100)) + '%', background: C.acc } })),
         e('div', { key: 'mt', style: { display: 'flex', flexWrap: 'wrap', gap: '2px 10px', font: MONO, color: C.muted } },
-          e('span', null, nf1(t.work / 60) + ' h work'), e('span', null, t.trav + ' min · ' + nf1(t.dist) + ' km' + (est ? ' (' + est + ' est.)' : '')), e('span', { style: { color: t.finish > this.tend(n) ? C.warn : C.muted } }, 'done ' + hm(t.finish) + (t.finish > this.tend(n) ? ' (after shift end ' + hm(this.tend(n)) + ')' : ''))),
+          e('span', null, nf1(t.work / 60) + ' h work'), e('span', null, t.trav + ' min · ' + nf1(t.dist) + ' km' + (est ? ' (' + est + ' est.)' : '')), e('span', { style: { color: t.finish > this.tend(n) ? C.warn : C.muted } }, 'done ' + hm(t.finish) + (t.finish > this.tend(n) ? ' (after shift end ' + hm(this.tend(n)) + ')' : '')),
+          P.nearSave && P.nearSave[n] && (P.nearSave[n].min || P.nearSave[n].km >= 0.1) ? e('span', { style: { color: C.good }, title: 'Saved by doing nearby jobs in the same visit' }, 'nearby first saves ' + P.nearSave[n].min + ' min · ' + nf1(P.nearSave[n].km) + ' km') : null),
         e('div', { key: 'cl', style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' } },
-          e('button', { key: 'tidy', type: 'button', onClick: () => { P.teams[n] = this.tidy(P.teams[n], this.tbase(P, n)); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
+          e('button', { key: 'tidy', type: 'button', onClick: () => { if (P.nearSave) delete P.nearSave[n]; P.teams[n] = this.nearPass(P, n, this.tidy(P.teams[n], this.tbase(P, n))); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
       ] : [e('span', { key: 'idle', style: { font: SANS, color: C.muted } }, 'Standby')]),
       pill(t.ids.length ? t.ids.length + ' jobs' : 'Idle', t.ids.length ? 'good' : null),
       t.rows.map((r, i) => this.cardEl(e, P, r.j, r, n, i, pill)), P));
@@ -1357,6 +1479,8 @@ class Dispatch {
     const chips = [pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
       pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', CATS[j.cat].lvl === 'Critical' ? 'bad' : CATS[j.cat].lvl === 'High' ? 'warn' : null, 'c'),
       pill(this.cellName(j), null, 'g')];
+    const ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
+    chips.unshift(e('span', { key: 'ug', title: ug.tip, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif" } }, ug.label));
     const rm = this.rem(j);
     if (rm < 0) chips.push(pill('SLA breached ' + dd(-rm), 'bad', 's')); else if (this.soon(j)) chips.push(pill('SLA ' + dh(rm) + ' left', 'warn', 's'));
     if (ag) chips.push(pill('Aging +' + AGING * ag, 'warn', 'a'));
@@ -1374,7 +1498,7 @@ class Dispatch {
         onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
         onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); ev.stopPropagation(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
         onDrop: ev => { ev.preventDefault(); ev.stopPropagation(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: C.white, border: '1px solid ' + C.line, borderRadius: 3, cursor: lk ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: lk ? 'inset 3px 0 0 ' + C.muted : 'none' },
+        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: lk ? 'inset 2px 0 0 ' + C.muted : 'none' },
       },
         e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 8px', minWidth: 0 } },
@@ -1392,6 +1516,9 @@ class Dispatch {
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
             sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
             e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
+        r && r.hint ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: URG.blue.c } },
+          (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away. Do this job right after it?' + (r.hint.delay ? ' ' + (this._J.by.get(r.hint.by) || {}).wo + ' (higher priority) would start ' + dh(r.hint.delay) + ' later.' : ''),
+          e('button', { type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'), style: { padding: '2px 8px', border: '1px solid ' + URG.blue.c, borderRadius: 3, background: C.white, color: URG.blue.c, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Move next')) : null,
         r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
         e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
           sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation'),
@@ -1438,7 +1565,7 @@ class Dispatch {
   settings(e, row, chip, btn) {
     const d = this.ui.draft, { m, bi } = this._ctx;
     const set = (k, v) => { d[k] = v; this.onChange(); };
-    const num = (k, w, step, obj, key) => e('input', { key: 'n' + (key || k), type: 'number', step: step || 1, value: (obj || d)[k], onChange: ev => { (obj || d)[k] = ev.target.value === '' ? '' : +ev.target.value; this.onChange(); },
+    const num = (k, w, step, obj, key) => e('input', { key: 'n' + (key || k), type: 'number', 'aria-label': key || k, step: step || 1, value: (obj || d)[k], onChange: ev => { (obj || d)[k] = ev.target.value === '' ? '' : +ev.target.value; this.onChange(); },
       style: { width: w || 64, padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO, outline: 'none' } });
     const time = k => e('input', { key: 't' + k, type: 'time', value: hm(d[k]), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) set(k, a * 60 + b); },
       style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } });
@@ -1464,14 +1591,20 @@ class Dispatch {
           e('input', { key: 'cap', type: 'text', defaultValue: cr.app || '', placeholder: 'technician app / device ID', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
         ], 'crew' + n);
       });
-    const actions = row('', [btn('ap', 'Apply and re-plan', () => this.apply(), true), btn('cx', 'Cancel', () => { this.ui.settings = false; this.ui.draft = null; this.onChange(); }),
+    this.keepDraft();
+    const dirty = this.draftDirty();
+    const actions = row('', [btn('ap', 'Save', () => this.saveSettings(), true),
+      btn('cx', dirty ? 'Discard changes' : 'Close', () => this.discardSettings()),
+      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers) and re-plans the board.' : 'No unsaved changes.'),
       this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act');
     const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
+    const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
+      btn('ap0', 'Save', () => this.saveSettings(), true), dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
     // Dispatchers: the number of available teams and the crew (names, hub, shift, app ID) only.
-    if (this.limited) return e('div', box,
+    if (this.limited) return e('div', box, top,
       row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('teams today. Name each team, its hub and shift below.', 'l3b')]),
       ...crewRows, actions);
-    return e('div', box,
+    return e('div', box, top,
       row('Scope', [lab('Open orders from the last', 'l1'), num('maxAge', 60), lab('days', 'l2'),
         chip('sb', d.blocked, 'Include Blocked accounts', null, null, () => set('blocked', !d.blocked)),
         chip('sp', d.prog, 'Include In Progress orders', null, null, () => set('prog', !d.prog))]),
@@ -1491,6 +1624,7 @@ class Dispatch {
       row('Fallback', [lab('If no road time: straight line ×', 'l7'), num('road', 60, 0.05), lab('at', 'l7b'), num('speed', 56), lab('km/h by car, before traffic', 'l7c')]),
       row('Reach', [lab('New jobs during the day join a team within', 'l8'), num('ring', 48), lab('cells and', 'l9'), num('maxHop', 56), lab('min', 'l10'),
         lab('· Anchor teams with hours left take jobs within', 'l11'), num('ring2', 48), lab('cells (1 = the 8 neighbours) · a floater drives at most', 'l12'), num('hop2', 56), lab('min between jobs', 'l13')]),
+      row('Nearby', [lab('Do a WO within', 'nb1'), num('nearM', 64, 50), lab('m of the job just finished next, if no WO misses its SLA, urgent VIP are never delayed and a higher-priority WO waits at most', 'nb2'), num('nearDelay', 56, 5), lab('min more (0 m = off)', 'nb3')]),
       row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
@@ -1514,6 +1648,45 @@ class Dispatch {
         lab('Every team departs from and returns to the first (default) hub unless another hub is assigned to it under Crew or on the board. Way-back pick-ups head to the team\u2019s own hub. Removing a hub moves its teams back to the default hub. Paste coordinates from Google Maps as "lat, lng".', 'bh')], 'addb'),
       actions);
   }
+  /* ---------- saving settings ----------
+     The panel edits a draft. The draft is kept in this browser until it is saved or discarded, so closing the panel or the
+     dashboard never loses typed changes. Save sends only the fields changed in the draft, on top of the latest shared
+     settings, so it never undoes what someone else saved meanwhile. */
+  draftKey() { return 'gx.ids.' + this.type + '.draft'; }
+  openSettings() {
+    const kept = store.load(this.draftKey());
+    if (kept && kept.draft && kept.base) { this.ui.draft = kept.draft; this.ui.base = kept.base; }
+    else { this.ui.draft = JSON.parse(JSON.stringify(this.st.cfg)); this.ui.base = JSON.stringify(this.ui.draft); }
+    this.ui.settings = true;
+  }
+  draftDirty() {
+    if (!this.ui.draft) { const kept = store.load(this.draftKey()); if (!kept || !kept.draft) return false; this.ui.draft = kept.draft; this.ui.base = kept.base; }
+    return JSON.stringify(this.ui.draft) !== this.ui.base;
+  }
+  keepDraft() {
+    if (!this.ui.draft) return;
+    if (this.draftDirty()) store.save(this.draftKey(), { draft: this.ui.draft, base: this.ui.base, at: Date.now() });
+    else store.save(this.draftKey(), null);
+  }
+  discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
+  saveSettings() {
+    const d = this.ui.draft; if (!d) return;
+    const base = JSON.parse(this.ui.base || '{}'), out = JSON.parse(JSON.stringify(this.st.cfg));
+    Object.keys(d).forEach(k => { if (JSON.stringify(d[k]) !== JSON.stringify(base[k])) out[k] = d[k]; });
+    this.ui.draft = out;
+    store.save(this.draftKey(), null);
+    this.ui.saveAt = Date.now(); this.ui.base = null;
+    this.apply();
+  }
+  // Status of the last save: saving, saved for everyone, or why it was not shared.
+  saveState() {
+    const t = this.ui.saveAt, sh = this.sh;
+    if (!t || Date.now() - t > 5 * 60000) return null;
+    if (!this.api || sh.unsupported) return ['warn', 'Settings saved in this browser only: the shared plan is not available.'];
+    if (sh.err) return ['bad', 'Settings not shared yet (' + sh.err + '). They are kept and sent when the connection is back.'];
+    if (sh.busy || this.hasUnsent()) return ['muted', 'Saving settings for everyone…'];
+    return ['good', 'Settings saved for everyone · ' + new Date(Math.max(t, sh.lastOk || t)).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })];
+  }
   apply() {
     const d = this.ui.draft; if (!d) return;
     const clean = (v, lo, hi, def) => { v = +v; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def; };
@@ -1523,7 +1696,7 @@ class Dispatch {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
       speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
