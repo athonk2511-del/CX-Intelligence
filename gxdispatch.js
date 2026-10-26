@@ -78,7 +78,7 @@ const DEF = {
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
-  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -197,6 +197,55 @@ class Dispatch {
   setName(n, v) { const a = (this.st.cfg.names || []).slice(); a[n] = String(v || '').slice(0, 40); this.st.cfg.names = a; if (this.ui.draft) { const b = (this.ui.draft.names || []).slice(); b[n] = a[n]; this.ui.draft.names = b; if (this.ui.base) { const o = JSON.parse(this.ui.base), c = (o.names || []).slice(); c[n] = a[n]; o.names = c; this.ui.base = JSON.stringify(o); } this.keepDraft(); } this.ver++; this.save(); this.onChange(); }
   meta(key) { return this.st.meta[key] || (this.st.meta[key] = { conf: 'none', stat: 'none', aging: [] }); }
 
+  /* ---------- trackers (Traccar devices) assigned to teams ---------- */
+  // Live devices of this screen (null when tracking is not live: demo devices never count).
+  devs() { return Array.isArray(this._devs) ? this._devs : null; }
+  // The tracker of team i, or null.
+  trackerOf(i) {
+    const L = this.devs(); if (!L) return null;
+    return L.find(d => this.teamOfDevice(d) === i) || null;
+  }
+  devLabel(d) { return d.name + (d.uniqueId ? ' (' + d.uniqueId + ')' : '') + ' · ' + (d.state || 'offline'); }
+  // Tracker choice for a team in Teams & crew: a list of the live Traccar devices; typed ID when tracking is not live.
+  trackerField(e, cr, upd, d, n, tx) {
+    const L = this.devs(), cur = String(cr.app || '');
+    if (!L || !L.length) return [e('input', { key: 'cap', type: 'text', defaultValue: cur, placeholder: 'Traccar device identifier', 'aria-label': 'Team ' + (n + 1) + ' tracker', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
+      e('span', { key: 'capn', style: { font: SANS, color: C.muted } }, 'live tracking off: type the identifier')];
+    const opts = [e('option', { key: '', value: '' }, 'No tracker')].concat(L.map(x => e('option', { key: 'd' + x.id, value: String(x.uniqueId || x.id) }, this.devLabel(x))));
+    if (cur && !L.some(x => String(x.uniqueId || x.id) === cur || String(x.id) === cur)) opts.push(e('option', { key: 'old', value: cur }, cur + ' · not found in Traccar'));
+    const dup = cur && (d.crew || []).some((x, k) => k !== n && k < Math.round(+d.teams || 1) && x && String(x.app || '') === cur);
+    return [e('select', { key: 'cap', value: cur, 'aria-label': 'Team ' + (n + 1) + ' tracker', onChange: ev => upd({ app: ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + (dup ? C.bad : C.line), borderRadius: 3, background: C.white, color: C.ink, font: SANS, maxWidth: 280 } }, ...opts),
+      dup ? e('span', { key: 'capd', style: { font: SANS, color: C.bad } }, 'also used by another team') : null];
+  }
+  // Automatic check-in: a team's tracker parked within ciM metres of a job of its route that is not started or on the way.
+  // Parked = speed 5 km/h or less, or two different positions in a row inside the radius (a drive-by is not a visit).
+  autoCheckin(P) {
+    const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J;
+    if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
+    const seen = this._ciSeen || (this._ciSeen = {}), day = this.today(), done = [];
+    P.teams.forEach((ids, i) => {
+      const dv = this.trackerOf(i);
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000) return;
+      let best = null;
+      ids.forEach(k => {
+        const j = J.by.get(k), mt = this.st.meta[k] || {};
+        if (!j || j.prog || !(mt.stat == null || mt.stat === 'none' || mt.stat === 'start') || mt.noAuto === day) return;
+        const m = this.metres(dv, j);
+        if (m <= R && (!best || m < best.m)) best = { k, j, m };
+      });
+      const prev = seen[dv.id];
+      if (!best) { delete seen[dv.id]; return; }
+      const parked = (dv.speed || 0) <= 5 || (prev && prev.k === best.k && prev.last !== dv.last);
+      seen[dv.id] = { k: best.k, last: dv.last };
+      if (!parked) return;
+      const mt = this.meta(best.k), at = new Date(dv.last), min = at.getHours() * 60 + at.getMinutes();
+      mt.stat = 'checkin'; mt.ci = min; mt.ciDay = day; mt.ciAuto = { m: Math.round(best.m), dev: dv.name };
+      delete seen[dv.id];
+      done.push(best.j.wo + ' (' + this.tn(i) + ', tracker ' + dv.name + ' ' + Math.round(best.m) + ' m away at ' + hm(min) + ')');
+    });
+    if (done.length) this.changed('Checked in automatically: ' + done.join('; ') + '.');
+  }
+
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
   loadHidden() {
     const v = store.load('gx.ids.' + this.type + '.view') || {};
@@ -222,7 +271,7 @@ class Dispatch {
   mapDevices(list) {
     if (this.ui.hideTech) return [];
     return (list || []).map(d => ({ d, t: this.teamOfDevice(d) })).filter(x => x.t < 0 || !this.ui.hidden.has(x.t))
-      .map(x => x.t < 0 ? x.d : { ...x.d, name: this.tn(x.t) + ' · ' + x.d.name });
+      .map(x => x.t < 0 ? x.d : { ...x.d, name: this.tn(x.t) + ' · ' + x.d.name, tag: this.tn(x.t), fill: this.pal[x.t % this.pal.length] });
   }
 
   /* ---------- shared plan (Apps Script) ----------
@@ -298,7 +347,7 @@ class Dispatch {
       const local = cur[id] ?? null, server = srv[id] ?? null, rev = (ids.revs || {})[id] || 0, wasSent = !!sent && Object.prototype.hasOwnProperty.call(sent, id);
       if (wasSent && !cf.has(id)) {
         if (local !== sent[id]) { sh.snap[id] = sent[id] ?? undefined; if (sent[id] == null) delete sh.snap[id]; sh.revs[id] = rev; return; } // edited again since: keep it
-      } else if (!wasSent && local !== (sh.snap[id] ?? null)) return; // a local change not sent yet: keep it
+      } else if (!wasSent && !this.readOnly && local !== (sh.snap[id] ?? null)) return; // a local change not sent yet: keep it
       if (cf.has(id) && local !== server) lost.push(id);
       if (id === 'cfg' && server == null) return;
       this.setPart(id, server);
@@ -335,7 +384,7 @@ class Dispatch {
   }
   shPush() {
     const sh = this.sh;
-    if (!this.api || !sh.on) return;
+    if (!this.api || !sh.on || this.readOnly) return;
     if (sh.busy) { sh.dirty = true; return; }
     const cur = this.localParts(), parts = {}, base = {}, sent = {};
     new Set([...Object.keys(cur), ...Object.keys(sh.snap)]).forEach(id => {
@@ -378,6 +427,7 @@ class Dispatch {
     if (!sh.on) return sh.err ? ['bad', 'Shared plan not reachable: ' + sh.err + '. Changes stay on this screen until it is back.'] : ['muted', 'Connecting to the shared plan…'];
     const t = sh.at ? new Date(sh.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
     if (sh.err) return ['bad', 'Shared plan offline (' + sh.err + '). Your changes are kept and will be sent when it is back.'];
+    if (this.readOnly) return ['good', 'View only · shared plan · last change ' + (t || '—') + (sh.by ? ' by ' + sh.by : '') + ' · updates every 10 s'];
     if (sh.busy || this.hasUnsent()) return ['muted', 'Shared plan · saving…'];
     return ['good', 'Shared plan · everyone sees the same board · last change ' + (t || '—') + (sh.by ? ' by ' + sh.by : '')];
   }
@@ -473,6 +523,8 @@ class Dispatch {
       sp.arr = Math.min(sp.arr, co); sp.end = co;
       while (k.i < E.length && E[k.i].at < co) k.i++;   // breaks / problems before the check-out are inside the real time
     } else if (st === 'checkin' || (j.prog && st !== 'start')) {
+      const mt = this.st.meta[j.key] || {}, ci = mt.ci != null && mt.ciDay === this.today() ? +mt.ci : null;
+      if (ci != null) { sp.arr = ci; sp.end = ci + this.dur(j); }
       sp.end = Math.max(sp.end, this.nowMin());
     } else if (st === 'start') {
       sp.arr = Math.max(sp.arr, this.nowMin()); sp.end = Math.max(sp.end, sp.arr + this.dur(j));
@@ -630,7 +682,7 @@ class Dispatch {
         P.prov = false;
         if (this.road.m.size) {
           // Only a plan nobody has touched yet (created in the last 3 minutes, no changes) is re-run with road times.
-          if (!Object.keys(P.manual || {}).length && !P.touched && Date.now() - (P.born || 0) < 180000) { this.autoPlan(P, this._J, x.B, true); this.note('New plan re-run with road drive times.'); }
+          if (!this.readOnly && !Object.keys(P.manual || {}).length && !P.touched && Date.now() - (P.born || 0) < 180000) { this.autoPlan(P, this._J, x.B, true); this.note('New plan re-run with road drive times.'); }
           else this.note('Road drive times loaded: ETAs updated, the order of the jobs was kept.');
         }
         this.save();
@@ -711,6 +763,8 @@ class Dispatch {
   plan(m, bi, J, B) {
     const name = m.branches[bi] || 'Branch', day = this.today();
     let P = this.st.plans[name];
+    // Viewers never build or change a plan: they see the shared one exactly as the dispatchers left it.
+    if (this.readOnly) { this.behind = false; return P && P.date === day && Array.isArray(P.home) ? P : null; }
     if (P && (P.date !== day || !Array.isArray(P.home))) { if (P.date !== day) this.rollover(P, J); P = null; }
     if (!P) {
       P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: this.nowMin() >= this.st.cfg.rebAt ? day : null };
@@ -757,7 +811,7 @@ class Dispatch {
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
       if (!J.by.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
-      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay;
+      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
@@ -1041,6 +1095,8 @@ class Dispatch {
         if (realHit.length) f.push(['warn', 'ETA +' + Math.round(realHit.reduce((a, x) => a + this.evDur(x), 0)) + ' min: ' + realHit.map(x => (x.type === 'break' ? 'break' : 'problem') + ' ' + hm(x.at)).join(', ')]);
         if (lunch) f.push(['info', 'Lunch ' + hm(lunch.at) + '–' + hm(lunch.end) + ' included']);
         const co = this.coOf(j), dv = Math.round(end - sp.proj);
+        const ciM = this.st.meta[k] || {};
+        if (co == null && ciM.stat === 'checkin' && ciM.ci != null && ciM.ciDay === this.today()) f.push(['good', 'Checked in ' + hm(ciM.ci) + (ciM.ciAuto ? ' · automatic, tracker ' + ciM.ciAuto.dev + ' ' + ciM.ciAuto.m + ' m away' : '')]);
         if (co != null) f.push(['good', 'Checked out ' + hm(co) + (Math.abs(dv) < 1 ? ', as projected' : ', ' + Math.abs(dv) + ' min ' + (dv < 0 ? 'earlier' : 'later') + ' than projected')]);
         else if (dv >= 1) f.push(['warn', 'Still working: ' + dv + ' min past the projected finish. Next ETAs moved.']);
         if (P.ret && P.ret[k]) f.push(['info', 'On the way back to base']);
@@ -1105,8 +1161,12 @@ class Dispatch {
   // Technician status. Checked out asks for the check-out time (prefilled with now); any change of a check-out time
   // recalculates the whole plan of the branch.
   setStat(P, j, v) {
-    const mt = this.meta(j.key), was = this.coOf(j);
+    const mt = this.meta(j.key), was = this.coOf(j), prev = mt.stat;
     mt.stat = v;
+    if (v === 'checkin') { if (mt.ci == null || mt.ciDay !== this.today()) { mt.ci = Math.floor(this.nowMin()); mt.ciDay = this.today(); } delete mt.ciAuto; }
+    else if (v === 'none' || v === 'start') { delete mt.ci; delete mt.ciDay; delete mt.ciAuto; }
+    // Set back by hand after a check-in: no automatic check-in for this job again today.
+    if (prev === 'checkin' && (v === 'none' || v === 'start')) mt.noAuto = this.today();
     if (v === 'checkout') { if (mt.co == null || mt.coDay !== this.today()) { mt.co = Math.floor(this.nowMin()); mt.coDay = this.today(); } }
     else { delete mt.co; delete mt.coDay; }
     const msg = j.wo + ': technician status ' + STAT[v] + (v === 'checkout' ? ' at ' + hm(mt.co) : '') + (v !== 'none' ? ' (locked)' : '') + '.';
@@ -1245,14 +1305,17 @@ class Dispatch {
     // Work orders could not be read from the CSV files: show nothing rather than plan from partial data, which would
     // remove work orders from the shared plan for everyone.
     if (ctx.dataProblem) return note('Work orders not loaded', 'The work-order files could not be read on this screen, so the board is hidden to keep the shared plan safe. ' + ctx.dataProblem + ' Reload the page; if this stays, ask the dashboard admin.', C.bad || '#9B2C1F');
+    this._devs = ctx.devices || null;
     const P = this.plan(m, bi, J, B);
+    if (!P) return note('Shared plan', 'No ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' today yet. It appears here as soon as a dispatcher opens IDS.', C.muted);
     this._ctx.P = P;
     if (this.behind) {
       if (host.idsBehind) host.idsBehind();
       return note('Shared plan', 'Someone updated the plan with newer work orders than this screen has loaded. Loading the latest data, then the board appears…', C.muted);
     }
     // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
-    const rebDue = cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
+    const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
+    if (this.active) this.autoCheckin(P);
     const T = this.calc(P, B);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
@@ -1303,10 +1366,11 @@ class Dispatch {
       row('Plan', [
         e('span', { key: 'pd', style: { font: MONO, color: C.ink } }, new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })),
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
-        btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
-        btn('td', 'Tidy all routes', () => { P.near = {}; P.nearSave = {}; P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, this.tidy(ids, this.tbase(P, i), P.ret)) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
-        btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { if (this.ui.settings) this.ui.settings = false; else this.openSettings(); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
-        this.draftDirty() && !this.ui.settings ? e('span', { key: 'dd', style: { display: 'inline-flex', alignItems: 'center', gap: 6, font: SANS, color: C.warn } }, 'Unsaved settings changes',
+        this.readOnly ? e('span', { key: 'ro', style: { padding: '2px 8px', borderRadius: 3, background: C.soft, color: C.ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, 'View only') : null,
+        this.readOnly ? null : btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
+        this.readOnly ? null : btn('td', 'Tidy all routes', () => { P.near = {}; P.nearSave = {}; P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, this.tidy(ids, this.tbase(P, i), P.ret)) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
+        this.readOnly ? null : btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { if (this.ui.settings) this.ui.settings = false; else this.openSettings(); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
+        !this.readOnly && this.draftDirty() && !this.ui.settings ? e('span', { key: 'dd', style: { display: 'inline-flex', alignItems: 'center', gap: 6, font: SANS, color: C.warn } }, 'Unsaved settings changes',
           btn('dsv', this.ui.saveArmed ? 'Click again: save and re-plan (replaces manual changes)' : 'Save', () => this.saveSettings(), true, this.ui.saveArmed ? { background: C.bad, borderColor: C.bad } : null), btn('ddc', 'Discard', () => this.discardSettings())) : null,
         this.saveState() ? e('span', { key: 'ss', style: { font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[this.saveState()[0]] } }, this.saveState()[1]) : null,
       ]),
@@ -1323,7 +1387,7 @@ class Dispatch {
       ctx.trackLine ? row('Technicians', [e('span', { key: 'tk', style: { display: 'flex', alignItems: 'center', gap: 6, font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[ctx.trackLine[0]] } },
         ctx.trackLine[0] === 'good' ? e('span', { style: { width: 7, height: 7, borderRadius: '50%', background: C.good, flex: 'none' } }) : null, ctx.trackLine[1])], 'trk') : null,
       row('Road', [e('span', { key: 'rs', style: { font: SANS, color: rd.err && !rd.m.size && cfg.roadOn ? C.bad : busy ? C.warn : C.muted } }, roadTxt + (P.prov ? ' · plan is provisional until road times load' : ''))]),
-      this.ui.settings ? this.settings(e, row, chip, btn) : null,
+      this.ui.settings && !this.readOnly ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 14, height: 10, background: b.color, opacity: 0.75, border: '1px solid ' + b.color } }), b.label)), 'bands'),
       rebDue ? row('Rebalance', [e('span', { key: 'rbt', style: { font: SANS, color: C.warn } }, hm(cfg.rebAt) + ' rebalance available: re-run the plan on the current spread of open WO (started jobs and customer reschedules stay; ' + Object.keys(P.manual || {}).length + ' manual changes would be replaced).'),
@@ -1390,7 +1454,7 @@ class Dispatch {
           e('span', null, nf1(t.work / 60) + ' h work'), e('span', null, t.trav + ' min · ' + nf1(t.dist) + ' km' + (est ? ' (' + est + ' est.)' : '')), e('span', { style: { color: t.finish > this.tend(n) ? C.warn : C.muted } }, 'done ' + hm(t.finish) + (t.finish > this.tend(n) ? ' (after shift end ' + hm(this.tend(n)) + ')' : '')),
           P.nearSave && P.nearSave[n] && (P.nearSave[n].min || P.nearSave[n].km >= 0.1) ? e('span', { style: { color: C.good }, title: 'Saved by doing nearby jobs in the same visit' }, 'nearby first saves ' + P.nearSave[n].min + ' min · ' + nf1(P.nearSave[n].km) + ' km') : null),
         e('div', { key: 'cl', style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' } },
-          e('button', { key: 'tidy', type: 'button', onClick: () => { if (P.nearSave) delete P.nearSave[n]; P.teams[n] = this.nearPass(P, n, this.tidy(P.teams[n], this.tbase(P, n))); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
+          this.readOnly ? null : e('button', { key: 'tidy', type: 'button', onClick: () => { if (P.nearSave) delete P.nearSave[n]; P.teams[n] = this.nearPass(P, n, this.tidy(P.teams[n], this.tbase(P, n))); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
       ] : [e('span', { key: 'idle', style: { font: SANS, color: C.muted } }, 'Standby')]),
       pill(t.ids.length ? t.ids.length + ' jobs' : 'Idle', t.ids.length ? 'good' : null),
       t.rows.map((r, i) => this.cardEl(e, P, r.j, r, n, i, pill)), P));
@@ -1421,17 +1485,19 @@ class Dispatch {
     const BS = this._BS || [], cur = this.crew(n).base || 0;
     return e('div', { key: 'hb', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: MONO, color: C.muted } },
       home ? e('span', { style: { color: (P.role || [])[n] === 'floater' ? C.warn : C.ink } }, ((P.role || [])[n] === 'floater' ? 'Floater · from ' : 'Anchor · ') + home) : null,
-      BS.length > 1 ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
+      BS.length > 1 && !this.readOnly ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
         style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 170 } },
         ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name + (i === 0 ? ' (default)' : ''))))
-        : e('span', null, 'From ' + (BS[0] ? BS[0].name : 'base')),
-      e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))));
+        : e('span', null, 'From ' + ((BS[this.readOnly ? cur : 0] || BS[0] || {}).name || 'base')),
+      e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))),
+      this.devs() ? (dv => e('span', { key: 'trk', title: dv ? this.devLabel(dv) : 'Assign a tracker in Teams & crew', style: { color: !dv ? C.muted : dv.state === 'online' ? C.good : dv.state === 'stale' ? C.warn : C.bad } },
+        dv ? '· tracker ' + dv.name + ' · ' + dv.state + (dv.last ? ' ' + dh((Date.now() - dv.last) / 60000) + ' ago' : '') : '· no tracker'))(this.trackerOf(n)) : null);
   }
   evRow(e, P, n) {
     const L = this.evList(P, n), br = this.activeEv(P, n, 'break'), pr = this.activeEv(P, n, 'problem');
     const b = (k, label, on, fn) => e('button', { key: k, type: 'button', onClick: fn, style: { padding: '2px 8px', border: '1px solid ' + (on ? C.bad : C.line), borderRadius: 3, background: on ? C.badBg : C.white, color: on ? C.bad : C.ink, font: SANS, fontSize: 11.5, cursor: 'pointer' } }, label);
     return e('div', { key: 'ev', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-      e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+      this.readOnly ? null : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
         b('br', br ? 'End break' : 'Break', !!br, () => br ? this.endEv(P, n, 'break') : this.startEv(P, n, 'break')),
         b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem'))),
       ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.end == null ? C.bad : C.muted } },
@@ -1439,6 +1505,7 @@ class Dispatch {
           : (x.type === 'break' ? 'Break ' : 'Problem ') + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + (x.src || 'dispatcher'))));
   }
   nameInput(e, n) {
+    if (this.readOnly) return e('span', { key: 'nm' + n, style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.tn(n));
     return e('input', { key: 'nm' + n + '|' + this.tn(n), type: 'text', defaultValue: this.tn(n), placeholder: 'Team ' + (n + 1), title: 'Team name: click to edit',
       onBlur: ev => { const v = ev.target.value.trim(); if (v !== this.tn(n)) { const old = this.tn(n); this.setName(n, v === 'Team ' + (n + 1) ? '' : v); this.note(old + ' renamed to ' + this.tn(n) + '.'); this.save(); } },
       onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); if (ev.key === 'Escape') { ev.target.value = this.tn(n); ev.target.blur(); } },
@@ -1492,12 +1559,12 @@ class Dispatch {
     return e('div', { key: j.key, style: { display: 'flex', flexDirection: 'column' } },
       line ? e('div', { style: { height: 3, background: C.acc, borderRadius: 2, margin: '2px 0 4px' } }) : null,
       e('div', {
-        draggable: !lk,
-        onDragStart: ev => { this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
+        draggable: !lk && !this.readOnly,
+        onDragStart: ev => { if (this.readOnly) return; this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
         onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
         onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); ev.stopPropagation(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
         onDrop: ev => { ev.preventDefault(); ev.stopPropagation(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: lk ? 'inset 2px 0 0 ' + C.muted : 'none' },
+        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk || this.readOnly ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: lk ? 'inset 2px 0 0 ' + C.muted : 'none' },
       },
         e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 8px', minWidth: 0 } },
@@ -1512,14 +1579,18 @@ class Dispatch {
             e('span', { style: { font: MONO, color: this.coOf(j) != null ? C.good : C.muted } }, ' → ' + hm(r.end) + (this.coOf(j) != null ? ' ✓' : '')),
             e('div', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(0) + (this.coOf(j) != null ? ' · actual finish' : ' · ETA'))),
           e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, textAlign: 'right' }, title: r.road ? 'Road drive time' : 'Straight-line estimate' }, (r.road ? '+' : '~') + r.hop + ' min' + (r.road ? '' : ' est.'), e('br'), nf1(r.d) + ' km'))
+          : this.readOnly ? e('div', { style: { font: "400 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, (P.why[j.key] === 'customer' ? 'Customer request · no aging' : 'Internal · aging +' + AGING) + ' · ' + day(1))
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
             sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
             e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
-        r && r.hint ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: URG.blue.c } },
+        r && r.hint && !this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: URG.blue.c } },
           (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away. Do this job right after it?' + (r.hint.delay ? ' ' + (this._J.by.get(r.hint.by) || {}).wo + ' (higher priority) would start ' + dh(r.hint.delay) + ' later.' : ''),
           e('button', { type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'), style: { padding: '2px 8px', border: '1px solid ' + URG.blue.c, borderRadius: 3, background: C.white, color: URG.blue.c, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Move next')) : null,
         r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
-        e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
+        this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.text } },
+          e('span', null, 'Customer: ' + (CONF[mt.conf || 'none'] || '—')), e('span', null, 'Technician: ' + STAT[mt.stat || 'none'] + (this.coOf(j) != null ? ' ' + hm(this.coOf(j)) : '')),
+          mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))
+        : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
           sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation'),
           sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status'),
           mt.stat === 'checkout' ? this.coInput(e, P, j) : null,
@@ -1586,8 +1657,8 @@ class Dispatch {
           e('input', { key: 'ct', type: 'time', value: hm(st), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ start: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
           lab('end', 'ce' + n),
           e('input', { key: 'cte', type: 'time', value: hm(isFinite(cr.end) && cr.end !== '' && cr.end !== null ? +cr.end : st + (d.end - d.start)), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ end: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
-          lab('App ID', 'ca' + n),
-          e('input', { key: 'cap', type: 'text', defaultValue: cr.app || '', placeholder: 'technician app / device ID', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
+          lab('Tracker', 'ca' + n),
+          ...this.trackerField(e, cr, upd, d, n, tx),
         ], 'crew' + n);
       });
     this.keepDraft();
@@ -1627,6 +1698,7 @@ class Dispatch {
       row('Reach', [lab('New jobs during the day join a team within', 'l8'), num('ring', 48), lab('cells and', 'l9'), num('maxHop', 56), lab('min', 'l10'),
         lab('· Anchor teams with hours left take jobs within', 'l11'), num('ring2', 48), lab('cells (1 = the 8 neighbours) · a floater drives at most', 'l12'), num('hop2', 56), lab('min between jobs', 'l13')]),
       row('Nearby', [lab('Do a WO within', 'nb1'), num('nearM', 64, 50), lab('m of the job just finished next, if no WO misses its SLA, urgent VIP are never delayed and a higher-priority WO waits at most', 'nb2'), num('nearDelay', 56, 5), lab('min more (0 m = off)', 'nb3')]),
+      row('Auto check-in', [lab('A WO is checked in automatically when its team\u2019s tracker is within', 'ac1'), num('ciM', 56, 10), lab('m of it and parked (5 km/h or slower, or two positions in a row inside the radius). 0 = off. Dispatchers can always change the status by hand.', 'ac2')]),
       row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
@@ -1679,7 +1751,7 @@ class Dispatch {
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
   // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
   replanKeys(base, d) {
-    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV'].includes(k));
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM'].includes(k));
     if (keys.includes('crew')) {
       const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
       if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
@@ -1717,7 +1789,7 @@ class Dispatch {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
       speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),

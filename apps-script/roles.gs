@@ -71,7 +71,7 @@ function gxUser_(key) {
     const u = hit.u;
     if (u.disabled) return null;
     const admin = u.role === 'admin';
-    return { name: u.name || 'User', role: admin ? 'admin' : 'dispatcher', menus: admin ? '*' : (u.menus || []).filter(m => GX_MENUS.indexOf(m) !== -1), managed: true };
+    return { name: u.name || 'User', role: admin ? 'admin' : u.role === 'viewer' ? 'viewer' : 'dispatcher', menus: admin ? '*' : (u.menus || []).filter(m => GX_MENUS.indexOf(m) !== -1), managed: true };
   }
   if (gxIsOwnerKey_(key)) return { name: 'Owner', role: 'admin', menus: '*', managed: false };
   return null;
@@ -114,6 +114,8 @@ function doPost(e) {
   if (req.action === 'users') return gxUsersApi_(req);
   const user = gxUser_(req.key);
   if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
+  // Viewers read the IDS board and tracking; they change nothing.
+  if (user.role === 'viewer' && (req.action === 'ids' || req.action === 'track' || req.action === 'ai')) return gxJson_({ error: 'View only: this account cannot change the plan.' });
   if (req.action === 'ids') return gxIdsPost_(user, req);
   if (req.action === 'track') return gxTrackPost_(user, req);
   if (req.action === 'ai' && user.role !== 'admin') return gxJson_({ error: 'AI notes are available to admins only.' });
@@ -139,7 +141,7 @@ function gxUsersApi_(req) {
     const list = () => Object.keys(all).map(id => view(id, all[id])).sort((a, b) => String(a.name).localeCompare(String(b.name)));
     const clean = () => ({
       name: String(d.name || '').trim().slice(0, 60),
-      role: d.role === 'admin' ? 'admin' : 'dispatcher',
+      role: d.role === 'admin' ? 'admin' : d.role === 'viewer' ? 'viewer' : 'dispatcher',
       menus: (Array.isArray(d.menus) ? d.menus : []).map(String).filter(m => GX_MENUS.indexOf(m) !== -1),
       disabled: !!d.disabled,
     });

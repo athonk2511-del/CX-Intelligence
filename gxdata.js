@@ -1594,7 +1594,7 @@ export async function whoami() {
     let out = null; try { out = JSON.parse(text); } catch (e) {}
     const u = out && out.gxUser;
     if (!u) return { name: 'Owner', role: ROLE_ADMIN, menus: '*', legacy: true };
-    return { name: String(u.name || 'User'), role: u.role === ROLE_ADMIN ? ROLE_ADMIN : 'dispatcher', menus: u.role === ROLE_ADMIN ? '*' : (Array.isArray(u.menus) ? u.menus.map(String) : []) };
+    return { name: String(u.name || 'User'), role: u.role === ROLE_ADMIN ? ROLE_ADMIN : u.role === 'viewer' ? 'viewer' : 'dispatcher', menus: u.role === ROLE_ADMIN ? '*' : (Array.isArray(u.menus) ? u.menus.map(String) : []) };
   }
   throw new Error('Access key rejected');
 }

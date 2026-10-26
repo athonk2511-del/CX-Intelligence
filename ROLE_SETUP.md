@@ -43,13 +43,19 @@ Since 2026-10-25 `roles.gs` reads the Drive CSV folder for dispatchers. The firs
 Open the dashboard with your owner key → **Role management** → **+ Add user**:
 
 1. Name, for example `Dispatcher Bali · Andi`.
-2. Role: **Dispatcher** (only the ticked menus) or **Admin** (everything, including Role management).
+2. Role: **Viewer** (only the ticked menus, read only), **Dispatcher** (only the ticked menus) or **Admin** (everything, including Role management).
 3. Menus: a new dispatcher starts with *IDS · WWR wiredown* and *IDS · WCM maintenance*.
 4. **Create user and key**. Copy the key and send it to the user privately. It is shown once.
 
 The user opens the dashboard, types the key once, and sees only their menus. Dispatchers read the data through the proxy (the same Drive CSV files as admins), so they need no Google sign-in and no access to the Drive folder.
 
 **Disable** stops a key at once, **New key** replaces it, **Remove** deletes the user.
+
+## Viewer role
+
+A Viewer sees the ticked menus read only. On IDS pages that is the map and the dispatch board with live ETAs, card colours, statuses and check-out times, updated every 10 seconds. A viewer cannot move jobs, change statuses or check-out times, rename teams, open Teams & crew or Settings, re-plan, or change tracking. The proxy also refuses any change sent with a viewer key, so the limit holds outside the dashboard too. Until a dispatcher opens IDS on a new day, a viewer sees "No plan for today yet".
+
+The Viewer role needs the `roles.gs` of 2026-10-26 or later. Deploy it before creating viewers: an older proxy saves them as dispatchers.
 
 ## Good to know
 

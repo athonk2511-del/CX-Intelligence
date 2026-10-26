@@ -235,7 +235,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-25a'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-10-26a'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -844,7 +844,7 @@ class Component extends DCLogic {
     const data = this.state.data.map;
     if (!el || !data) return;
     this._gSent = null;
-    import('./gxmap.js').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
+    import('./gxmap.js?v=2026-10-26a').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
       .then(api => { if (this.mapEl !== el) { api.destroy(); return; } this.mapApi = api; this.routeFit = null; this._admFit = null; this.syncMap(); this.syncGrid(); this.syncTrack(); this.syncAdmin(); this._planSent = undefined; this.syncPlan(); this.forceUpdate(); })
       .catch(e => { el.textContent = e.message; });
   };
@@ -1450,7 +1450,8 @@ class Component extends DCLogic {
     const D0 = S.rolesDraft;
     const kpis = [
       { label: 'Users', value: String(users.length), sub: 'role-managed keys' },
-      { label: 'Dispatchers', value: String(users.filter(u => u.role !== 'admin').length), sub: users.filter(u => u.role !== 'admin' && u.disabled).length + ' disabled' },
+      { label: 'Dispatchers', value: String(users.filter(u => u.role === 'dispatcher').length), sub: users.filter(u => u.role === 'dispatcher' && u.disabled).length + ' disabled' },
+      { label: 'Viewers', value: String(users.filter(u => u.role === 'viewer').length), sub: users.filter(u => u.role === 'viewer' && u.disabled).length + ' disabled · read only' },
       { label: 'Admins', value: String(users.filter(u => u.role === 'admin').length), sub: 'plus the owner key(s)' },
     ];
     const cards = [];
@@ -1469,7 +1470,7 @@ class Component extends DCLogic {
       const arm = S.rolesArm === u.id;
       return [
         h('div', { display: 'flex', flexDirection: 'column', gap: 2 }, h('span', { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif" }, u.name), h('span', { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: '#5F5F5B' }, 'key ' + u.keyHint)),
-        u.role === 'admin' ? badge('Admin', '#7A5E00', '#FBF3D6') : badge('Dispatcher', '#1C64B4', '#E6EEF8'),
+        u.role === 'admin' ? badge('Admin', '#7A5E00', '#FBF3D6') : u.role === 'viewer' ? badge('Viewer', '#3F3F3B', '#EDEDEA') : badge('Dispatcher', '#1C64B4', '#E6EEF8'),
         u.role === 'admin' ? h('span', { color: '#5F5F5B' }, 'All menus + Role management') : (u.menus && u.menus.length ? u.menus.map(label).join(', ') : h('span', { color: '#9B2C1F' }, 'None')),
         u.disabled ? badge('Disabled', '#9B2C1F', '#F7E6E3') : badge('Active', '#2E6B34', '#E7F2E8'),
         u.updated ? new Date(u.updated).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
@@ -1489,7 +1490,7 @@ class Component extends DCLogic {
     if (D0) {
       const set = p => this.setState(s => ({ rolesDraft: { ...s.rolesDraft, ...p } }));
       const admin = D0.role === 'admin';
-      const seg = (v, l) => e('button', { key: v, type: 'button', onClick: () => set({ role: v }), style: { padding: '7px 14px', border: 'none', borderLeft: v === 'admin' ? '1px solid #DCDCD8' : 'none', background: D0.role === v ? '#1F1F1D' : '#FFFFFF', color: D0.role === v ? '#FFFFFF' : '#1F1F1D', font: sans, cursor: 'pointer' } }, l);
+      const seg = (v, l) => e('button', { key: v, type: 'button', onClick: () => set({ role: v }), style: { padding: '7px 14px', border: 'none', borderLeft: v !== 'viewer' ? '1px solid #DCDCD8' : 'none', background: D0.role === v ? '#1F1F1D' : '#FFFFFF', color: D0.role === v ? '#FFFFFF' : '#1F1F1D', font: sans, cursor: 'pointer' } }, l);
       const box = ([id, l]) => e('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, font: sans, color: admin ? '#8A8A85' : '#1F1F1D', cursor: admin ? 'default' : 'pointer' } },
         e('input', { type: 'checkbox', disabled: admin, checked: admin || D0.menus.indexOf(id) !== -1, onChange: ev => set({ menus: ev.target.checked ? D0.menus.concat([id]) : D0.menus.filter(x => x !== id) }), style: { accentColor: '#1F1F1D' } }), l);
       const lab = t => h('span', { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' }, t);
@@ -1498,8 +1499,8 @@ class Component extends DCLogic {
           h('label', { display: 'flex', flexDirection: 'column', gap: 6 }, lab('Name'),
             e('input', { type: 'text', value: D0.name, placeholder: 'e.g. Dispatcher Bali · Andi', onChange: ev => set({ name: ev.target.value }), style: { width: '100%', maxWidth: 360, boxSizing: 'border-box', padding: '8px 11px', border: '1px solid #DCDCD8', borderRadius: 3, font: sans, outline: 'none' } })),
           h('div', { display: 'flex', flexDirection: 'column', gap: 6 }, lab('Role'),
-            h('div', { display: 'flex', alignSelf: 'flex-start', border: '1px solid #DCDCD8', borderRadius: 3, overflow: 'hidden' }, seg('dispatcher', 'Dispatcher'), seg('admin', 'Admin')),
-            h('span', { font: small, color: '#5F5F5B' }, admin ? 'Admin: every menu, every planner setting and Role management.' : 'Dispatcher: only the menus ticked below. On IDS pages: the map, the dispatch board and team setup.')),
+            h('div', { display: 'flex', alignSelf: 'flex-start', border: '1px solid #DCDCD8', borderRadius: 3, overflow: 'hidden' }, seg('viewer', 'Viewer'), seg('dispatcher', 'Dispatcher'), seg('admin', 'Admin')),
+            h('span', { font: small, color: '#5F5F5B' }, admin ? 'Admin: every menu, every planner setting and Role management.' : D0.role === 'viewer' ? 'Viewer: only the menus ticked below, read only. On IDS pages: the map and the dispatch board with live ETAs; cannot move jobs, change statuses, check-out times, teams or settings.' : 'Dispatcher: only the menus ticked below. On IDS pages: the map, the dispatch board and team setup.')),
           h('div', { display: 'flex', flexDirection: 'column', gap: 8 }, lab('Menus'),
             h('div', { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: '8px 16px' }, ...Component.MENUS.map(box))),
           h('div', { display: 'flex', flexWrap: 'wrap', gap: 8 },
@@ -1517,7 +1518,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-26a'), import('./gxmap.js')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-26c'), import('./gxmap.js?v=2026-10-26a')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -1551,6 +1552,7 @@ class Component extends DCLogic {
           h('span', { font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", color: this.dspError ? '#9B2C1F' : '#5F5F5B' }, this.dspError || 'Loading the dispatch planner…')), mapBox, full, hideF, "500 12px 'IBM Plex Sans',system-ui,sans-serif") })] };
     }
     this.DSP.limited = !this.isAdmin();
+    this.DSP.readOnly = !!(this.state.me && this.state.me.role === 'viewer');
     Object.values(this.DSPS).forEach(d => { d.active = d === this.DSP; });
     this.DSP.dataAt = (m && m.loadedAt) || this._mapAt || (this._mapAt = Date.now());
     const T = this.track, L = T && T.link;
@@ -1563,7 +1565,9 @@ class Component extends DCLogic {
     if (this.isAdmin() && sh && sh.state !== 'ok' && sh.msg) trackLine[1] += ' · ' + sh.msg;
     // Work orders not read from the CSV files: this screen must not change the shared plan.
     const dataProblem = m && m.woProblem ? m.woProblem : null;
-    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine, dataProblem });
+    // Real Traccar devices only (never the demo): used to assign trackers to teams and for automatic check-in.
+    const liveDevices = T && L && (L.state === 'live' || L.state === 'polling') ? T.devices : null;
+    return this.DSP.view(m, { host: this, mapBox, full, hideF, hostBi: this.mapBranchIdx(m), trackLine, dataProblem, devices: liveDevices });
   }
 
   mapView(m) {
@@ -3135,7 +3139,7 @@ class Component extends DCLogic {
         });
       })(),
       navEnter: this.navEnter, navLeave: this.navLeave,
-      meName: S.me ? S.me.name + ' · ' + (S.me.role === 'admin' ? 'Admin' : 'Dispatcher') : '', onLogout: this.logout,
+      meName: S.me ? S.me.name + ' · ' + (S.me.role === 'admin' ? 'Admin' : S.me.role === 'viewer' ? 'Viewer' : 'Dispatcher') : '', onLogout: this.logout,
       navX: S.navOpen ? 'translateX(0)' : 'translateX(-196px)', navShadow: S.navOpen ? '4px 0 18px rgba(0,0,0,0.10)' : 'none',
       viewTitle: view.title, viewSub: view.sub,
       viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),

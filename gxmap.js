@@ -282,9 +282,11 @@ export async function createMap(el, data, opts) {
   let replayM = null, onTech = null, routeKey = null;
   const planLayer = L.layerGroup().addTo(map); let planKey = null;
   const initials = n => String(n || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  // A tracker assigned to an IDS team is filled with the team colour and carries the team name as a tag.
   const techIcon = (d, sel, colors) => L.divIcon({
     className: '', iconSize: [30, 30], iconAnchor: [15, 15],
-    html: '<div style="width:30px;height:30px;box-sizing:border-box;border-radius:50%;border:3px solid ' + colors[d.state] + ';background:' + (sel ? '#1F1F1D' : '#FFFFFF') + ';color:' + (sel ? '#FFFFFF' : '#1F1F1D') + ';display:flex;align-items:center;justify-content:center;font:600 10.5px \'IBM Plex Mono\',monospace;box-shadow:0 1px 4px rgba(0,0,0,.35)">' + esc(initials(d.name)) + '</div>',
+    html: '<div style="position:relative;width:30px;height:30px;box-sizing:border-box;border-radius:50%;border:3px solid ' + colors[d.state] + ';background:' + (sel ? '#1F1F1D' : d.fill || '#FFFFFF') + ';color:' + (sel || d.fill ? '#FFFFFF' : '#1F1F1D') + ';display:flex;align-items:center;justify-content:center;font:600 10.5px \'IBM Plex Mono\',monospace;box-shadow:0 1px 4px rgba(0,0,0,.35)">' + esc(initials(d.tag || d.name)) +
+      (d.tag ? '<span style="position:absolute;left:30px;top:3px;white-space:nowrap;padding:1px 6px;border-radius:3px;background:#FFFFFF;border:2px solid ' + d.fill + ';color:#1F1F1D;font:600 11px \'IBM Plex Sans\',sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.25)">' + esc(d.tag) + '</span>' : '') + '</div>',
   });
   const woIcon = (n, color) => L.divIcon({
     className: '', iconSize: [20, 20], iconAnchor: [10, 10],
@@ -320,7 +322,7 @@ export async function createMap(el, data, opts) {
       list.forEach(d => {
         if (d.lat == null) return;
         seen.add(d.id);
-        const sel = o.sel === d.id, sig = d.state + '|' + sel;
+        const sel = o.sel === d.id, sig = d.state + '|' + sel + '|' + (d.tag || '') + '|' + (d.fill || '');
         let mk = techMarkers.get(d.id);
         if (!mk) {
           mk = L.marker([d.lat, d.lng], { icon: techIcon(d, sel, o.colors), zIndexOffset: sel ? 2000 : 1000 }).addTo(techLayer);

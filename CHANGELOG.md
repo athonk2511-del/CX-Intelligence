@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-26 (trackers per team, automatic check-in)
+
+### Added
+
+- **Tracker per team** (Teams & crew):
+  - The *App ID* box is now **Tracker**: a list of the live Traccar devices ("Tracker A (68095456) · online"), or "No tracker". A tracker picked for two teams is marked. When tracking is not live, the identifier can still be typed.
+  - Assigning trackers or naming teams (e.g. "Jenius Zega") does not re-plan.
+  - Each team column shows its tracker and state ("tracker Tracker A · online 2 min ago" or "no tracker").
+  - On the IDS map a team's tracker is filled with the team colour and carries the team name as a tag, matching its route line and job numbers. Hiding a team on the map hides its tracker too.
+- **Automatic check-in** (Settings → Auto check-in, default 50 m):
+  - When a team's tracker is within the radius of a job of that team's route that is *Not started* or *On the way*, the job becomes **Checked in** at the tracker's fix time.
+  - The tracker must be parked: 5 km/h or slower, or two positions in a row inside the radius. A drive-by does not count.
+  - Positions older than 10 minutes are ignored, and simulated (demo) technicians never check in.
+  - The card shows "Checked in 10:39 · automatic, tracker Tracker A 30 m away". The change log records it.
+  - A dispatcher can always change the status. When a job is set back by hand, it is not checked in automatically again that day.
+- The check-in time (automatic, or set by hand with *Checked in*) is now used for the ETA: the job ends at check-in + its work time, or later if it is still running.
+
+## 2026-10-26 (viewer role)
+
+### Added
+
+- **Role management · Viewer:** a read-only role.
+  - On IDS pages a viewer sees the map and the board (ETAs, card colours, customer and technician status, check-out times, nearby labels), with a **View only** badge. It follows every change of the dispatchers within about 10 seconds.
+  - No drag, Move to, ↑↓, status or confirmation selects, check-out box, Break/Problem, team-name editing, hub selects, Re-plan, Tidy, Rebalance, Teams & crew or Settings.
+  - A viewer screen never builds or changes a plan. Without a plan for today it shows "No plan for today yet".
+  - The proxy refuses plan, tracking and AI changes from a viewer key.
+  - Role management counts viewers separately; the header shows "Name · Viewer".
+- Needs the new `apps-script/roles.gs` (paste and deploy a new version).
+
 ## 2026-10-26 (no surprise re-plans)
 
 ### Changed
