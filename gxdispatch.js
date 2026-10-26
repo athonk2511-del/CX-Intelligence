@@ -187,7 +187,7 @@ class Dispatch {
     store.save(this.LS, this.st);
     if (this.sh && this.sh.on) { clearTimeout(this._pushT); this._pushT = setTimeout(() => this.shPush(), 400); }
   }
-  changed(msg) { if (msg) this.note(msg); this.ver++; this.save(); this.onChange(); }
+  changed(msg) { const P = this._ctx && this._ctx.P; if (P) P.touched = true; if (msg) this.note(msg); this.ver++; this.save(); this.onChange(); }
   note(msg) {
     const d = new Date();
     this.st.log.unshift({ id: d.getTime().toString(36) + Math.random().toString(36).slice(2, 7), at: d.getTime(), by: this.user || '', t: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()), msg });
@@ -629,8 +629,9 @@ class Dispatch {
       if (P && P.prov) {
         P.prov = false;
         if (this.road.m.size) {
-          if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, this._J, x.B, true); this.note('Plan re-run with road drive times.'); }
-          else this.note('Road drive times loaded. Manual changes kept; use Re-plan to reassign with road times.');
+          // Only a plan nobody has touched yet (created in the last 3 minutes, no changes) is re-run with road times.
+          if (!Object.keys(P.manual || {}).length && !P.touched && Date.now() - (P.born || 0) < 180000) { this.autoPlan(P, this._J, x.B, true); this.note('New plan re-run with road drive times.'); }
+          else this.note('Road drive times loaded: ETAs updated, the order of the jobs was kept.');
         }
         this.save();
       }
@@ -714,7 +715,7 @@ class Dispatch {
     if (!P) {
       P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: this.nowMin() >= this.st.cfg.rebAt ? day : null };
       this.autoPlan(P, J, B, false);
-      P.dataAt = this.dataAt || 0; P.gone = {}; P.goneV = 2;
+      P.dataAt = this.dataAt || 0; P.gone = {}; P.goneV = 2; P.born = Date.now(); P.touched = false;
       this.note(this.type + ' plan for ' + name + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
       this.save();
       return P;
@@ -1146,8 +1147,7 @@ class Dispatch {
     const where = () => { const m = new Map(); P.teams.forEach((t, i) => t.forEach(k => m.set(k, i))); P.next.forEach(k => m.set(k, 'next')); return m; };
     const before = where();
     let how;
-    if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, J, B, true); how = 'full re-plan'; }
-    else {
+    {
       const drop = [];
       P.teams = P.teams.map((ids, i) => { if (!ids.length) return ids; const r = this.fitRoute(P, i, this.lockFirst(ids)); drop.push(...r.drop); return r.keep; });
       const back = P.next.filter(k => (P.why[k] || 'internal') === 'internal' && !P.manual[k] && J.by.has(k));
@@ -1157,7 +1157,7 @@ class Dispatch {
       pool.forEach(j => { if (!this.place(P, j, B)) left.push(j.key); });
       left.forEach(k => { P.next.push(k); if (!P.why[k]) P.why[k] = 'internal'; });
       P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; if (P.role) P.role[i] = null; } });
-      how = 'routes rechecked, manual changes kept';
+      how = 'order kept';
     }
     const after = where(), diff = {};
     const bump = (i, d) => { const n = i === 'next' ? 'H+1' : this.tn(i); diff[n] = (diff[n] || 0) + d; };
@@ -1251,12 +1251,8 @@ class Dispatch {
       if (host.idsBehind) host.idsBehind();
       return note('Shared plan', 'Someone updated the plan with newer work orders than this screen has loaded. Loading the latest data, then the board appears…', C.muted);
     }
-    if (cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt) {
-      P.reb = P.date;
-      if (!Object.keys(P.manual || {}).length) { this.autoPlan(P, J, B, true); this.note('Rebalance ' + hm(cfg.rebAt) + ': plan re-run on the current spread of open WO. Locked jobs and customer reschedules kept.'); }
-      else this.note('Rebalance ' + hm(cfg.rebAt) + ' skipped: the plan has manual changes. Use Re-plan to rebalance.');
-      this.save();
-    }
+    // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
+    const rebDue = cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
     const T = this.calc(P, B);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
@@ -1311,7 +1307,7 @@ class Dispatch {
         btn('td', 'Tidy all routes', () => { P.near = {}; P.nearSave = {}; P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, this.tidy(ids, this.tbase(P, i), P.ret)) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
         btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { if (this.ui.settings) this.ui.settings = false; else this.openSettings(); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
         this.draftDirty() && !this.ui.settings ? e('span', { key: 'dd', style: { display: 'inline-flex', alignItems: 'center', gap: 6, font: SANS, color: C.warn } }, 'Unsaved settings changes',
-          btn('dsv', 'Save', () => this.saveSettings(), true), btn('ddc', 'Discard', () => this.discardSettings())) : null,
+          btn('dsv', this.ui.saveArmed ? 'Click again: save and re-plan (replaces manual changes)' : 'Save', () => this.saveSettings(), true, this.ui.saveArmed ? { background: C.bad, borderColor: C.bad } : null), btn('ddc', 'Discard', () => this.discardSettings())) : null,
         this.saveState() ? e('span', { key: 'ss', style: { font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[this.saveState()[0]] } }, this.saveState()[1]) : null,
       ]),
       ...(() => {
@@ -1330,6 +1326,9 @@ class Dispatch {
       this.ui.settings ? this.settings(e, row, chip, btn) : null,
       row('WO per cell', BANDS.map((b, n) => e('span', { key: 'b' + n, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 14, height: 10, background: b.color, opacity: 0.75, border: '1px solid ' + b.color } }), b.label)), 'bands'),
+      rebDue ? row('Rebalance', [e('span', { key: 'rbt', style: { font: SANS, color: C.warn } }, hm(cfg.rebAt) + ' rebalance available: re-run the plan on the current spread of open WO (started jobs and customer reschedules stay; ' + Object.keys(P.manual || {}).length + ' manual changes would be replaced).'),
+        btn('rbg', 'Rebalance now', () => { P.reb = P.date; this.autoPlan(P, J, B, true); this.changed('Rebalance ' + hm(cfg.rebAt) + ' run by hand: plan re-run on the current spread of open WO.'); }, true),
+        btn('rbx', 'Keep current plan', () => { P.reb = P.date; this.changed('Rebalance ' + hm(cfg.rebAt) + ' skipped: current plan kept.'); })], 'reb') : null,
       row('Card colour', Object.entries(URG).filter(([k]) => k !== 'done').map(([k, u]) => e('span', { key: 'u' + k, title: u.tip, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 12, height: 12, borderRadius: 2, background: u.c } }), u.label)), 'urg'),
       row('Show on map', [
@@ -1363,7 +1362,7 @@ class Dispatch {
       host.card('Priority by grid cell', {
         span: 12, meta: 'densest first (most WO) · ' + (this.ui.cellsAll || G.length <= 25 ? G.length : '25 of ' + G.length) + ' cells',
         body: this.cellTable(e, P, host, col, G),
-        note: 'A busy cell holds more than ' + cfg.gridMin + ' open WO, or an urgent VIP (Wiredown, Power), and gets its own anchor team. Busy cells are staffed in order of the total score of their jobs, then topped up to Teams needed = the fewest teams that fit every job of the cell between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + ' after lunch. ' + (cfg.floatPct ? cfg.floatPct + '% of the teams are kept as floaters for isolated jobs. ' : '') + 'Anchor teams with hours left take jobs from the 8 neighbouring cells only, highest score first; floaters take what is left anywhere, highest score first, and every team with hours left picks up WO on the way back to base (at most ' + cfg.homeDetour + ' min extra per stop). A WO may start up to ' + cfg.lastBefore + ' min before the team\u2019s own shift end and may finish after it. SLA ' + cfg.sla + ' h, VIP ' + cfg.slaVip + ' h, counted from WO Created inside ' + hm(cfg.start) + '–' + hm(cfg.end) + ' and paused while the customer asks to reschedule; overdue jobs get the booster. ' + (cfg.rebOn ? 'The plan is re-run once at ' + hm(cfg.rebAt) + ' unless it has manual changes. ' : '') + 'Remaining jobs go to H+1.',
+        note: 'A busy cell holds more than ' + cfg.gridMin + ' open WO, or an urgent VIP (Wiredown, Power), and gets its own anchor team. Busy cells are staffed in order of the total score of their jobs, then topped up to Teams needed = the fewest teams that fit every job of the cell between ' + hm(cfg.start) + ' and ' + hm(cfg.end) + ' after lunch. ' + (cfg.floatPct ? cfg.floatPct + '% of the teams are kept as floaters for isolated jobs. ' : '') + 'Anchor teams with hours left take jobs from the 8 neighbouring cells only, highest score first; floaters take what is left anywhere, highest score first, and every team with hours left picks up WO on the way back to base (at most ' + cfg.homeDetour + ' min extra per stop). A WO may start up to ' + cfg.lastBefore + ' min before the team\u2019s own shift end and may finish after it. SLA ' + cfg.sla + ' h, VIP ' + cfg.slaVip + ' h, counted from WO Created inside ' + hm(cfg.start) + '–' + hm(cfg.end) + ' and paused while the customer asks to reschedule; overdue jobs get the booster. ' + (cfg.rebOn ? 'At ' + hm(cfg.rebAt) + ' the board offers a rebalance; the plan only changes if a dispatcher chooses it. ' : '') + 'Remaining jobs go to H+1.',
       }),
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
@@ -1593,13 +1592,16 @@ class Dispatch {
       });
     this.keepDraft();
     const dirty = this.draftDirty();
-    const actions = row('', [btn('ap', 'Save', () => this.saveSettings(), true),
+    const sa = this.ui.saveArmed, nMan = this._ctx && this._ctx.P ? Object.keys(this._ctx.P.manual || {}).length : 0;
+    const saveLbl = sa ? 'Click again: save and re-plan' : 'Save', saveSt = sa ? { background: C.bad, borderColor: C.bad } : null;
+    const warnSave = sa ? e('span', { key: 'sw', style: { font: SANS, color: C.bad } }, 'These settings re-plan the board and replace ' + nMan + ' manual change' + (nMan > 1 ? 's' : '') + ' (started jobs and customer reschedules stay).') : null;
+    const actions = row('', [btn('ap', saveLbl, () => this.saveSettings(), true, saveSt), warnSave,
       btn('cx', dirty ? 'Discard changes' : 'Close', () => this.discardSettings()),
-      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers) and re-plans the board.' : 'No unsaved changes.'),
+      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers). Planning settings re-plan the board; team names and app IDs do not.' : 'No unsaved changes.'),
       this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act');
     const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
     const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
-      btn('ap0', 'Save', () => this.saveSettings(), true), dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
+      btn('ap0', saveLbl, () => this.saveSettings(), true, saveSt), warnSave ? e('span', { key: 'sw0', style: { font: SANS, color: C.bad } }, 'Re-plans the board') : null, dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
     // Dispatchers: the number of available teams and the crew (names, hub, shift, app ID) only.
     if (this.limited) return e('div', box, top,
       row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('teams today. Name each team, its hub and shift below.', 'l3b')]),
@@ -1629,7 +1631,7 @@ class Dispatch {
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
       row('Overdue', [lab('SLA booster +', 'ob1'), num('slaB0', 64, 50), lab('once breached, then +', 'ob2'), num('slaBd', 64, 50), lab('per working day past the SLA (added to the job score)', 'ob3')]),
-      row('Rebalance', [chip('rb', d.rebOn, 'Re-plan once at', null, null, () => set('rebOn', !d.rebOn)), time('rebAt'), lab('skipped when the plan has manual changes', 'rb2')]),
+      row('Rebalance', [chip('rb', d.rebOn, 'Offer a re-plan at', null, null, () => set('rebOn', !d.rebOn)), time('rebAt'), lab('the board asks; nothing changes until a dispatcher chooses Rebalance now', 'rb2')]),
       row('Hours', [lab('Default shift', 'l14'), time('start'), lab('to', 'l16'), time('end'),
         lab('· a WO may start up to', 'l15'), num('lastBefore', 56, 15), lab('min before the team\u2019s own shift end and may finish after it. Each team\u2019s shift is set under Crew.', 'l17')]),
       row('Duration', Object.keys(CATS).map(k => e('span', { key: 'd' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.muted } }, k, num(k, 60, 5, d.dur, 'dur' + k), 'min',
@@ -1652,11 +1654,17 @@ class Dispatch {
      The panel edits a draft. The draft is kept in this browser until it is saved or discarded, so closing the panel or the
      dashboard never loses typed changes. Save sends only the fields changed in the draft, on top of the latest shared
      settings, so it never undoes what someone else saved meanwhile. */
-  draftKey() { return 'gx.ids.' + this.type + '.draft'; }
+  // v2: drafts kept by the 2026-10-25 version could hold a filled-in hub list counted as a change; they are dropped.
+  draftKey() { return 'gx.ids.' + this.type + '.draft2'; }
   openSettings() {
     const kept = store.load(this.draftKey());
     if (kept && kept.draft && kept.base) { this.ui.draft = kept.draft; this.ui.base = kept.base; }
-    else { this.ui.draft = JSON.parse(JSON.stringify(this.st.cfg)); this.ui.base = JSON.stringify(this.ui.draft); }
+    else {
+      this.ui.draft = JSON.parse(JSON.stringify(this.st.cfg));
+      // The panel fills in the hub list of the branch on display; do it before taking the base, so it is not a change.
+      if (this._ctx && this._ctx.name) this.draftBases(this.ui.draft, this._ctx.name);
+      this.ui.base = JSON.stringify(this.ui.draft);
+    }
     this.ui.settings = true;
   }
   draftDirty() {
@@ -1669,14 +1677,27 @@ class Dispatch {
     else store.save(this.draftKey(), null);
   }
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
+  // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
+  replanKeys(base, d) {
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV'].includes(k));
+    if (keys.includes('crew')) {
+      const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
+      if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
+    }
+    return keys;
+  }
   saveSettings() {
     const d = this.ui.draft; if (!d) return;
     const base = JSON.parse(this.ui.base || '{}'), out = JSON.parse(JSON.stringify(this.st.cfg));
     Object.keys(d).forEach(k => { if (JSON.stringify(d[k]) !== JSON.stringify(base[k])) out[k] = d[k]; });
+    const replan = this.replanKeys(base, d).length > 0, P = this._ctx && this._ctx.P, nMan = P ? Object.keys(P.manual || {}).length : 0;
+    // Re-planning replaces hand-made changes: ask once more before doing it.
+    if (replan && nMan && !this.ui.saveArmed) { this.ui.saveArmed = true; clearTimeout(this._sarm); this._sarm = setTimeout(() => { this.ui.saveArmed = false; this.onChange(); }, 8000); this.onChange(); return; }
+    clearTimeout(this._sarm); this.ui.saveArmed = false;
     this.ui.draft = out;
     store.save(this.draftKey(), null);
     this.ui.saveAt = Date.now(); this.ui.base = null;
-    this.apply();
+    this.apply(replan);
   }
   // Status of the last save: saving, saved for everyone, or why it was not shared.
   saveState() {
@@ -1687,7 +1708,7 @@ class Dispatch {
     if (sh.busy || this.hasUnsent()) return ['muted', 'Saving settings for everyone…'];
     return ['good', 'Settings saved for everyone · ' + new Date(Math.max(t, sh.lastOk || t)).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })];
   }
-  apply() {
+  apply(replan = true) {
     const d = this.ui.draft; if (!d) return;
     const clean = (v, lo, hi, def) => { v = +v; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def; };
     const c = this.st.cfg, osrm = String(d.osrm || DEF.osrm).trim().replace(/\/+$/, '');
@@ -1712,8 +1733,8 @@ class Dispatch {
     try {
       const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0], P = this.st.plans[m.branches[bi]];
       this.ensureRoad(J, B);
-      if (P) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
-      this.changed('Settings changed and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, busy cell >' + c.gridMin + ' WO, ' + c.floatPct + '% floaters).');
+      if (P && replan) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
+      this.changed(replan ? 'Settings saved and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, busy cell >' + c.gridMin + ' WO, ' + c.floatPct + '% floaters).' : 'Settings saved (team names / app IDs only); the board was not re-planned.');
     } catch (err) {
       console.error('IDS re-plan failed', err);
       this.changed('Settings saved, but the re-plan failed: ' + (err && err.message || err) + '. Press Re-plan automatically or reload.');

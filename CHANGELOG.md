@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-26 (no surprise re-plans)
+
+### Changed
+
+- **The IDS board is re-planned only when someone chooses it.** A dispatcher's schedule no longer changes by itself. Re-plans happen only on:
+  - **Save** in Settings / Teams & crew, when a planning setting changed;
+  - **Re-plan automatically**;
+  - **Rebalance now**;
+  - the first plan of a new day.
+- **Save** re-plans only when a planning setting changed (teams, hubs, shifts, durations, SLA, …). Saving team names or app IDs keeps the board as it is.
+  - When the plan has manual changes, the first click shows "These settings re-plan the board and replace N manual changes", and the button turns red: **Click again: save and re-plan**.
+  - The change log records who re-planned.
+- **12:00 rebalance** is now an offer on the board (**Rebalance now** / **Keep current plan**), never automatic.
+- **Check-out** no longer re-runs the whole plan. The order of every route is kept. Only jobs that can no longer start in time move to another team (at the end) or to H+1, and a team that finishes early takes work from H+1 at the end of its route.
+- **Road drive times** arriving after the plan was made update the ETAs only. A brand-new plan that nobody has touched yet (first 3 minutes) is still re-run with them.
+
+### Fixed
+
+- Opening Settings without changing anything no longer shows "Unsaved changes" (the hub list of the branch counted as a change). Drafts kept by the previous version are dropped once.
+
 ## 2026-10-25 (save settings)
 
 ### Added
