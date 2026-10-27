@@ -288,12 +288,17 @@ export async function createMap(el, data, opts) {
     html: '<div style="position:relative;width:30px;height:30px;box-sizing:border-box;border-radius:50%;border:3px solid ' + colors[d.state] + ';background:' + (sel ? '#1F1F1D' : d.fill || '#FFFFFF') + ';color:' + (sel || d.fill ? '#FFFFFF' : '#1F1F1D') + ';display:flex;align-items:center;justify-content:center;font:600 10.5px \'IBM Plex Mono\',monospace;box-shadow:0 1px 4px rgba(0,0,0,.35)">' + esc(initials(d.tag || d.name)) +
       (d.tag ? '<span style="position:absolute;left:30px;top:3px;white-space:nowrap;padding:1px 6px;border-radius:3px;background:#FFFFFF;border:2px solid ' + d.fill + ';color:#1F1F1D;font:600 11px \'IBM Plex Sans\',sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.25)">' + esc(d.tag) + '</span>' : '') + '</div>',
   });
-  // ring: { c, done } colours the outside of the box by job status (white gap, then a thick coloured ring); done adds a tick.
-  const woIcon = (n, color, ring) => L.divIcon({
-    className: '', iconSize: [20, 20], iconAnchor: [10, 10],
-    html: '<div style="position:relative;width:20px;height:20px;box-sizing:border-box;border-radius:3px;border:2px solid ' + (ring ? '#FFFFFF' : '#1F1F1D') + ';background:' + color + ';color:#FFFFFF;display:flex;align-items:center;justify-content:center;font:600 10px \'IBM Plex Mono\',monospace' + (ring ? ';box-shadow:0 0 0 5px ' + ring.c + ',0 0 0 6px rgba(0,0,0,.4)' : '') + '">' + n +
-      (ring && ring.done ? '<span style="position:absolute;right:-11px;top:-11px;width:13px;height:13px;border-radius:50%;background:' + ring.c + ';border:1.5px solid #FFFFFF;color:#FFFFFF;font:700 9px sans-serif;line-height:11px;text-align:center">✓</span>' : '') + '</div>',
-  });
+  // mark: 'done' = checked out (grey, 20 % opacity, green tick); 'revisit' = visited but the customer asks to reschedule.
+  const woIcon = (n, color, mark) => {
+    const done = mark === 'done', rv = mark === 'revisit';
+    const bg = done ? 'rgba(140,140,136,.2)' : rv ? '#FCC419' : color, fg = done ? 'rgba(31,31,29,.45)' : rv ? '#1F1F1D' : '#FFFFFF', bd = done ? 'rgba(31,31,29,.25)' : '#1F1F1D';
+    const badge = (c, t, txt) => '<span style="position:absolute;right:-7px;top:-7px;width:12px;height:12px;border-radius:50%;background:' + c + ';border:1.5px solid #FFFFFF;color:' + t + ';font:700 8px sans-serif;line-height:12px;text-align:center">' + txt + '</span>';
+    return L.divIcon({
+      className: '', iconSize: [20, 20], iconAnchor: [10, 10],
+      html: '<div style="position:relative;width:20px;height:20px;box-sizing:border-box;border-radius:3px;border:2px solid ' + bd + ';background:' + bg + ';color:' + fg + ';display:flex;align-items:center;justify-content:center;font:600 10px \'IBM Plex Mono\',monospace">' + n +
+        (done ? badge('#2B8A3E', '#FFFFFF', '✓') : rv ? badge('#1F1F1D', '#FCC419', '↻') : '') + '</div>',
+    });
+  };
   function fit() {
     const la = [], lo = [];
     for (let i = 0; i < data.count; i++) if (visible(i)) { la.push(data.lat[i]); lo.push(data.lng[i]); }
@@ -404,9 +409,9 @@ export async function createMap(el, data, opts) {
           L.polyline(ll, { color: '#FFFFFF', weight: 6, opacity: 0.85 * (p.routeA ?? 1), interactive: false }).addTo(planLayer);
           L.polyline(ll, { color: t.color, weight: 3, opacity: 0.95 * (p.routeA ?? 1), interactive: false }).addTo(planLayer);
         }
-        t.pts.forEach((x, n) => { all.push([x.lat, x.lng]); L.marker([x.lat, x.lng], { icon: woIcon(n + 1, t.color, x.ring), zIndexOffset: x.ring ? 650 : 600 }).bindTooltip(esc(x.title), { direction: 'top', offset: [0, -10] }).addTo(planLayer); });
+        t.pts.forEach((x, n) => { all.push([x.lat, x.lng]); L.marker([x.lat, x.lng], { icon: woIcon(n + 1, t.color, x.mark), zIndexOffset: x.mark === 'done' ? 500 : x.mark ? 650 : 600 }).bindTooltip(esc(x.title), { direction: 'top', offset: [0, -10] }).addTo(planLayer); });
       });
-      p.next.forEach(x => { all.push([x.lat, x.lng]); L.circleMarker([x.lat, x.lng], { radius: x.ring ? 7 : 6, color: x.ring || '#D9480F', weight: x.ring ? 4 : 2.5, fillColor: '#FFFFFF', fillOpacity: 1 }).bindTooltip(esc(x.title), { direction: 'top' }).addTo(planLayer); });
+      p.next.forEach(x => { all.push([x.lat, x.lng]); L.circleMarker([x.lat, x.lng], { radius: 6, color: '#D9480F', weight: 2.5, fillColor: '#FFFFFF', fillOpacity: 1 }).bindTooltip(esc(x.title), { direction: 'top' }).addTo(planLayer); });
       BS.forEach(bb => L.marker([bb.lat, bb.lng], { zIndexOffset: 700, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div style="width:16px;height:16px;box-sizing:border-box;background:#1F1F1D;border:2px solid #E8B400;border-radius:2px"></div>' }) })
         .bindTooltip(esc(bb.title), { direction: 'top', offset: [0, -8] }).addTo(planLayer));
       if (p.fit && all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 15 });

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-27 (map marks, editable job types)
+
+### Changed
+
+- **IDS map:** the status rings of the previous update are removed (too heavy on the map), together with the *Map ring* legend. Job boxes now change only in two cases:
+  - **Checked out:** grey box at 20 % opacity with a green ✓, drawn under the other jobs.
+  - **Visited, customer asks to reschedule:** a job checked in or checked out whose customer asks to reschedule turns yellow with a ↻ mark. Such a job stays in its route; it is not moved to H+1.
+  - Both are explained on the *Legend* row. The tooltip of every box shows the technician status and the customer answer.
+  - H+1 points are back to the orange ring for every reason.
+
+### Added
+
+- **Settings → Job types:** the fixed *Duration* row is replaced by an editable list, separate for IDS WWR and IDS WCM.
+  - Each type has a name, work time (min), priority level (Critical +500, High +400, Medium +300, Low +100 to the job score; Critical and High VIP are worked first) and the words that recognise it in the WO category or problem text.
+  - Types can be added (**+ Add job type**), removed and moved up or down. The first type whose words match is used.
+  - *Other (no word matched)* is always last, and its work time and priority can be changed.
+  - Starts from the current types, with any work times saved earlier. Saving a change re-plans the board, like other planning settings.
+
 ## 2026-10-27 (status rings on the map)
 
 ### Added

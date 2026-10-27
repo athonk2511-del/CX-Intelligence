@@ -25,6 +25,19 @@ export const CATS = {
   'Low/Unknown': { s: 100, lvl: 'Low', d: 60, src: 'assumed' },
 };
 export const AGING = 200;
+// Job types are editable per IDS page (Settings → Job types): name, work time, priority level and the words that
+// recognise it in the WO category / problem text (first match from the top wins). These are the defaults.
+export const LEVELS = { Critical: 500, High: 400, Medium: 300, Low: 100 };
+export const OTHER = 'Low/Unknown';
+export const DEF_TYPES = [
+  { name: 'Perbaikan Power', min: 180, lvl: 'High', s: 400, words: 'power, listrik, adaptor, adapter, psu' },
+  { name: 'Pindah Jalur Kabel', min: 120, lvl: 'Medium', s: 300, words: 'pindah jalur, reroute, re-route, jalur kabel' },
+  { name: 'Perapian Kabel', min: 60, lvl: 'Low', s: 100, words: 'perapian, rapikan, rapi kabel' },
+  { name: 'Reposisi ONU', min: 60, lvl: 'Low', s: 100, words: 'reposisi, pindah onu, pindah modem, relokasi onu' },
+  { name: 'FO Project', min: 360, lvl: 'Low', s: 50, words: 'project' },
+  { name: 'Wiredown', min: 120, lvl: 'Critical', s: 500, words: 'wiredown, wire down, wire-down, putus, los, redaman, fiber cut, kabel rusak, kabel jatuh, kabel turun' },
+  { name: OTHER, min: 60, lvl: 'Low', s: 100, words: '' },
+];
 // Cell colour by density: number of open WO in the cell. VIP does not change the colour; VIP only goes first in the work order.
 export const BANDS = [
   { min: 0, color: '#2E7D4F', label: '1–2 WO' },
@@ -47,15 +60,6 @@ const URG = {
   green: { c: '#2B8A3E', bg: '#F1FAF2', label: 'Due tomorrow', tip: 'SLA due during the next working day' },
   blue: { c: '#1971C2', bg: '#EFF6FD', label: 'Safe · negotiable', tip: 'SLA due later: can be rescheduled with the customer' },
   done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
-};
-// Ring around a job's box on the IDS map, by its status. Technician status wins over the customer answer.
-export const RING = {
-  checkout: { c: '#2B8A3E', label: 'Checked out' },
-  checkin: { c: '#F59F00', label: 'Checked in / in progress' },
-  start: { c: '#1971C2', label: 'On the way' },
-  resched: { c: '#E03131', label: 'Asks to reschedule' },
-  noresp: { c: '#862E9C', label: 'No answer' },
-  ok: { c: '#111111', label: 'Confirmed' },
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
@@ -87,7 +91,7 @@ const DEF = {
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
-  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, jobTypes: null,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -98,11 +102,6 @@ const fmtN = v => Math.round(v).toLocaleString('en-US');
 const nf1 = v => (Math.round(v * 10) / 10).toFixed(1);
 const dd = m => m < 2880 ? dh(m) : Math.floor(m / 1440) + ' d';
 const tierOf = raw => { const v = String(raw || '').toLowerCase(); return /vip/.test(v) ? 'VIP' : /highest/.test(v) ? 'Highest' : /high/.test(v) ? 'High' : /low/.test(v) ? 'Low' : /normal|medium|standard/.test(v) ? 'Normal' : null; };
-// Job type from the ticket's category and problem text. Anything not recognised is Low/Unknown until the problem is known.
-const catOf = (a, b) => { const v = (String(a || '') + ' ' + String(b || '')).toLowerCase();
-  return /power|listrik|adaptor|adapter|psu/.test(v) ? 'Perbaikan Power' : /pindah jalur|reroute|re-route|jalur kabel/.test(v) ? 'Pindah Jalur Kabel'
-    : /perapian|rapikan|rapi kabel/.test(v) ? 'Perapian Kabel' : /reposisi|pindah onu|pindah modem|relokasi onu/.test(v) ? 'Reposisi ONU' : /project/.test(v) ? 'FO Project'
-    : /wire ?-?down|putus|\blos\b|redaman|fiber cut|kabel (rusak|jatuh|turun)/.test(v) ? 'Wiredown' : 'Low/Unknown'; };
 function hav(a, b) {
   const t = Math.PI / 180, dl = (b.lat - a.lat) * t, dn = (b.lng - a.lng) * t;
   const x = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dn / 2) ** 2;
@@ -453,7 +452,7 @@ class Dispatch {
   // Latest work order of this type per CID (by timestamp); kept only while that latest order is still open or in progress.
   jobs(m, bi) {
     const cfg = this.st.cfg, ST = m[this.TY.st], INFO = m[this.TY.info];
-    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm].join('|');
+    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm, JSON.stringify(cfg.jobTypes || null)].join('|');
     if (this._jobs && this._jobs.m === m && this._jobs.sig === sig) return this._jobs.v;
     if (this._zm !== m || this._zbi !== bi || this._zg !== cfg.gridKm) { this._zm = m; this._zbi = bi; this._zg = cfg.gridKm; this._zone = null; }
     const now = Date.now(), maxMs = (+cfg.maxAge || 0) * 86400e3;
@@ -464,9 +463,9 @@ class Dispatch {
       if (!w || state < 0 || state > 1 || (state === 1 && !cfg.prog)) continue;
       if (m.status[i] === 2 || (m.status[i] === 1 && !cfg.blocked)) { skipped.status++; continue; }
       if (maxMs && w.t > 0 && now - w.t > maxMs) { skipped.old++; continue; }
-      const tier = tierOf(w.prio), cat = catOf(w.cat, w.prob);
+      const tier = tierOf(w.prio), cat = this.catOf(w.cat, w.prob);
       if (!tier) skipped.noPrio++;
-      if (cat === 'Low/Unknown') skipped.unknown++;
+      if (cat === OTHER) skipped.unknown++;
       const j = { key: String(w.wo || (this.type + '-' + m.cid[i])), i, type: this.type, wo: w.wo || '—', cid: String(m.cid[i]), uid: m.uid[i] || '', name: m.name[i] || '', area: m.area ? m.area[i] || '' : '',
         lat: m.lat[i], lng: m.lng[i], t: w.t || 0, raw: w.raw || '', prog: state === 1, cat, prob: w.prob || w.cat || '', prio: w.prio || '', noPrio: !tier, tier: tier || 'Normal' };
       const c = this.M.cellOf(j.lat, j.lng, cfg.gridKm * 1000);
@@ -562,14 +561,33 @@ class Dispatch {
 
   /* ---------- scoring ---------- */
   aging(j) { const a = this.st.meta[j.key]; return a ? a.aging.length : 0; }
-  score(j) { return TIERS[j.tier].s + CATS[j.cat].s + AGING * this.aging(j) + this.slaBoost(j); }
+  // The job types in use: saved list, or the defaults with any work times saved by the older Duration setting.
+  types() {
+    const c = this.st.cfg;
+    if (Array.isArray(c.jobTypes) && c.jobTypes.length) { if (this._ty && this._ty.src === c.jobTypes) return this._ty.v; }
+    else if (this._ty && this._ty.src === c.dur) return this._ty.v;
+    const base = Array.isArray(c.jobTypes) && c.jobTypes.length ? c.jobTypes : DEF_TYPES.map(t => ({ ...t, min: +(c.dur || {})[t.name] || t.min }));
+    const list = base.filter(t => t && t.name && t.name !== OTHER).map(t => ({ ...t }));
+    list.push({ ...(base.find(t => t && t.name === OTHER) || DEF_TYPES[DEF_TYPES.length - 1]), name: OTHER, words: '' });
+    list.forEach(t => {
+      t.min = Math.max(10, +t.min || 60); t.s = isFinite(+t.s) ? +t.s : LEVELS[t.lvl] || 100;
+      const ws = String(t.words || '').split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
+      t.re = ws.length ? new RegExp('(^|[^a-z0-9])(' + ws.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*')).join('|') + ')(?![a-z0-9])') : null;
+    });
+    const v = { list, by: new Map(list.map(t => [t.name, t])) };
+    this._ty = { src: Array.isArray(c.jobTypes) && c.jobTypes.length ? c.jobTypes : c.dur, v };
+    return v;
+  }
+  cat(name) { const T = this.types(); return T.by.get(name) || T.by.get(OTHER); }
+  catOf(a, b) { const v = (String(a || '') + ' ' + String(b || '')).toLowerCase(), T = this.types(); const t = T.list.find(x => x.re && x.re.test(v)); return t ? t.name : OTHER; }
+  score(j) { return TIERS[j.tier].s + this.cat(j.cat).s + AGING * this.aging(j) + this.slaBoost(j); }
   // Overdue booster: slaB0 once the SLA is breached, plus slaBd for every full working day past it.
   slaBoost(j) {
     const c = this.st.cfg, r = this.rem(j);
     if (!(r < 0)) return 0;
     return (+c.slaB0 || 0) + (+c.slaBd || 0) * Math.floor(-r / Math.max(60, c.end - c.start));
   }
-  urgent(j) { return CATS[j.cat].s >= 400; }
+  urgent(j) { return this.cat(j.cat).s >= 400; }
   vipLate(j) { return j.tier === 'VIP' && !this.urgent(j); }
   locked(j) { const s = (this.st.meta[j.key] || {}).stat; return j.prog || s === 'start' || s === 'checkin' || s === 'checkout'; }
   // Started jobs first, in the order they really happened: checked out (by check-out time), then the job the team is
@@ -582,8 +600,8 @@ class Dispatch {
     lk.sort((a, b) => this.lockRank(by(a)) - this.lockRank(by(b)) || pos.get(a) - pos.get(b));
     return lk.concat(ids.filter(k => !lk.includes(k)));
   }
-  cmp = (a, b) => this.score(b) - this.score(a) || CATS[b.cat].s - CATS[a.cat].s || TIERS[b.tier].r - TIERS[a.tier].r || a.t - b.t;
-  dur(j) { return +this.st.cfg.dur[j.cat] || CATS[j.cat].d; }
+  cmp = (a, b) => this.score(b) - this.score(a) || this.cat(b.cat).s - this.cat(a.cat).s || TIERS[b.tier].r - TIERS[a.tier].r || a.t - b.t;
+  dur(j) { return this.cat(j.cat).min; }
 
   /* ---------- SLA ---------- */
   // SLA clock: from WO Created until WO Closed (closed WO leave the list), counted only inside working hours (start–end)
@@ -765,7 +783,7 @@ class Dispatch {
     this._need = { J: this._J, rv: this.road.ver, cv: sig, v };
     return v;
   }
-  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, c.nearM, c.nearDelay, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
+  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, c.nearM, c.nearDelay, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(c.jobTypes || null), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
 
   /* ---------- planning ---------- */
   today() { return ymd(new Date()); }
@@ -1402,10 +1420,6 @@ class Dispatch {
       rebDue ? row('Rebalance', [e('span', { key: 'rbt', style: { font: SANS, color: C.warn } }, hm(cfg.rebAt) + ' rebalance available: re-run the plan on the current spread of open WO (started jobs and customer reschedules stay; ' + Object.keys(P.manual || {}).length + ' manual changes would be replaced).'),
         btn('rbg', 'Rebalance now', () => { P.reb = P.date; this.autoPlan(P, J, B, true); this.changed('Rebalance ' + hm(cfg.rebAt) + ' run by hand: plan re-run on the current spread of open WO.'); }, true),
         btn('rbx', 'Keep current plan', () => { P.reb = P.date; this.changed('Rebalance ' + hm(cfg.rebAt) + ' skipped: current plan kept.'); })], 'reb') : null,
-      row('Map ring', [e('span', { key: 'rg0', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
-          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: C.muted, border: '2px solid #1F1F1D' } }), 'Not started')]
-        .concat(Object.entries(RING).map(([k, r]) => e('span', { key: 'rg' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
-          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: C.muted, border: '2px solid #FFFFFF', boxShadow: '0 0 0 3px ' + r.c } }), r.label + (k === 'checkout' ? ' ✓' : '')))), 'ring'),
       row('Card colour', Object.entries(URG).filter(([k]) => k !== 'done').map(([k, u]) => e('span', { key: 'u' + k, title: u.tip, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 12, height: 12, borderRadius: 2, background: u.c } }), u.label)), 'urg'),
       row('Show on map', [
@@ -1420,6 +1434,11 @@ class Dispatch {
       ], 'vis'),
       row('Legend', [
         e('span', { key: 'lgn', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } }, e('span', { style: { width: 10, height: 10, borderRadius: '50%', border: '2px solid #D9480F', boxSizing: 'border-box' } }), 'Deferred H+1'),
+        e('span', { key: 'lgc', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
+          e('span', { style: { position: 'relative', width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: 'rgba(140,140,136,.2)', border: '1.5px solid rgba(31,31,29,.25)' } },
+            e('span', { style: { position: 'absolute', right: -6, top: -6, width: 10, height: 10, borderRadius: '50%', background: '#2B8A3E', color: '#FFFFFF', font: "700 7px sans-serif", lineHeight: '10px', textAlign: 'center' } }, '✓')), 'Checked out'),
+        e('span', { key: 'lgr', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
+          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: '#FCC419', border: '1.5px solid #1F1F1D', font: "700 9px sans-serif", lineHeight: '11px', textAlign: 'center', color: '#1F1F1D' } }, '↻'), 'Visited, customer asks to reschedule'),
         e('span', { key: 'lgd', style: { font: SANS, color: C.muted } }, 'route lines appear once the road route is loaded'),
       ], 'lgd'),
       row('Opacity', [['cellA', 'Grid cells', 0.36], ['routeA', 'Route lines', 1]].map(([k, label, def]) => {
@@ -1556,7 +1575,7 @@ class Dispatch {
     const nT = P.teams.length;
     const moveOpts = { '': 'Move to…' }; for (let n = 0; n < nT; n++) { const at = P.home[n] ? ' · ' + this.M.cellLabel(P.home[n]) : ''; moveOpts[n + ':next'] = this.tn(n) + at + ' · next stop'; moveOpts[n + ':last'] = this.tn(n) + at + ' · last stop'; } if (colId !== 'next') moveOpts.next = 'Defer H+1';
     const chips = [pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
-      pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', CATS[j.cat].lvl === 'Critical' ? 'bad' : CATS[j.cat].lvl === 'High' ? 'warn' : null, 'c'),
+      pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', this.cat(j.cat).lvl === 'Critical' ? 'bad' : this.cat(j.cat).lvl === 'High' ? 'warn' : null, 'c'),
       pill(this.cellName(j), null, 'g')];
     const ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
     chips.unshift(e('span', { key: 'ug', title: ug.tip, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif" } }, ug.label));
@@ -1719,8 +1738,7 @@ class Dispatch {
       row('Rebalance', [chip('rb', d.rebOn, 'Offer a re-plan at', null, null, () => set('rebOn', !d.rebOn)), time('rebAt'), lab('the board asks; nothing changes until a dispatcher chooses Rebalance now', 'rb2')]),
       row('Hours', [lab('Default shift', 'l14'), time('start'), lab('to', 'l16'), time('end'),
         lab('· a WO may start up to', 'l15'), num('lastBefore', 56, 15), lab('min before the team\u2019s own shift end and may finish after it. Each team\u2019s shift is set under Crew.', 'l17')]),
-      row('Duration', Object.keys(CATS).map(k => e('span', { key: 'd' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.muted } }, k, num(k, 60, 5, d.dur, 'dur' + k), 'min',
-        e('span', { style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: CATS[k].src === 'assumed' ? C.warn : C.good } }, CATS[k].src)))),
+      ...this.typeRows(e, row, btn, lab, tx, d),
       ...bl.map((b, n) => row(n ? '' : 'Hubs', [
         e('input', { key: 'bn' + n + '|' + bl.length, type: 'text', defaultValue: b.name, placeholder: 'Base name', onBlur: ev => { bl[n] = { ...bl[n], name: ev.target.value.trim() || 'Base ' + (n + 1) }; setB(); }, style: { ...tx, width: 170, font: SANS } }),
         e('input', { key: 'bl' + n + '|' + bl.length, type: 'text', defaultValue: (+b.lat).toFixed(5) + ', ' + (+b.lng).toFixed(5), placeholder: 'lat, lng',
@@ -1740,6 +1758,42 @@ class Dispatch {
      dashboard never loses typed changes. Save sends only the fields changed in the draft, on top of the latest shared
      settings, so it never undoes what someone else saved meanwhile. */
   // v2: drafts kept by the 2026-10-25 version could hold a filled-in hub list counted as a change; they are dropped.
+  // Job types in the settings draft: a copy of the list in use, then edited in place.
+  draftTypes(d) {
+    if (!Array.isArray(d.jobTypes)) d.jobTypes = this.types().list.map(t => ({ name: t.name, min: t.min, lvl: t.lvl || 'Low', s: t.s, words: t.words || '' }));
+    d.jobTypes.forEach(t => { if (t._lvl0 === undefined) t._lvl0 = t.lvl; });
+    return d.jobTypes;
+  }
+  cleanTypes(list) {
+    const seen = new Set(), out = [];
+    list.forEach(t => {
+      const name = String(t && t.name || '').trim().slice(0, 40); if (!name || seen.has(name.toLowerCase())) return; seen.add(name.toLowerCase());
+      const lvl = LEVELS[t.lvl] ? t.lvl : 'Medium';
+      out.push({ name, min: Math.round(Math.min(720, Math.max(10, +t.min || 60))), lvl, s: isFinite(+t.s) && t.lvl === t._lvl0 ? +t.s : LEVELS[lvl], words: name === OTHER ? '' : String(t.words || '').slice(0, 300) });
+    });
+    if (!out.some(t => t.name === OTHER)) out.push({ name: OTHER, min: 60, lvl: 'Low', s: 100, words: '' });
+    return out.filter(t => t.name !== OTHER).concat(out.filter(t => t.name === OTHER));
+  }
+  typeRows(e, row, btn, lab, tx, d) {
+    const L = this.draftTypes(d), upd = () => { d.jobTypes = L.slice(); this.onChange(); };
+    const inp = (t, k, w, ph, n) => e('input', { key: k + n, type: 'text', value: t[k] == null ? '' : t[k], placeholder: ph, 'aria-label': 'Job type ' + (n + 1) + ' ' + k, onChange: ev => { t[k] = ev.target.value; upd(); }, style: { ...tx, width: w, font: SANS } });
+    const rows = L.map((t, n) => {
+      const other = t.name === OTHER;
+      return row(n ? '' : 'Job types', [
+        other ? e('span', { key: 'on', style: { width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, 'Other (no word matched)') : inp(t, 'name', 170, 'Job type name', n),
+        e('input', { key: 'mn' + n, type: 'number', step: 5, min: 10, value: t.min, 'aria-label': 'Job type ' + (n + 1) + ' minutes', onChange: ev => { t.min = ev.target.value === '' ? '' : +ev.target.value; upd(); }, style: { ...tx, width: 64 } }), lab('min', 'mu' + n),
+        e('select', { key: 'lv' + n, value: t.lvl || 'Low', 'aria-label': 'Job type ' + (n + 1) + ' priority', onChange: ev => { t.lvl = ev.target.value; upd(); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS } },
+          ...Object.keys(LEVELS).map(k => e('option', { key: k, value: k }, k + ' priority'))),
+        other ? lab('used when no words of the types above match', 'ow' + n) : inp(t, 'words', 320, 'words in the WO category or problem, comma separated', n),
+        other || n === 0 ? null : btn('up' + n, '↑', () => { const x = L[n - 1]; L[n - 1] = L[n]; L[n] = x; upd(); }),
+        other || n >= L.length - 2 ? null : btn('dn' + n, '↓', () => { const x = L[n + 1]; L[n + 1] = L[n]; L[n] = x; upd(); }),
+        other ? null : btn('rm' + n, 'Remove', () => { L.splice(n, 1); upd(); }),
+      ], 'jt' + n);
+    });
+    rows.push(row('', [btn('jta', '+ Add job type', () => { L.splice(Math.max(0, L.length - 1), 0, { name: '', min: 60, lvl: 'Medium', s: LEVELS.Medium, words: '' }); upd(); }),
+      lab('Checked from the top; the first type whose words appear in the WO category or problem is used. Priority: Critical +500, High +400 (Critical and High VIP go first), Medium +300, Low +100 to the job score.', 'jtn')], 'jtadd'));
+    return rows;
+  }
   draftKey() { return 'gx.ids.' + this.type + '.draft2'; }
   openSettings() {
     const kept = store.load(this.draftKey());
@@ -1748,6 +1802,7 @@ class Dispatch {
       this.ui.draft = JSON.parse(JSON.stringify(this.st.cfg));
       // The panel fills in the hub list of the branch on display; do it before taking the base, so it is not a change.
       if (this._ctx && this._ctx.name) this.draftBases(this.ui.draft, this._ctx.name);
+      this.draftTypes(this.ui.draft);
       this.ui.base = JSON.stringify(this.ui.draft);
     }
     this.ui.settings = true;
@@ -1811,7 +1866,8 @@ class Dispatch {
       lunchAt: clean(d.lunchAt, 0, 1439, DEF.lunchAt), lunchMin: clean(d.lunchMin, 0, 180, DEF.lunchMin), slaB0: clean(d.slaB0, 0, 5000, DEF.slaB0), slaBd: clean(d.slaBd, 0, 5000, DEF.slaBd),
       sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
       rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt),
-      dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean(d.dur[k], 10, 720, CATS[k].d)])),
+      dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean((d.dur || {})[k], 10, 720, CATS[k].d)])),
+      jobTypes: Array.isArray(d.jobTypes) ? this.cleanTypes(d.jobTypes) : c.jobTypes || null,
     });
     this.ui.settings = false; this.ui.draft = null; this._jobs = null; this._need = null; this._layer = null; this._zone = null; this._zf = null;
     const { m, bi } = this._ctx;
@@ -1827,14 +1883,12 @@ class Dispatch {
   }
 
   /* ---------- map layer ---------- */
-  ringOf(j) {
-    const mt = this.st.meta[j.key] || {};
-    if (mt.stat === 'checkout') return 'checkout';
-    if (mt.stat === 'checkin' || j.prog) return 'checkin';
-    if (mt.stat === 'start') return 'start';
-    if (mt.conf === 'resched') return 'resched';
-    if (mt.conf === 'noresp') return 'noresp';
-    if (mt.conf === 'ok') return 'ok';
+  // How a job's box looks on the IDS map: done = checked out (grey, faded, green tick); revisit = visited (checked in or
+  // out) but the customer asks to reschedule (yellow with a ↻ mark).
+  markOf(j) {
+    const mt = this.st.meta[j.key] || {}, visited = mt.stat === 'checkout' || mt.stat === 'checkin' || j.prog;
+    if (visited && mt.conf === 'resched') return 'revisit';
+    if (mt.stat === 'checkout') return 'done';
     return null;
   }
   layer() {
@@ -1842,8 +1896,8 @@ class Dispatch {
     const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length + '|' + [...this.ui.hidden].join(',') + '|' + this.ui.hideNext;
     if (this._layer && this._layer.key === k) return this._layer;
     const J = this._J, P = x.P, cfg = this.st.cfg;
-    const tip = j => { const r = this.ringOf(j); return j.wo + ' · ' + (j.uid || j.cid) + ' · ' + j.tier + ' · ' + j.cat + (r ? ' · ' + RING[r].label : ''); };
-    const ring = j => { const r = this.ringOf(j); return r ? { c: RING[r].c, done: r === 'checkout' } : null; };
+    const stTxt = j => { const mt = this.st.meta[j.key] || {}; return [mt.stat && mt.stat !== 'none' ? STAT[mt.stat] : '', mt.conf && mt.conf !== 'none' ? CONF[mt.conf] : ''].filter(Boolean).join(' · '); };
+    const tip = j => { const t = stTxt(j); return j.wo + ' · ' + (j.uid || j.cid) + ' · ' + j.tier + ' · ' + j.cat + (t ? ' · ' + t : ''); };
     const fit = !this._layer || this._layer.name !== x.name;
     this._layer = {
       key: k, name: x.name, fit, size: cfg.gridKm * 1000, cellA: cfg.cellA ?? 0.36, routeA: cfg.routeA ?? 1,
@@ -1852,8 +1906,8 @@ class Dispatch {
           g.ctr ? 'Busy cell (>' + cfg.gridMin + ' WO) · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : 'Neighbouring anchor team or floater', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
       teams: P.teams.map((ids, n) => this.ui.hidden.has(n) ? null : ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, this.tbase(P, n))) || null : null,
-        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), ring: ring(j) })) })).filter(t => t && t.pts.length),
-      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j), ring: P.why[j.key] === 'customer' || (this.st.meta[j.key] || {}).conf === 'resched' ? RING.resched.c : null })),
+        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), mark: this.markOf(j) })) })).filter(t => t && t.pts.length),
+      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j) })),
     };
     return this._layer;
   }
