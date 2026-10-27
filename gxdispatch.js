@@ -258,7 +258,9 @@ class Dispatch {
   loadHidden() {
     const v = store.load('gx.ids.' + this.type + '.view') || {};
     this.ui.hidden = new Set(Array.isArray(v.teams) ? v.teams : []); this.ui.hideNext = !!v.next; this.ui.hideTech = !!v.tech;
+    this.ui.layout = store.load('gx.ids.layout') === 'list' ? 'list' : 'board';
   }
+  setLayout(v) { this.ui.layout = v; store.save('gx.ids.layout', v); this.ui.drag = null; this.ui.drop = null; this.onChange(); }
   saveHidden() {
     store.save('gx.ids.' + this.type + '.view', { teams: [...this.ui.hidden], next: this.ui.hideNext, tech: this.ui.hideTech });
     this._layer = null; this.ver++; this.onChange();
@@ -1462,7 +1464,9 @@ class Dispatch {
       }),
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
-        body: this.board(e, P, T, B, pill, col),
+        body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+          e('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, this.layoutToggle(e)),
+          this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
@@ -1472,6 +1476,98 @@ class Dispatch {
     return { kpis, cards };
   }
 
+  /* ---------- layout toggle (Google Drive style) and list layout ---------- */
+  layoutToggle(e) {
+    const blue = '#0B57D0', icon = paths => e('svg', { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': 'true', style: { display: 'block' } }, ...paths.map((d, i) => e('path', { key: i, d, fill: 'currentColor' })));
+    const LIST = ['M3 7h18v2H3zM3 11h18v2H3zM3 15h18v2H3z'], GRID = ['M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'], CHECK = ['M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z'];
+    const seg = (v, label, ic, first) => {
+      const on = (this.ui.layout || 'board') === v;
+      return e('button', { key: v, type: 'button', title: label, 'aria-label': label, 'aria-pressed': on, onClick: () => { if (!on) this.setLayout(v); },
+        style: { display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', border: 'none', borderLeft: first ? 'none' : '1px solid #747775', background: on ? '#C2E7FF' : C.white, color: on ? '#001D35' : '#444746', cursor: on ? 'default' : 'pointer' } },
+        on ? icon(CHECK) : null, icon(ic));
+    };
+    return e('div', { role: 'group', 'aria-label': 'Board layout', style: { display: 'inline-flex', border: '1px solid #747775', borderRadius: 999, overflow: 'hidden', flex: 'none' } },
+      seg('list', 'List layout', LIST, true), seg('board', 'Board layout', GRID, false));
+  }
+  // One table: a section per team (header with hub, shift, tracker and totals), one row per job in route order, H+1 last.
+  listView(e, P, T, B, pill, col) {
+    const J = this._J, ro = this.readOnly, th = { padding: '6px 8px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, textAlign: 'left', borderBottom: '1px solid ' + C.line, whiteSpace: 'nowrap', background: C.paper, position: 'sticky', top: 0, zIndex: 1 };
+    const heads = ['#', 'Work order', 'Customer', 'Job', 'Priority', 'ETA', 'Drive', 'Customer status', 'Technician', ''];
+    const rows = [];
+    const drop = this.ui.drop;
+    const section = (id, title, color, info, n, warn) => {
+      const onDragOver = ev => { if (!this.ui.drag) return; ev.preventDefault(); this.setDrop(id, n); };
+      const onDrop = ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); };
+      rows.push(e('tr', { key: 'h' + id, onDragOver, onDrop },
+        e('td', { colSpan: heads.length, style: { padding: '10px 8px 6px', borderTop: '2px solid ' + (drop && drop.col === id ? C.ink : C.line), background: warn ? C.warnBg : C.white } },
+          e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' } },
+            e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.ink } },
+              e('span', { style: { width: 10, height: 10, borderRadius: warn ? '50%' : 2, background: warn ? 'transparent' : color, border: warn ? '2px solid ' + color : 'none', boxSizing: 'border-box' } }), title),
+            ...info))));
+    };
+    T.forEach((t, n) => {
+      const home = P.home[n] ? this.M.cellLabel(P.home[n]) : null;
+      section(n, this.nameInput(e, n), col(n), [
+        pill(t.ids.length ? t.ids.length + ' jobs' : 'Idle', t.ids.length ? 'good' : null, 'pj'),
+        t.ids.length ? e('span', { key: 'tt', style: { font: MONO, color: t.finish > this.tend(n) ? C.warn : C.muted } }, nf1(t.work / 60) + ' h work · ' + t.trav + ' min drive · ' + nf1(t.dist) + ' km · done ' + hm(t.finish)) : null,
+        e('div', { key: 'br', style: { flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' } }, this.baseRow(e, P, n, home), this.evRow(e, P, n))], t.rows.length);
+      if (!t.rows.length) rows.push(e('tr', { key: 'e' + n }, e('td', { colSpan: heads.length, style: { padding: '8px', font: SANS, color: C.muted } }, ro ? 'No jobs' : 'No jobs. Drag a job onto the team header, or use Move to.')));
+      t.rows.forEach((r, i) => rows.push(this.rowEl(e, P, r.j, r, n, i, pill)));
+    });
+    const open = this.ui.listNext !== false;
+    section('next', 'Defer to H+1', '#D9480F', [pill(P.next.length + ' jobs', 'warn', 'pn'),
+      e('button', { key: 'tg', type: 'button', onClick: () => { this.ui.listNext = !open; this.onChange(); }, style: { padding: '2px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.white, color: C.warn, font: SANS, cursor: 'pointer' } }, open ? 'Hide' : 'Show'),
+      e('span', { key: 'nx', style: { font: SANS, color: C.warn } }, 'Internal reasons add aging +' + AGING + ' tomorrow. Customer requests do not.')], P.next.length, true);
+    if (open) P.next.forEach((k, i) => { const j = J.by.get(k); if (j) rows.push(this.rowEl(e, P, j, null, 'next', i, pill)); });
+    return e('div', { style: { overflowX: 'auto', border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
+      e('table', { style: { width: '100%', minWidth: 1180, borderCollapse: 'collapse' } },
+        e('thead', null, e('tr', null, ...heads.map((h, i) => e('th', { key: i, style: th }, h)))),
+        e('tbody', null, ...rows)));
+  }
+  // One job as a table row: the same information and actions as a board card.
+  rowEl(e, P, j, r, colId, idx, pill) {
+    const mt = this.st.meta[j.key] || { conf: 'none', stat: 'none' }, lk = this.locked(j), ro = this.readOnly, ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
+    const td = (k, kids, st) => e('td', { key: k, style: { padding: '7px 8px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'top', font: SANS, color: C.text, ...(st || {}) } }, kids);
+    const sel = (key, val, opts, onChange, label) => e('select', { key, value: val, onChange, 'aria-label': label, style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 150 } },
+      ...Object.entries(opts).map(([k, v]) => e('option', { key: k, value: k }, v)));
+    const mini = (key, label, onClick, title) => e('button', { key, type: 'button', onClick, title, style: { padding: '2px 7px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO, cursor: 'pointer' } }, label);
+    const nT = P.teams.length, moveOpts = { '': 'Move to…' };
+    for (let n = 0; n < nT; n++) { moveOpts[n + ':next'] = this.tn(n) + ' · next stop'; moveOpts[n + ':last'] = this.tn(n) + ' · last stop'; }
+    if (colId !== 'next') moveOpts.next = 'Defer H+1';
+    const drop = this.ui.drop, line = drop && drop.col === colId && drop.idx === idx && this.ui.drag !== j.key;
+    const flags = r ? r.f.filter(f => f[0] !== 'info' || /Nearby|Lunch/.test(f[1])) : [];
+    const co = this.coOf(j);
+    return e('tr', { key: j.key, draggable: !lk && !ro,
+      onDragStart: ev => { if (ro) return; this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
+      onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
+      onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
+      onDrop: ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
+      style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: lk || ro ? 'default' : 'grab', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none' } },
+      td('n', colId === 'next' ? '—' : String(idx + 1), { borderLeft: '5px solid ' + ug.c, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, width: 28 }),
+      td('wo', [e('div', { key: 'a', style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' } }, j.wo),
+        e('div', { key: 'b', style: { font: MONO, color: C.muted, whiteSpace: 'nowrap' } }, (j.uid || '—') + ' · CID ' + j.cid)]),
+      td('cu', [e('div', { key: 'a', style: { color: C.ink } }, j.name || '—'), e('div', { key: 'b', style: { color: C.muted, fontSize: 11.5 } }, [j.area, j.prob].filter(Boolean).join(' · ')),
+        ...flags.slice(0, 3).map((f, k) => e('div', { key: 'f' + k, style: { fontSize: 11, fontWeight: 600, color: f[0] === 'bad' ? C.bad : f[0] === 'good' ? C.good : f[0] === 'info' ? C.muted : C.warn } }, f[1])),
+        r && r.hint && !ro ? e('div', { key: 'h', style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: URG.blue.c } }, (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away.',
+          mini('hn', 'Move next', () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'))) : null], { minWidth: 180 }),
+      td('jb', e('span', { style: { whiteSpace: 'nowrap' } }, j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + ' h')),
+      td('pr', e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+        e('span', { key: 'u', title: ug.tip, style: { padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif", whiteSpace: 'nowrap' } }, ug.label),
+        pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
+        e('span', { key: 's', style: { font: MONO, color: C.ink } }, fmtN(this.score(j))))),
+      td('eta', r ? [e('span', { key: 'a', style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
+        e('span', { key: 'b', style: { font: MONO, color: co != null ? C.good : C.muted } }, ' → ' + hm(r.end) + (co != null ? ' ✓' : ''))]
+        : (ro ? (P.why[j.key] === 'customer' ? 'Customer request' : 'Internal') : sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason')), { whiteSpace: 'nowrap' }),
+      td('dr', r ? e('span', { style: { font: MONO, color: r.road ? C.muted : C.warn, whiteSpace: 'nowrap' } }, (r.road ? '+' : '~') + r.hop + ' min · ' + nf1(r.d) + ' km') : '—'),
+      td('cs', ro ? CONF[mt.conf || 'none'] : sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation')),
+      td('ts', ro ? STAT[mt.stat || 'none'] + (co != null ? ' ' + hm(co) : '') : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+        sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status'), mt.stat === 'checkout' ? this.coInput(e, P, j) : null)),
+      td('ac', e('div', { style: { display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' } },
+        lk || ro ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
+        lk || ro ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
+        lk || ro ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
+        mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))));
+  }
   board(e, P, T, B, pill, col) {
     const J = this._J, cols = [];
     T.forEach((t, n) => {
@@ -1518,7 +1614,7 @@ class Dispatch {
     return e('div', { key: 'hb', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: MONO, color: C.muted } },
       home ? e('span', { style: { color: (P.role || [])[n] === 'floater' ? C.warn : C.ink } }, ((P.role || [])[n] === 'floater' ? 'Floater · from ' : 'Anchor · ') + home) : null,
       BS.length > 1 && !this.readOnly ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
-        style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 170 } },
+        style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 150 } },
         ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name + (i === 0 ? ' (default)' : ''))))
         : e('span', null, 'From ' + ((BS[this.readOnly ? cur : 0] || BS[0] || {}).name || 'base')),
       e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))),

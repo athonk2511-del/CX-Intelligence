@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-27 (list layout)
+
+### Added
+
+- **Dispatch board · List layout:** a Google-Drive-style switch above the board (☰ list / ▦ board) chooses between the kanban board and a list. The choice is remembered per screen; the board stays the default.
+- **The list** is one table with a section per team and an H+1 section (can be hidden) at the end.
+  - Each team header shows its name (editable), jobs, work, drive, km, finish, hub, shift, tracker and Break / Problem.
+  - Each job is a row: route number, WO, UID · CID, customer, area and problem with the card notes (ETA warnings, lunch, nearby, check-in/out), job type and work time, urgency colour, tier and score, ETA, drive, customer status, technician status with the check-out box, ↑ ↓, Move to and Locate.
+  - Rows can be dragged to another position or onto another team's header. The nearby suggestion with **Move next** shows in the row.
+  - Viewers get the same list read only.
+
 ## 2026-10-27 (map marks, editable job types)
 
 ### Changed
