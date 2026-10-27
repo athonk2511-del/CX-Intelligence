@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-27 (status rings on the map)
+
+### Added
+
+- **IDS map · status ring:** a job's numbered box gets a white gap and a thick coloured ring by its status, so the map shows at a glance where each job stands. The team colour stays inside.
+
+  | Ring | Status |
+  |---|---|
+  | Green + ✓ | Checked out |
+  | Amber | Checked in, or In Progress in the data |
+  | Blue | On the way |
+  | Red | Customer asks to reschedule |
+  | Purple | Customer did not answer |
+  | Black | Customer confirmed |
+  | None (thin dark border) | Not started, not contacted |
+
+  The technician status wins over the customer answer.
+- H+1 points deferred at the customer's request get a thick red ring; internal deferrals keep the orange ring.
+- The status also appears in the tooltip of each box. A **Map ring** legend row is shown on the board.
+
 ## 2026-10-26 (trackers per team, automatic check-in)
 
 ### Added

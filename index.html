@@ -844,7 +844,7 @@ class Component extends DCLogic {
     const data = this.state.data.map;
     if (!el || !data) return;
     this._gSent = null;
-    import('./gxmap.js?v=2026-10-26a').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
+    import('./gxmap.js?v=2026-10-27a').then(M => { this.GM = M; return M.createMap(el, data, { detail: cid => this.D.loadCustomerDetail(cid) }); })
       .then(api => { if (this.mapEl !== el) { api.destroy(); return; } this.mapApi = api; this.routeFit = null; this._admFit = null; this.syncMap(); this.syncGrid(); this.syncTrack(); this.syncAdmin(); this._planSent = undefined; this.syncPlan(); this.forceUpdate(); })
       .catch(e => { el.textContent = e.message; });
   };
@@ -1518,7 +1518,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-26c'), import('./gxmap.js?v=2026-10-26a')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-27a'), import('./gxmap.js?v=2026-10-27a')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });

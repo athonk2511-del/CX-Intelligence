@@ -48,6 +48,15 @@ const URG = {
   blue: { c: '#1971C2', bg: '#EFF6FD', label: 'Safe · negotiable', tip: 'SLA due later: can be rescheduled with the customer' },
   done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
 };
+// Ring around a job's box on the IDS map, by its status. Technician status wins over the customer answer.
+export const RING = {
+  checkout: { c: '#2B8A3E', label: 'Checked out' },
+  checkin: { c: '#F59F00', label: 'Checked in / in progress' },
+  start: { c: '#1971C2', label: 'On the way' },
+  resched: { c: '#E03131', label: 'Asks to reschedule' },
+  noresp: { c: '#862E9C', label: 'No answer' },
+  ok: { c: '#111111', label: 'Confirmed' },
+};
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
 const BALI_RE = /bali|denpasar|badung|kerobokan/i;
@@ -1393,6 +1402,10 @@ class Dispatch {
       rebDue ? row('Rebalance', [e('span', { key: 'rbt', style: { font: SANS, color: C.warn } }, hm(cfg.rebAt) + ' rebalance available: re-run the plan on the current spread of open WO (started jobs and customer reschedules stay; ' + Object.keys(P.manual || {}).length + ' manual changes would be replaced).'),
         btn('rbg', 'Rebalance now', () => { P.reb = P.date; this.autoPlan(P, J, B, true); this.changed('Rebalance ' + hm(cfg.rebAt) + ' run by hand: plan re-run on the current spread of open WO.'); }, true),
         btn('rbx', 'Keep current plan', () => { P.reb = P.date; this.changed('Rebalance ' + hm(cfg.rebAt) + ' skipped: current plan kept.'); })], 'reb') : null,
+      row('Map ring', [e('span', { key: 'rg0', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
+          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: C.muted, border: '2px solid #1F1F1D' } }), 'Not started')]
+        .concat(Object.entries(RING).map(([k, r]) => e('span', { key: 'rg' + k, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
+          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: C.muted, border: '2px solid #FFFFFF', boxShadow: '0 0 0 3px ' + r.c } }), r.label + (k === 'checkout' ? ' ✓' : '')))), 'ring'),
       row('Card colour', Object.entries(URG).filter(([k]) => k !== 'done').map(([k, u]) => e('span', { key: 'u' + k, title: u.tip, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 12, height: 12, borderRadius: 2, background: u.c } }), u.label)), 'urg'),
       row('Show on map', [
@@ -1814,12 +1827,23 @@ class Dispatch {
   }
 
   /* ---------- map layer ---------- */
+  ringOf(j) {
+    const mt = this.st.meta[j.key] || {};
+    if (mt.stat === 'checkout') return 'checkout';
+    if (mt.stat === 'checkin' || j.prog) return 'checkin';
+    if (mt.stat === 'start') return 'start';
+    if (mt.conf === 'resched') return 'resched';
+    if (mt.conf === 'noresp') return 'noresp';
+    if (mt.conf === 'ok') return 'ok';
+    return null;
+  }
   layer() {
     const x = this._ctx; if (!x || !this._J || !x.P || !this._cells) return null;
     const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length + '|' + [...this.ui.hidden].join(',') + '|' + this.ui.hideNext;
     if (this._layer && this._layer.key === k) return this._layer;
     const J = this._J, P = x.P, cfg = this.st.cfg;
-    const tip = j => j.wo + ' · ' + (j.uid || j.cid) + ' · ' + j.tier + ' · ' + j.cat;
+    const tip = j => { const r = this.ringOf(j); return j.wo + ' · ' + (j.uid || j.cid) + ' · ' + j.tier + ' · ' + j.cat + (r ? ' · ' + RING[r].label : ''); };
+    const ring = j => { const r = this.ringOf(j); return r ? { c: RING[r].c, done: r === 'checkout' } : null; };
     const fit = !this._layer || this._layer.name !== x.name;
     this._layer = {
       key: k, name: x.name, fit, size: cfg.gridKm * 1000, cellA: cfg.cellA ?? 0.36, routeA: cfg.routeA ?? 1,
@@ -1828,8 +1852,8 @@ class Dispatch {
           g.ctr ? 'Busy cell (>' + cfg.gridMin + ' WO) · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : 'Neighbouring anchor team or floater', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
       teams: P.teams.map((ids, n) => this.ui.hidden.has(n) ? null : ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, this.tbase(P, n))) || null : null,
-        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j) })) })).filter(t => t && t.pts.length),
-      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + tip(j) })),
+        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), ring: ring(j) })) })).filter(t => t && t.pts.length),
+      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j), ring: P.why[j.key] === 'customer' || (this.st.meta[j.key] || {}).conf === 'resched' ? RING.resched.c : null })),
     };
     return this._layer;
   }
