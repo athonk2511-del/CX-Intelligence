@@ -53,7 +53,7 @@ The user opens the dashboard, types the key once, and sees only their menus. Dis
 
 ## Viewer role
 
-A Viewer sees the ticked menus read only. On IDS pages that is the map and the dispatch board with live ETAs, card colours, statuses and check-out times, updated every 10 seconds. A viewer cannot move jobs, change statuses or check-out times, rename teams, open Teams & crew or Settings, re-plan, or change tracking. The proxy also refuses any change sent with a viewer key, so the limit holds outside the dashboard too. Until a dispatcher opens IDS on a new day, a viewer sees "No plan for today yet".
+A Viewer sees the ticked menus read only. On IDS pages that is the map and the dispatch board with live ETAs, card colours, statuses and check-out times, updated every 10 seconds. A viewer cannot move jobs, change statuses or check-out times, rename teams, open Teams & crew or Settings, re-plan, or change tracking. The proxy also refuses any change sent with a viewer key, so the limit holds outside the dashboard too. A plan a dispatcher prepared the evening before (Prepare plan) shows as soon as it is made and stays the same the next morning. When the last plan is from an earlier day, a viewer sees a note until a dispatcher makes today's plan.
 
 The Viewer role needs the `roles.gs` of 2026-10-26 or later. Deploy it before creating viewers: an older proxy saves them as dispatchers.
 

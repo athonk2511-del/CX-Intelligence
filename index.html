@@ -1518,7 +1518,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-10-27c'), import('./gxmap.js?v=2026-10-27b')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-10-29a'), import('./gxmap.js?v=2026-10-27b')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });

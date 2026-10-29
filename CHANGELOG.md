@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-29 (plan prepared the evening before)
+
+### Fixed
+
+- **IDS re-planned itself every morning.** A plan belonged to the calendar day the screen was opened. A plan made in the evening was dated that evening, so the first screen opened after midnight treated it as yesterday's plan: it threw the plan away and planned again from scratch. On top of that, every job in it got aging +200 (as if it had not been done the day before) and customer confirmations, statuses and check-in/out times were cleared. The order sent to the field the night before was lost.
+
+### Changed
+
+- **A plan now belongs to the working day it is made for.** A new day never replaces a plan by itself. The board changes only on Re-plan automatically, Rebalance now, a planning-setting Save, or the new Prepare plan button.
+- **Prepare plan for [date]** (Plan row, dispatchers and admins; date defaults to tomorrow, can be set later, e.g. Monday after a day off). Two clicks: the button turns red, "Click again: close today, plan …".
+  - Closes today's plan: jobs not done carry over with aging (internal reason), today's statuses, check-in/out times and customer confirmations are cleared. This is the same day-end step as before, now at the moment the dispatcher chooses.
+  - Makes the plan for that day. Work orders checked out today are left out, even when the data still lists them as open.
+  - Customer confirmations and hand moves made on the prepared plan in the evening are kept the next morning.
+  - New work orders uploaded later are added at the end of a fitting team's route or to H+1, as during the day; the existing order is not changed.
+- **A plan prepared ahead** shows its own date on the Plan row with "Prepared ahead · kept as it is until Re-plan". Technician statuses, check-out times, breaks and problems can be entered from its own day.
+- **No plan prepared for today** (the last plan is from an earlier day): the board shows a note and **Make today's plan** instead of planning by itself. Viewers see the note until a dispatcher makes the plan. The very first plan of a branch is still made by itself.
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+**Recommended evening routine:** upload the work-order data first, then press Prepare plan, then follow up customers and adjust the board.
+
 ## 2026-10-27 (list layout)
 
 ### Added
