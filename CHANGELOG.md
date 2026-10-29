@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-10-29 (check-in/out times, breaks, notes, map list, automatic check-out)
+
+### Added
+
+- **Check-in and check-out as separate times.** A job shows when the technician arrived (check-in) and when he left (check-out), each in its own hh:mm box. The list has its own **Check-in** and **Check-out** columns; a board card shows both boxes. The check-in time stays after the check-out, and the card shows the time on site ("73 min on site"). A check-out without a check-in time is flagged "Check-in time missing". Rules: not later than now, not before the shift start, check-out not before check-in. Viewers see both times.
+- **Breaks with a start time.** **Break** on a team now asks for the start time (prefilled with now); the break lasts the break length (Settings → Breaks, 60 min by default) from that start, and the box shows when the team is back. The break appears in the team's route as a striped **BREAK** card (board) or row (list) between the jobs before and after it, with "resting now · back 12:10" or "starts in 5 min". **End break** ends it early; a break set for later can be cancelled before it starts. Overlapping breaks are refused. ETAs after the break move back by its length.
+- **Note on every work order.** **+ Note** on a card or list row; up to 140 characters, so it is always shown in full (about four lines on a card, under the customer in the list). Shared with every screen (dispatchers and viewers) with who wrote it and when; click the note to change it, empty it to remove it. A note stays with the WO until the WO is closed.
+- **Automatic check-out** (Settings → Auto check-out), following the geofence-exit approach of field-service tools: a checked-in WO is checked out when its team's tracker (position at most 10 min old) is more than **150 m** away and driving (**10 km/h** or faster, or two positions in a row moving away, for slow traffic), at least **10 min** after the check-in. The exit radius is three times the 50 m check-in radius, so GPS drift while working never checks a job out. The check-out time is when the technician left: the first position outside minus the drive at the measured speed, or halfway from the last position on site when the speed says nothing. Marked AUTO with the tracker, distance and speed. Setting the job back to Checked in (technician returned) switches it off for that WO for the day. 0 m = off.
+
+### Changed
+
+- **Map list:** the row of team chips under the map is now one **Teams on map** button (colour dots, "4 of 4 · H+1, live technicians"). It opens a compact list of teams with job counts, All teams / No teams, H+1 jobs and Live technicians in one place, and folds away again (remembered per screen).
+- **List layout** made narrower to fit the new columns: ETA and drive show on two lines, job type and hours on two lines, slightly tighter cells. The table fits 1366 px screens and wider without side scrolling.
+
+### Fixed
+
+- **Breaks inside a job with real times.** A break or problem that fell inside a job that was checked in or out was not counted again from the real times: the job kept its old finish, the jobs after it ignored the break, and a checked-out card could show "ETA +60 min: break". The timeline now recounts breaks from the real check-in and check-out times.
+
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+
 ## 2026-10-29 (plan prepared the evening before)
 
 ### Fixed

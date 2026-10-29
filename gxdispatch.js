@@ -62,6 +62,8 @@ const URG = {
   done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
+// Longest note on a work order: about four lines on a board card, five in the list, so it is always shown in full.
+const NOTE_MAX = 140;
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
 const BALI_RE = /bali|denpasar|badung|kerobokan/i;
 const BASES = [
@@ -91,7 +93,7 @@ const DEF = {
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
-  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, jobTypes: null,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, jobTypes: null,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -227,6 +229,52 @@ class Dispatch {
   }
   // Automatic check-in: a team's tracker parked within ciM metres of a job of its route that is not started or on the way.
   // Parked = speed 5 km/h or less, or two different positions in a row inside the radius (a drive-by is not a visit).
+  // Automatic check-out (geofence exit, as in professional field-service tools): a checked-in WO is checked out when
+  //  - its team's tracker is fresh (position at most 10 min old) and more than coM metres from the WO (an exit radius
+  //    well above the check-in radius, so GPS drift while working never counts as leaving),
+  //  - the technician is driving away: coKmh or faster, or two positions in a row outside with the distance growing
+  //    (a 5-minute position can catch the motorbike at a red light),
+  //  - and the job has been checked in for at least coMin minutes (a drive-by check-in is never closed by itself).
+  // The check-out time is the moment of leaving, taken from the first position outside the radius: that time minus the
+  // drive from the site at the measured speed, or (slow or unknown speed) halfway between the last position on site and
+  // that first position outside; never before the last position on site nor before the check-in. A dispatcher who sets the job back to
+  // Checked in (technician returned) switches this off for that WO for the day.
+  autoCheckout(P) {
+    const cfg = this.st.cfg, R = Math.max(0, +cfg.coM || 0), L = this.devs(), J = this._J;
+    if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
+    const S = this._coSeen || (this._coSeen = {}), day = this.today(), done = [];
+    const minOf = t => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+    P.teams.forEach((ids, i) => {
+      const dv = this.trackerOf(i);
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000) return;
+      ids.forEach(k => {
+        const j = J.by.get(k), mt = this.st.meta[k];
+        if (!j || !mt || mt.stat !== 'checkin' || mt.ci == null || mt.ciDay !== day || mt.noAutoCo === day) return;
+        const key = dv.id + '|' + k, cs = S[key] || (S[key] = { lastFix: 0, lastIn: null, out: 0, dist: null, first: null });
+        const d = this.metres(dv, j), kmh = +dv.speed || 0;
+        if (dv.last !== cs.lastFix) {
+          cs.lastFix = dv.last;
+          if (d <= R) { cs.lastIn = dv.last; cs.out = 0; cs.away = false; cs.first = null; }
+          else { cs.away = cs.out > 0 && cs.dist != null && d > cs.dist + 20; cs.out++; if (!cs.first) cs.first = { t: dv.last, d, kmh }; }
+          cs.dist = d;
+        }
+        if (d <= R) return;
+        const fixMin = minOf(dv.last);
+        if (fixMin - mt.ci < Math.max(0, +cfg.coMin || 0)) return;
+        if (!(kmh >= (+cfg.coKmh || 10) || (cs.out >= 2 && cs.away))) return;
+        // Leaving time from the first position outside: back by the drive from the site (metres / (km/h -> m/min)), or
+        // halfway from the last position on site when the speed says nothing (stopped at a light, slow traffic).
+        const f = cs.first || { t: dv.last, d, kmh }, fMin = minOf(f.t), inMin = cs.lastIn ? minOf(cs.lastIn) : null;
+        let left = f.kmh >= 5 ? fMin - f.d / (f.kmh * 1000 / 60) : inMin != null ? (inMin + fMin) / 2 : fMin;
+        if (inMin != null) left = Math.max(left, inMin);
+        left = Math.floor(Math.min(fMin, this.nowMin(), Math.max(left, mt.ci + 1)));
+        mt.stat = 'checkout'; mt.co = left; mt.coDay = day; mt.coAuto = { m: Math.round(d), kmh: Math.round(kmh), dev: dv.name, seen: hm(fixMin) };
+        delete S[key];
+        done.push(j.wo + ' (' + this.tn(i) + ', left ' + hm(left) + '; tracker ' + dv.name + ' ' + Math.round(d) + ' m away at ' + Math.round(kmh) + ' km/h, ' + hm(fixMin) + ')');
+      });
+    });
+    if (done.length) this.reflow(P, 'Checked out automatically: ' + done.join('; ') + '.');
+  }
   autoCheckin(P) {
     const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J;
     if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
@@ -257,12 +305,12 @@ class Dispatch {
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
   loadHidden() {
     const v = store.load('gx.ids.' + this.type + '.view') || {};
-    this.ui.hidden = new Set(Array.isArray(v.teams) ? v.teams : []); this.ui.hideNext = !!v.next; this.ui.hideTech = !!v.tech;
+    this.ui.hidden = new Set(Array.isArray(v.teams) ? v.teams : []); this.ui.hideNext = !!v.next; this.ui.hideTech = !!v.tech; this.ui.mapOpen = !!v.open;
     this.ui.layout = store.load('gx.ids.layout') === 'list' ? 'list' : 'board';
   }
   setLayout(v) { this.ui.layout = v; store.save('gx.ids.layout', v); this.ui.drag = null; this.ui.drop = null; this.onChange(); }
   saveHidden() {
-    store.save('gx.ids.' + this.type + '.view', { teams: [...this.ui.hidden], next: this.ui.hideNext, tech: this.ui.hideTech });
+    store.save('gx.ids.' + this.type + '.view', { teams: [...this.ui.hidden], next: this.ui.hideNext, tech: this.ui.hideTech, open: !!this.ui.mapOpen });
     this._layer = null; this.ver++; this.onChange();
   }
   toggleTeam(n) { if (this.ui.hidden.has(n)) this.ui.hidden.delete(n); else this.ui.hidden.add(n); this.saveHidden(); }
@@ -524,17 +572,27 @@ class Dispatch {
   fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.real(j, s.E, k, this.step(s.E, k, s.t, hop, this.dur(j))); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
   // Check-out time typed by the dispatcher for today (minutes since midnight), or null.
   coOf(j) { const mt = this.st.meta[j.key]; return mt && mt.stat === 'checkout' && mt.co != null && mt.coDay === this.today() ? +mt.co : null; }
+  // Check-in (arrival) time of today, kept after the check-out, or null.
+  ciOf(j) { const mt = this.st.meta[j.key]; return mt && (mt.stat === 'checkin' || mt.stat === 'checkout') && mt.ci != null && mt.ciDay === this.today() ? +mt.ci : null; }
   // Replace the projection with what really happened: a checked-out job ends at its check-out time (earlier or later than
   // projected); a job checked in, or on the way, is still running, so it cannot end before now (+ its work time when the
   // technician has not arrived yet). Everything after it in the route moves with it.
   real(j, E, k, sp) {
     const st = (this.st.meta[j.key] || {}).stat, co = this.coOf(j), proj = sp.end;
+    // Breaks and problems are counted again from the real times: the projection may have put them inside this job.
+    const from = t => { let n = 0; while (n < E.length && E[n].at < t) n++; return n; };
     if (co != null) {
-      sp.arr = Math.min(sp.arr, co); sp.end = co;
-      while (k.i < E.length && E[k.i].at < co) k.i++;   // breaks / problems before the check-out are inside the real time
+      const ci = this.ciOf(j);
+      sp.arr = ci != null && ci <= co ? ci : Math.min(sp.arr, co); sp.end = co;
+      sp.hit = E.filter(x => x.at >= sp.arr && x.at < co); sp.dl = 0;
+      k.i = from(co);   // breaks / problems before the check-out are inside the real time; later ones move the next jobs
     } else if (st === 'checkin' || (j.prog && st !== 'start')) {
-      const mt = this.st.meta[j.key] || {}, ci = mt.ci != null && mt.ciDay === this.today() ? +mt.ci : null;
-      if (ci != null) { sp.arr = ci; sp.end = ci + this.dur(j); }
+      const ci = this.ciOf(j);
+      if (ci != null) {
+        let n = from(ci), end = ci + this.dur(j), dl = 0; const hit = [];
+        while (n < E.length && E[n].at < end) { const x = this.evDur(E[n]); hit.push(E[n++]); end += x; dl += x; }
+        sp.arr = ci; sp.end = end; sp.hit = hit; sp.dl = dl; k.i = n;
+      }
       sp.end = Math.max(sp.end, this.nowMin());
     } else if (st === 'start') {
       sp.arr = Math.max(sp.arr, this.nowMin()); sp.end = Math.max(sp.end, sp.arr + this.dur(j));
@@ -844,7 +902,7 @@ class Dispatch {
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
       if (!J.by.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
-      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto;
+      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
@@ -1166,8 +1224,10 @@ class Dispatch {
         if (lunch) f.push(['info', 'Lunch ' + hm(lunch.at) + '–' + hm(lunch.end) + ' included']);
         const co = this.coOf(j), dv = Math.round(end - sp.proj);
         const ciM = this.st.meta[k] || {};
-        if (co == null && ciM.stat === 'checkin' && ciM.ci != null && ciM.ciDay === this.today()) f.push(['good', 'Checked in ' + hm(ciM.ci) + (ciM.ciAuto ? ' · automatic, tracker ' + ciM.ciAuto.dev + ' ' + ciM.ciAuto.m + ' m away' : '')]);
-        if (co != null) f.push(['good', 'Checked out ' + hm(co) + (Math.abs(dv) < 1 ? ', as projected' : ', ' + Math.abs(dv) + ' min ' + (dv < 0 ? 'earlier' : 'later') + ' than projected')]);
+        const ciT = this.ciOf(j);
+        if (ciT != null) f.push(['good', 'Checked in ' + hm(ciT) + (ciM.ciAuto ? ' · automatic, tracker ' + ciM.ciAuto.dev + ' ' + ciM.ciAuto.m + ' m away' : '')]);
+        if (co != null) f.push(['good', 'Checked out ' + hm(co) + (ciT != null ? ' · ' + Math.round(co - ciT) + ' min on site' : '') + (ciM.coAuto ? ' · automatic, tracker ' + ciM.coAuto.dev + ' ' + ciM.coAuto.m + ' m away at ' + ciM.coAuto.kmh + ' km/h' : '') + (Math.abs(dv) < 1 ? ', as projected' : ', ' + Math.abs(dv) + ' min ' + (dv < 0 ? 'earlier' : 'later') + ' than projected')]);
+        if (co != null && ciT == null) f.push(['warn', 'Check-in time missing: type the arrival time']);
         else if (dv >= 1) f.push(['warn', 'Still working: ' + dv + ' min past the projected finish. Next ETAs moved.']);
         if (P.ret && P.ret[k]) f.push(['info', 'On the way back to base']);
         hops++; if (road) roadHops++;
@@ -1199,7 +1259,56 @@ class Dispatch {
   }
 
   /* ---------- breaks & problems ---------- */
-  activeEv(P, i, type) { return ((P.ev || {})[i] || []).find(e => e.end == null && (!type || e.type === type)); }
+  // A break or problem still going on: no end yet, or a dispatcher break whose fixed end is still ahead (also a break
+  // set to start a little later counts, so it can be cancelled).
+  activeEv(P, i, type) { const now = this.nowMin(); return ((P.ev || {})[i] || []).find(e => (!type || e.type === type) && (e.end == null || (e.fixed && e.end > now))); }
+  // Dispatcher break: the start time is typed by the dispatcher; the break lasts breakEst minutes (1 hour by default)
+  // from that start. It shows in the team's route as a BREAK card and pushes back the ETAs after it.
+  startBreak(P, i, text) {
+    const err = this.ui.brkErr || (this.ui.brkErr = {});
+    if (this.future(P)) return this.block('This plan is for ' + this.fmtDay(P.date) + '. Breaks can be logged from that day.');
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(text || '').trim());
+    if (!m || +m[1] > 23 || +m[2] > 59) { err[i] = 'Type the start as hh:mm, for example 12:30.'; return this.onChange(); }
+    const at = +m[1] * 60 + +m[2], len = Math.max(5, +this.st.cfg.breakEst || 60), end = at + len;
+    if (at < this.tstart(i)) { err[i] = 'The break cannot start before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
+    if (at >= this.tend(i)) { err[i] = 'The break must start before the shift end (' + hm(this.tend(i)) + ').'; return this.onChange(); }
+    const L = ((P.ev || {})[i] || []).filter(x => x.type === 'break');
+    const hit = L.find(x => at < (x.end != null ? x.end : x.at + this.evDur(x)) && end > x.at);
+    if (hit) { err[i] = 'Overlaps the break ' + hm(hit.at) + '–' + hm(hit.end != null ? hit.end : hit.at + this.evDur(hit)) + '.'; return this.onChange(); }
+    delete err[i]; this.ui.brkFor = null;
+    if (!P.ev) P.ev = {};
+    (P.ev[i] || (P.ev[i] = [])).push({ type: 'break', at, end, fixed: true, est: len, src: 'dispatcher', by: this.user || '', note: '' });
+    P.ev[i].sort((a, b) => a.at - b.at);
+    this.changed(this.tn(i) + ': break ' + hm(at) + '–' + hm(end) + ' (' + len + ' min). ETAs after it pushed back.');
+  }
+  // Real breaks of a team (not the planned lunch), in time order.
+  breaksOf(P, i) { return ((P.ev || {})[i] || []).filter(x => x.type === 'break').slice().sort((a, b) => a.at - b.at); }
+  // Where each break sits in the route: before the first job that starts at or after it, else after the last job.
+  breakSlots(P, i, rows) {
+    return this.breaksOf(P, i).map(x => { const n = rows.findIndex(r => r.arr >= x.at); return { idx: n < 0 ? rows.length : n, x }; });
+  }
+  // Route items in order: job elements with the BREAK elements put in their place.
+  withBreaks(P, n, rows, job, brk) {
+    const S = this.breakSlots(P, n, rows), out = [];
+    rows.forEach((r, i) => { S.forEach((b, k) => { if (b.idx === i) out.push(brk(b.x, k)); }); out.push(job(r, i)); });
+    S.forEach((b, k) => { if (b.idx >= rows.length) out.push(brk(b.x, k)); });
+    return out;
+  }
+  breakLabel(x) {
+    const end = x.end != null ? x.end : x.at + this.evDur(x), now = this.nowMin();
+    const st = now < x.at ? 'starts in ' + dh(x.at - now) : now < end ? 'resting now · back ' + hm(end) : 'done';
+    return { range: hm(x.at) + '–' + hm(end) + ' · ' + Math.round(end - x.at) + ' min', st, on: now >= x.at && now < end };
+  }
+  // The BREAK card that sits between the jobs of a route (board) or the BREAK row (list).
+  breakCard(e, x, k, row, span) {
+    const b = this.breakLabel(x);
+    const bg = 'repeating-linear-gradient(135deg, #EEF1F5 0 8px, #E2E7EE 8px 16px)';
+    const inner = [e('span', { key: 'w', style: { font: "700 13px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.35em', color: '#2F3B4A', paddingLeft: '0.35em' } }, 'BREAK'),
+      e('span', { key: 'r', style: { font: MONO, color: '#4A5868' } }, b.range + ' · ' + b.st + (x.src === 'app' ? ' · technician app' : x.by ? ' · ' + x.by : ''))];
+    const box = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, textAlign: 'center', background: bg, border: '1px ' + (b.on ? 'solid' : 'dashed') + ' #5B6B80', borderLeft: '5px solid #5B6B80', borderRadius: 3 };
+    if (row) return e('tr', { key: 'brk' + k }, e('td', { colSpan: span, style: { padding: '4px 8px', borderBottom: '1px solid ' + C.soft } }, e('div', { style: { ...box, padding: '6px 8px' } }, ...inner)));
+    return e('div', { key: 'brk' + k, style: { ...box, padding: '8px 9px', marginBottom: 6, minHeight: 42 } }, ...inner);
+  }
   startEv(P, i, type, src, at, note) {
     if (this.future(P)) { if (src !== 'app') this.block('This plan is for ' + this.fmtDay(P.date) + '. Breaks and problems can be logged from that day.'); return false; }
     if (!P.ev) P.ev = {};
@@ -1211,7 +1320,13 @@ class Dispatch {
   }
   endEv(P, i, type, src, at) {
     const e = this.activeEv(P, i, type); if (!e) return false;
-    e.end = Math.max(e.at, at != null ? at : this.nowMin());
+    const t = at != null ? at : this.nowMin();
+    if (e.fixed && t < e.at) {
+      P.ev[i] = P.ev[i].filter(x => x !== e);
+      this.changed(this.tn(i) + ': break ' + hm(e.at) + '–' + hm(e.end) + ' cancelled before it started (' + (src || 'dispatcher') + ').');
+      return true;
+    }
+    e.end = Math.max(e.at, t);
     this.changed(this.tn(i) + ': ' + (e.type === 'break' ? 'break' : 'problem') + ' ended ' + hm(e.end) + ', ' + Math.round(e.end - e.at) + ' min (' + (src || 'dispatcher') + ').');
     return true;
   }
@@ -1235,40 +1350,92 @@ class Dispatch {
     if (this.future(P)) return this.block('This plan is for ' + this.fmtDay(P.date) + '. Technician statuses can be set from that day.');
     const mt = this.meta(j.key), was = this.coOf(j), prev = mt.stat;
     mt.stat = v;
-    if (v === 'checkin') { if (mt.ci == null || mt.ciDay !== this.today()) { mt.ci = Math.floor(this.nowMin()); mt.ciDay = this.today(); } delete mt.ciAuto; }
+    if (v === 'checkin') { if (mt.ci == null || mt.ciDay !== this.today()) { mt.ci = Math.floor(this.nowMin()); mt.ciDay = this.today(); delete mt.ciAuto; } }
     else if (v === 'none' || v === 'start') { delete mt.ci; delete mt.ciDay; delete mt.ciAuto; }
     // Set back by hand after a check-in: no automatic check-in for this job again today.
     if (prev === 'checkin' && (v === 'none' || v === 'start')) mt.noAuto = this.today();
-    if (v === 'checkout') { if (mt.co == null || mt.coDay !== this.today()) { mt.co = Math.floor(this.nowMin()); mt.coDay = this.today(); } }
-    else { delete mt.co; delete mt.coDay; }
+    // Set back by hand after an automatic check-out (technician came back): no automatic check-out again today.
+    if (prev === 'checkout' && mt.coAuto && v !== 'checkout') mt.noAutoCo = this.today();
+    if (v === 'checkout') { if (mt.co == null || mt.coDay !== this.today()) { mt.co = Math.floor(this.nowMin()); mt.coDay = this.today(); } delete mt.coAuto; }
+    else { delete mt.co; delete mt.coDay; delete mt.coAuto; }
     const msg = j.wo + ': technician status ' + STAT[v] + (v === 'checkout' ? ' at ' + hm(mt.co) : '') + (v !== 'none' ? ' (locked)' : '') + '.';
     if (v === 'checkout' || was != null) return this.reflow(P, msg);
     this.changed(msg);
   }
   teamOf(P, key) { const i = P.teams.findIndex(t => t.includes(key)); return i < 0 ? null : i; }
-  setCo(P, j, text) {
-    if (this.future(P)) return this.block('This plan is for ' + this.fmtDay(P.date) + '. Check-out times can be set from that day.');
-    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(text || '').trim()), err = this.ui.coErr || (this.ui.coErr = {});
-    if (!m) { err[j.key] = 'Use hh:mm, for example 14:35.'; return this.onChange(); }
-    const v = +m[1] * 60 + +m[2], i = this.teamOf(P, j.key), mt = this.meta(j.key);
-    if (+m[1] > 23 || +m[2] > 59) { err[j.key] = 'Not a time of day.'; return this.onChange(); }
-    if (v > this.nowMin() + 5) { err[j.key] = 'Check-out cannot be later than now (' + hm(this.nowMin()) + ').'; return this.onChange(); }
-    if (v < this.tstart(i)) { err[j.key] = 'Check-out cannot be before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
-    delete err[j.key];
-    if (mt.co === v && mt.coDay === this.today()) return this.onChange();
-    const old = mt.co;
-    mt.co = v; mt.coDay = this.today();
-    this.reflow(P, j.wo + ': check-out ' + (old != null ? 'changed from ' + hm(old) + ' to ' : 'set at ') + hm(v) + '.');
+  // Arrival (check-in) and departure (check-out) times typed by the dispatcher, hh:mm of today. Both are kept and shown
+  // separately. A check-out time recalculates the plan of the branch; a check-in time moves the ETAs of the route.
+  setTime(P, j, kind, text) {
+    const word = kind === 'ci' ? 'Check-in' : 'Check-out';
+    if (this.future(P)) return this.block('This plan is for ' + this.fmtDay(P.date) + '. ' + word + ' times can be set from that day.');
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(text || '').trim()), err = this.ui.coErr || (this.ui.coErr = {}), ek = kind + ':' + j.key;
+    const mt = this.meta(j.key), day = this.today(), i = this.teamOf(P, j.key);
+    if (!String(text || '').trim() && kind === 'ci') { delete err[ek]; if (mt.ci == null) return this.onChange(); delete mt.ci; delete mt.ciDay; delete mt.ciAuto; return this.changed(j.wo + ': check-in time cleared.'); }
+    if (!m) { err[ek] = 'Use hh:mm, for example 14:35.'; return this.onChange(); }
+    const v = +m[1] * 60 + +m[2];
+    if (+m[1] > 23 || +m[2] > 59) { err[ek] = 'Not a time of day.'; return this.onChange(); }
+    if (v > this.nowMin() + 5) { err[ek] = word + ' cannot be later than now (' + hm(this.nowMin()) + ').'; return this.onChange(); }
+    if (i != null && v < this.tstart(i)) { err[ek] = word + ' cannot be before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
+    const ci = this.ciOf(j), co = this.coOf(j);
+    if (kind === 'co' && ci != null && v < ci) { err[ek] = 'Check-out cannot be before the check-in (' + hm(ci) + ').'; return this.onChange(); }
+    if (kind === 'ci' && co != null && v > co) { err[ek] = 'Check-in cannot be after the check-out (' + hm(co) + ').'; return this.onChange(); }
+    delete err[ek];
+    if (mt[kind] === v && mt[kind + 'Day'] === day) return this.onChange();
+    const old = mt[kind + 'Day'] === day ? mt[kind] : null;
+    mt[kind] = v; mt[kind + 'Day'] = day; delete mt[kind + 'Auto'];
+    const msg = j.wo + ': ' + word.toLowerCase() + ' ' + (old != null ? 'changed from ' + hm(old) + ' to ' : 'set at ') + hm(v) + '.';
+    if (kind === 'co') return this.reflow(P, msg);
+    this.changed(msg);
   }
-  coInput(e, P, j) {
-    const mt = this.st.meta[j.key] || {}, err = (this.ui.coErr || {})[j.key], val = mt.co != null && mt.coDay === this.today() ? hm(mt.co) : '';
-    const commit = ev => { if (ev.target.value !== val) this.setCo(P, j, ev.target.value); };
-    return e('span', { key: 'co', style: { display: 'inline-flex', flexDirection: 'column', gap: 2 } },
-      e('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Check-out',
-        e('input', { key: 'co-' + val, type: 'text', inputMode: 'numeric', defaultValue: val, placeholder: 'hh:mm', maxLength: 5, 'aria-label': 'Check-out time',
+  setCo(P, j, text) { return this.setTime(P, j, 'co', text); }
+  // hh:mm box for the check-in or check-out time. Shown while the job is checked in (check-in) or checked out (both).
+  timeBox(e, P, j, kind, bare) {
+    const mt = this.st.meta[j.key] || {}, ek = kind + ':' + j.key, err = (this.ui.coErr || {})[ek];
+    const t = kind === 'ci' ? this.ciOf(j) : this.coOf(j), val = t != null ? hm(t) : '', word = kind === 'ci' ? 'Check-in' : 'Check-out';
+    if (this.readOnly) return e('span', { key: kind, style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: val ? C.ink : C.muted } }, (bare ? '' : word + ' ') + (val || '—'));
+    const commit = ev => { if (ev.target.value !== val) this.setTime(P, j, kind, ev.target.value); };
+    const auto = kind === 'ci' ? mt.ciAuto : mt.coAuto;
+    return e('span', { key: kind, style: { display: 'inline-flex', flexDirection: 'column', gap: 2 } },
+      e('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, bare ? null : word,
+        e('input', { key: kind + '-' + val, type: 'text', inputMode: 'numeric', defaultValue: val, placeholder: 'hh:mm', maxLength: 5, 'aria-label': word + ' time', title: auto ? word + ' set automatically from tracker ' + auto.dev : word + ' time (hh:mm)',
           onMouseDown: ev => ev.stopPropagation(), onBlur: commit, onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); },
-          style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } })),
-      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
+          style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : !val && kind === 'ci' ? C.warnLine : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
+        auto ? e('span', { title: 'Set automatically from the tracker', style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null),
+      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad, maxWidth: 160 } }, err) : null);
+  }
+  coInput(e, P, j) { return this.timeBox(e, P, j, 'co'); }
+  // Note on a work order, shared with every screen (kept with the WO until it is closed). Empty text removes it.
+  setNote(j, text) {
+    const v = String(text || '').replace(/\s+/g, ' ').trim().slice(0, NOTE_MAX), mt = this.meta(j.key), old = mt.note || '';
+    this.ui.noteEdit = null;
+    if (v === old) return this.onChange();
+    if (v) { mt.note = v; mt.noteBy = this.user || ''; mt.noteAt = Date.now(); } else { delete mt.note; delete mt.noteBy; delete mt.noteAt; }
+    this.changed(j.wo + ': ' + (v ? 'note ' + (old ? 'changed' : 'added') + ' "' + v + '"' : 'note removed') + '.');
+  }
+  // Note box: the full text on a pale yellow strip (who wrote it and when); click to edit. Viewers read it only.
+  noteBox(e, j, where) {
+    const mt = this.st.meta[j.key] || {}, txt = mt.note || '', ro = this.readOnly, editing = !ro && this.ui.noteEdit === j.key;
+    const small = "500 10px 'IBM Plex Mono',ui-monospace,monospace";
+    if (editing) {
+      const commit = el => this.setNote(j, el.value);
+      return e('div', { key: 'note', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 3, width: '100%' } },
+        e('textarea', { key: 'nt-' + j.key, defaultValue: txt, maxLength: NOTE_MAX, rows: 3, autoFocus: true, 'aria-label': 'Note on ' + j.wo, placeholder: 'Note for every dispatcher (max ' + NOTE_MAX + ' characters)',
+          onInput: ev => { const c = ev.target.parentNode && ev.target.parentNode.querySelector('[data-cnt]'); if (c) c.textContent = ev.target.value.length + '/' + NOTE_MAX; },
+          onKeyDown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); commit(ev.target); } if (ev.key === 'Escape') { this.ui.noteEdit = null; this.onChange(); } },
+          onBlur: ev => commit(ev.target),
+          style: { width: '100%', boxSizing: 'border-box', resize: 'none', padding: '4px 6px', border: '1px solid ' + C.acc, borderRadius: 3, background: '#FFFDF3', color: C.ink, font: "400 11.5px/1.4 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } }),
+        e('span', { style: { display: 'flex', justifyContent: 'space-between', font: small, color: C.muted } },
+          e('span', { 'data-cnt': '1' }, txt.length + '/' + NOTE_MAX), e('span', null, 'Enter saves · Esc cancels')));
+    }
+    if (!txt) return ro ? (where === 'list' ? e('span', { key: 'note', style: { color: C.muted } }, '—') : null)
+      : e('button', { key: 'note', type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => { this.ui.noteEdit = j.key; this.onChange(); }, title: 'Add a note every dispatcher sees',
+        style: { alignSelf: 'flex-start', padding: '1px 7px', border: '1px dashed ' + C.line, borderRadius: 3, background: 'transparent', color: C.muted, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, '+ Note');
+    const at = mt.noteAt ? new Date(mt.noteAt) : null, today = at && ymd(at) === this.today();
+    const when = at ? (today ? '' : at.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ') + pad(at.getHours()) + ':' + pad(at.getMinutes()) : '';
+    return e('div', { key: 'note', onMouseDown: ev => ev.stopPropagation(), onClick: ro ? undefined : () => { this.ui.noteEdit = j.key; this.onChange(); }, title: ro ? undefined : 'Click to edit the note',
+      style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 7px', borderLeft: '3px solid ' + C.acc, borderRadius: 2, background: '#FFF8DB', cursor: ro ? 'default' : 'text' } },
+      e('span', { style: { font: "500 11.5px/1.4 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, txt),
+      mt.noteBy || when ? e('span', { style: { font: small, color: C.accDeep } }, [mt.noteBy, when].filter(Boolean).join(' · ')) : null);
   }
   // Recalculate the plan after a check-out (or other real progress): every team's route is checked again against its
   // working day. Plans without manual changes are re-run in full, like the midday rebalance (started and checked-out jobs
@@ -1397,7 +1564,7 @@ class Dispatch {
     }
     // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
     const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
-    if (this.active) this.autoCheckin(P);
+    if (this.active) { this.autoCheckout(P); this.autoCheckin(P); }
     const T = this.calc(P, B);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
@@ -1486,16 +1653,33 @@ class Dispatch {
         btn('rbx', 'Keep current plan', () => { P.reb = P.date; this.changed('Rebalance ' + hm(cfg.rebAt) + ' skipped: current plan kept.'); })], 'reb') : null,
       row('Card colour', Object.entries(URG).filter(([k]) => k !== 'done').map(([k, u]) => e('span', { key: 'u' + k, title: u.tip, style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
         e('span', { style: { width: 12, height: 12, borderRadius: 2, background: u.c } }), u.label)), 'urg'),
-      row('Show on map', [
-        ...T.map((t, n) => t.ids.length ? e('label', { key: 'lg' + n, title: 'Show or hide ' + this.tn(n) + ': route, jobs and live technician', style: { display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px', border: '1px solid ' + (this.ui.hidden.has(n) ? C.line : C.ink), borderRadius: 3, background: this.ui.hidden.has(n) ? C.bg : C.white, font: SANS, color: this.ui.hidden.has(n) ? '#8A8A85' : C.text, cursor: 'pointer' } },
-          e('input', { type: 'checkbox', checked: !this.ui.hidden.has(n), onChange: () => this.toggleTeam(n), 'aria-label': 'Show ' + this.tn(n), style: { margin: 0, accentColor: col(n) } }), sw(col(n)), this.tn(n), e('span', { style: { font: MONO, color: C.muted } }, String(t.ids.length))) : null),
-        btn('va', 'All', () => { this.ui.hidden.clear(); this.saveHidden(); }),
-        btn('vn', 'None', () => { T.forEach((t, n) => this.ui.hidden.add(n)); this.saveHidden(); }),
-        e('label', { key: 'vh', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text, cursor: 'pointer' } },
-          e('input', { type: 'checkbox', checked: !this.ui.hideNext, onChange: () => { this.ui.hideNext = !this.ui.hideNext; this.saveHidden(); }, style: { margin: 0 } }), 'H+1'),
-        e('label', { key: 'vt', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text, cursor: 'pointer' } },
-          e('input', { type: 'checkbox', checked: !this.ui.hideTech, onChange: () => { this.ui.hideTech = !this.ui.hideTech; this.saveHidden(); }, style: { margin: 0 } }), 'Live technicians'),
-      ], 'vis'),
+      (() => {
+        // Teams on the map: one compact list that folds away (remembered per screen), with the H+1 and live-technician layers.
+        const shown = T.map((t, n) => n).filter(n => T[n].ids.length), on = shown.filter(n => !this.ui.hidden.has(n)).length, open = !!this.ui.mapOpen;
+        const lay = [!this.ui.hideNext ? 'H+1' : null, !this.ui.hideTech ? 'live technicians' : null].filter(Boolean);
+        const tick = (key, checked, onChange, label, color, count, title) => e('label', { key, title, style: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, padding: '3px 4px', borderRadius: 3, font: SANS, color: checked ? C.text : '#8A8A85', cursor: 'pointer' } },
+          e('input', { type: 'checkbox', checked, onChange, 'aria-label': label, style: { margin: 0, flex: 'none', accentColor: color || C.ink } }),
+          color ? sw(color, 's') : null,
+          e('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
+          count != null ? e('span', { style: { font: MONO, color: C.muted, flex: 'none' } }, String(count)) : null);
+        return row('Map', [
+          e('button', { key: 'mt', type: 'button', 'aria-expanded': open, onClick: () => { this.ui.mapOpen = !open; this.saveHidden(); },
+            style: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', border: '1px solid ' + (open ? C.ink : C.line), borderRadius: 3, background: open ? C.bg : C.white, color: C.ink, font: SANS, cursor: 'pointer' } },
+            e('span', { style: { display: 'inline-flex', gap: 2 } }, ...shown.slice(0, 8).map(n => e('span', { key: n, style: { width: 7, height: 7, borderRadius: 2, background: col(n), opacity: this.ui.hidden.has(n) ? 0.25 : 1 } }))),
+            'Teams on map · ' + on + ' of ' + shown.length + (lay.length ? ' · ' + lay.join(', ') : ''), e('span', { style: { color: C.muted } }, open ? '▴' : '▾')),
+          open ? e('div', { key: 'mp', style: { flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
+            shown.length ? e('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0 14px' } },
+              ...shown.map(n => tick('lg' + n, !this.ui.hidden.has(n), () => this.toggleTeam(n), this.tn(n), col(n), T[n].ids.length, 'Show or hide ' + this.tn(n) + ': route, jobs and live technician')))
+              : e('span', { style: { font: SANS, color: C.muted } }, 'No team has jobs yet.'),
+            e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 6, borderTop: '1px solid ' + C.soft } },
+              btn('va', 'All teams', () => { this.ui.hidden.clear(); this.saveHidden(); }),
+              btn('vn', 'No teams', () => { T.forEach((t, n) => this.ui.hidden.add(n)); this.saveHidden(); }),
+              e('span', { key: 'sep', style: { width: 1, height: 18, background: C.line } }),
+              tick('vh', !this.ui.hideNext, () => { this.ui.hideNext = !this.ui.hideNext; this.saveHidden(); }, 'H+1 jobs'),
+              tick('vt', !this.ui.hideTech, () => { this.ui.hideTech = !this.ui.hideTech; this.saveHidden(); }, 'Live technicians'),
+              btn('vx', 'Hide list ▴', () => { this.ui.mapOpen = false; this.saveHidden(); }))) : null,
+        ], 'vis');
+      })(),
       row('Legend', [
         e('span', { key: 'lgn', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } }, e('span', { style: { width: 10, height: 10, borderRadius: '50%', border: '2px solid #D9480F', boxSizing: 'border-box' } }), 'Deferred H+1'),
         e('span', { key: 'lgc', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
@@ -1553,8 +1737,8 @@ class Dispatch {
   }
   // One table: a section per team (header with hub, shift, tracker and totals), one row per job in route order, H+1 last.
   listView(e, P, T, B, pill, col) {
-    const J = this._J, ro = this.readOnly, th = { padding: '6px 8px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, textAlign: 'left', borderBottom: '1px solid ' + C.line, whiteSpace: 'nowrap', background: C.paper, position: 'sticky', top: 0, zIndex: 1 };
-    const heads = ['#', 'Work order', 'Customer', 'Job', 'Priority', 'ETA', 'Drive', 'Customer status', 'Technician', ''];
+    const J = this._J, ro = this.readOnly, th = { padding: '6px 6px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, textAlign: 'left', borderBottom: '1px solid ' + C.line, whiteSpace: 'nowrap', background: C.paper, position: 'sticky', top: 0, zIndex: 1 };
+    const heads = ['#', 'Work order', 'Customer', 'Job', 'Priority', 'ETA', 'Drive', 'Customer status', 'Technician', 'Check-in', 'Check-out', ''];
     const rows = [];
     const drop = this.ui.drop;
     const section = (id, title, color, info, n, warn) => {
@@ -1574,7 +1758,7 @@ class Dispatch {
         t.ids.length ? e('span', { key: 'tt', style: { font: MONO, color: t.finish > this.tend(n) ? C.warn : C.muted } }, nf1(t.work / 60) + ' h work · ' + t.trav + ' min drive · ' + nf1(t.dist) + ' km · done ' + hm(t.finish)) : null,
         e('div', { key: 'br', style: { flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' } }, this.baseRow(e, P, n, home), this.evRow(e, P, n))], t.rows.length);
       if (!t.rows.length) rows.push(e('tr', { key: 'e' + n }, e('td', { colSpan: heads.length, style: { padding: '8px', font: SANS, color: C.muted } }, ro ? 'No jobs' : 'No jobs. Drag a job onto the team header, or use Move to.')));
-      t.rows.forEach((r, i) => rows.push(this.rowEl(e, P, r.j, r, n, i, pill)));
+      rows.push(...this.withBreaks(P, n, t.rows, (r, i) => this.rowEl(e, P, r.j, r, n, i, pill), (x, k) => this.breakCard(e, x, n + '-' + k, true, heads.length)));
     });
     const open = this.ui.listNext !== false;
     section('next', 'Defer to H+1', '#D9480F', [pill(P.next.length + ' jobs', 'warn', 'pn'),
@@ -1582,15 +1766,15 @@ class Dispatch {
       e('span', { key: 'nx', style: { font: SANS, color: C.warn } }, 'Internal reasons add aging +' + AGING + ' tomorrow. Customer requests do not.')], P.next.length, true);
     if (open) P.next.forEach((k, i) => { const j = J.by.get(k); if (j) rows.push(this.rowEl(e, P, j, null, 'next', i, pill)); });
     return e('div', { style: { overflowX: 'auto', border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
-      e('table', { style: { width: '100%', minWidth: 1180, borderCollapse: 'collapse' } },
+      e('table', { style: { width: '100%', minWidth: 1280, borderCollapse: 'collapse' } },
         e('thead', null, e('tr', null, ...heads.map((h, i) => e('th', { key: i, style: th }, h)))),
         e('tbody', null, ...rows)));
   }
   // One job as a table row: the same information and actions as a board card.
   rowEl(e, P, j, r, colId, idx, pill) {
     const mt = this.st.meta[j.key] || { conf: 'none', stat: 'none' }, lk = this.locked(j), ro = this.readOnly, ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
-    const td = (k, kids, st) => e('td', { key: k, style: { padding: '7px 8px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'top', font: SANS, color: C.text, ...(st || {}) } }, kids);
-    const sel = (key, val, opts, onChange, label) => e('select', { key, value: val, onChange, 'aria-label': label, style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 150 } },
+    const td = (k, kids, st) => e('td', { key: k, style: { padding: '7px 6px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'top', font: SANS, color: C.text, ...(st || {}) } }, kids);
+    const sel = (key, val, opts, onChange, label) => e('select', { key, value: val, onChange, 'aria-label': label, style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 122 } },
       ...Object.entries(opts).map(([k, v]) => e('option', { key: k, value: k }, v)));
     const mini = (key, label, onClick, title) => e('button', { key, type: 'button', onClick, title, style: { padding: '2px 7px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO, cursor: 'pointer' } }, label);
     const nT = P.teams.length, moveOpts = { '': 'Move to…' };
@@ -1611,20 +1795,22 @@ class Dispatch {
       td('cu', [e('div', { key: 'a', style: { color: C.ink } }, j.name || '—'), e('div', { key: 'b', style: { color: C.muted, fontSize: 11.5 } }, [j.area, j.prob].filter(Boolean).join(' · ')),
         ...flags.slice(0, 3).map((f, k) => e('div', { key: 'f' + k, style: { fontSize: 11, fontWeight: 600, color: f[0] === 'bad' ? C.bad : f[0] === 'good' ? C.good : f[0] === 'info' ? C.muted : C.warn } }, f[1])),
         r && r.hint && !ro ? e('div', { key: 'h', style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: URG.blue.c } }, (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away.',
-          mini('hn', 'Move next', () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'))) : null], { minWidth: 180 }),
-      td('jb', e('span', { style: { whiteSpace: 'nowrap' } }, j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + ' h')),
+          mini('hn', 'Move next', () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'))) : null,
+        e('div', { key: 'nt', style: { marginTop: 4, display: 'flex' } }, this.noteBox(e, j, 'list'))], { minWidth: 190, maxWidth: 250 }),
+      td('jb', [e('div', { key: 'c' }, j.cat), e('div', { key: 'd', style: { font: MONO, color: C.muted } }, nf1(this.dur(j) / 60).replace('.0', '') + ' h')], { minWidth: 80 }),
       td('pr', e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
         e('span', { key: 'u', title: ug.tip, style: { padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif", whiteSpace: 'nowrap' } }, ug.label),
         pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
         e('span', { key: 's', style: { font: MONO, color: C.ink } }, fmtN(this.score(j))))),
-      td('eta', r ? [e('span', { key: 'a', style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
-        e('span', { key: 'b', style: { font: MONO, color: co != null ? C.good : C.muted } }, ' → ' + hm(r.end) + (co != null ? ' ✓' : ''))]
+      td('eta', r ? [e('div', { key: 'a', style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
+        e('div', { key: 'b', style: { font: MONO, color: co != null ? C.good : C.muted } }, '→ ' + hm(r.end) + (co != null ? ' ✓' : ''))]
         : (ro ? (P.why[j.key] === 'customer' ? 'Customer request' : 'Internal') : sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason')), { whiteSpace: 'nowrap' }),
-      td('dr', r ? e('span', { style: { font: MONO, color: r.road ? C.muted : C.warn, whiteSpace: 'nowrap' } }, (r.road ? '+' : '~') + r.hop + ' min · ' + nf1(r.d) + ' km') : '—'),
+      td('dr', r ? e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, whiteSpace: 'nowrap' } }, (r.road ? '+' : '~') + r.hop + ' min', e('br'), nf1(r.d) + ' km') : '—'),
       td('cs', ro ? CONF[mt.conf || 'none'] : sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation')),
-      td('ts', ro ? STAT[mt.stat || 'none'] + (co != null ? ' ' + hm(co) : '') : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
-        sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status'), mt.stat === 'checkout' ? this.coInput(e, P, j) : null)),
-      td('ac', e('div', { style: { display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' } },
+      td('ts', ro ? STAT[mt.stat || 'none'] : sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status')),
+      td('ci', mt.stat === 'checkin' || mt.stat === 'checkout' ? this.timeBox(e, P, j, 'ci', true) : e('span', { style: { color: C.muted } }, '—'), { whiteSpace: 'nowrap' }),
+      td('co', mt.stat === 'checkout' ? this.timeBox(e, P, j, 'co', true) : e('span', { style: { color: C.muted } }, '—'), { whiteSpace: 'nowrap' }),
+      td('ac', e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', maxWidth: 150 } },
         lk || ro ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
         lk || ro ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
         lk || ro ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
@@ -1647,7 +1833,7 @@ class Dispatch {
           this.readOnly ? null : e('button', { key: 'tidy', type: 'button', onClick: () => { if (P.nearSave) delete P.nearSave[n]; P.teams[n] = this.nearPass(P, n, this.tidy(P.teams[n], this.tbase(P, n))); this.changed(this.tn(n) + ' route tidied.'); }, style: { marginLeft: 'auto', padding: 0, border: 'none', background: 'none', color: C.ink, textDecoration: 'underline', textUnderlineOffset: 2, font: SANS, cursor: 'pointer' } }, 'Tidy route')),
       ] : [e('span', { key: 'idle', style: { font: SANS, color: C.muted } }, 'Standby')]),
       pill(t.ids.length ? t.ids.length + ' jobs' : 'Idle', t.ids.length ? 'good' : null),
-      t.rows.map((r, i) => this.cardEl(e, P, r.j, r, n, i, pill)), P));
+      this.withBreaks(P, n, t.rows, (r, i) => this.cardEl(e, P, r.j, r, n, i, pill), (x, k) => this.breakCard(e, x, n + '-' + k, false)), P));
     });
     // H+1 sits first and stays in view while the board scrolls, so a deferred job can be dragged into any team.
     const q = String(this.ui.nextQ || '').trim().toLowerCase();
@@ -1686,13 +1872,33 @@ class Dispatch {
   evRow(e, P, n) {
     const L = this.evList(P, n), br = this.activeEv(P, n, 'break'), pr = this.activeEv(P, n, 'problem');
     const b = (k, label, on, fn) => e('button', { key: k, type: 'button', onClick: fn, style: { padding: '2px 8px', border: '1px solid ' + (on ? C.bad : C.line), borderRadius: 3, background: on ? C.badBg : C.white, color: on ? C.bad : C.ink, font: SANS, fontSize: 11.5, cursor: 'pointer' } }, label);
+    const open = !this.readOnly && this.ui.brkFor === n, err = (this.ui.brkErr || {})[n], len = Math.max(5, +this.st.cfg.breakEst || 60);
+    const later = br && br.fixed && this.nowMin() < br.at;
+    const form = open ? (() => {
+      const now = Math.floor(this.nowMin()), def = hm(Math.max(this.tstart(n), Math.min(now, this.tend(n) - 1)));
+      const go = el => this.startBreak(P, n, el.value);
+      return e('div', { key: 'bf', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #5B6B80', borderRadius: 3, background: '#EEF1F5' } },
+        e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: '#2F3B4A' } }, 'Break starts',
+          e('input', { key: 'bt' + n, type: 'text', inputMode: 'numeric', defaultValue: def, maxLength: 5, autoFocus: true, placeholder: 'hh:mm', 'aria-label': 'Break start time',
+            onInput: ev => { const mm = /^(\d{1,2})[:.](\d{2})$/.exec(ev.target.value.trim()), o = ev.target.parentNode.querySelector('[data-end]'); if (o) o.textContent = mm ? '→ back ' + hm(+mm[1] * 60 + +mm[2] + len) : ''; },
+            onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.brkFor = null; this.onChange(); } },
+            style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
+          e('span', { 'data-end': '1', style: { font: MONO, color: '#4A5868' } }, '→ back ' + hm((m => +m[0] * 60 + +m[1])(def.split(':')) + len)),
+          e('span', { style: { font: MONO, color: C.muted } }, '(' + len + ' min)')),
+        e('span', { style: { display: 'flex', gap: 6 } },
+          b('bs', 'Start break', false, ev => go(ev.currentTarget.closest('div').querySelector('input'))),
+          b('bc', 'Cancel', false, () => { this.ui.brkFor = null; if (this.ui.brkErr) delete this.ui.brkErr[n]; this.onChange(); })),
+        err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
+    })() : null;
     return e('div', { key: 'ev', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
       this.readOnly ? null : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
-        b('br', br ? 'End break' : 'Break', !!br, () => br ? this.endEv(P, n, 'break') : this.startEv(P, n, 'break')),
+        b('br', br ? (later ? 'Cancel break ' + hm(br.at) : 'End break') : open ? 'Break…' : 'Break', !!br, () => br ? this.endEv(P, n, 'break') : (this.ui.brkFor = open ? null : n, this.onChange())),
         b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem'))),
-      ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.end == null ? C.bad : C.muted } },
+      form,
+      ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.planned ? C.muted : x.type === 'break' ? (this.breakLabel(x).on ? '#2F3B4A' : C.muted) : x.end == null ? C.bad : C.muted, fontWeight: !x.planned && x.type === 'break' && this.breakLabel(x).on ? 700 : 500 } },
         x.planned ? 'Lunch ' + hm(x.at) + '–' + hm(x.end) + ' · ' + Math.round(this.evDur(x)) + ' min · planned'
-          : (x.type === 'break' ? 'Break ' : 'Problem ') + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + (x.src || 'dispatcher'))));
+          : x.type === 'break' ? 'Break ' + this.breakLabel(x).range + ' · ' + this.breakLabel(x).st + ' · ' + (x.src === 'app' ? 'app' : x.by || x.src || 'dispatcher')
+          : 'Problem ' + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + (x.src || 'dispatcher'))));
   }
   nameInput(e, n) {
     if (this.readOnly) return e('span', { key: 'nm' + n, style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.tn(n));
@@ -1703,7 +1909,9 @@ class Dispatch {
   }
   column(e, id, title, color, head, badge, cards, P, warn) {
     const drop = this.ui.drop, active = drop && drop.col === id;
-    const onDragOver = ev => { if (!this.ui.drag) return; ev.preventDefault(); if (!cards.length || ev.target === ev.currentTarget) this.setDrop(id, cards.length); };
+    // BREAK cards sit between the jobs but are not jobs: drop positions count jobs only.
+    const nJob = cards.filter(c => c && !String(c.key || '').startsWith('brk')).length;
+    const onDragOver = ev => { if (!this.ui.drag) return; ev.preventDefault(); if (!cards.length || ev.target === ev.currentTarget) this.setDrop(id, nJob); };
     const onDrop = ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); };
     return e('div', { key: 'col' + id, style: { flex: '0 0 288px', display: 'flex', flexDirection: 'column', background: warn ? C.warnBg : C.paper, border: '1px solid ' + (active ? C.ink : warn ? C.warnLine : C.line), borderRadius: 3, ...(warn ? { position: 'sticky', left: 0, zIndex: 3, boxShadow: '6px 0 10px -6px rgba(0,0,0,0.18)', maxHeight: 900, overflowY: 'auto' } : {}) } },
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '9px 10px', borderBottom: '1px solid ' + (warn ? C.warnLine : C.line) } },
@@ -1713,7 +1921,7 @@ class Dispatch {
         ...head),
       e('div', { onDragOver, onDrop, style: { display: 'flex', flexDirection: 'column', gap: 0, padding: 8, minHeight: 80 } },
         ...(cards.length ? cards : [e('div', { key: 'empty', style: { padding: '16px 8px', border: '1px dashed ' + C.line, borderRadius: 3, font: SANS, color: C.muted, textAlign: 'center' } }, warn ? 'Nothing deferred' : 'Drop a job here to assign this team')]),
-        active && drop.idx >= cards.length && cards.length ? e('div', { key: 'endline', style: { height: 3, background: C.acc, borderRadius: 2, marginTop: 4 } }) : null));
+        active && drop.idx >= nJob && nJob ? e('div', { key: 'endline', style: { height: 3, background: C.acc, borderRadius: 2, marginTop: 4 } }) : null));
   }
   setDrop(col, idx) {
     const d = this.ui.drop;
@@ -1777,13 +1985,14 @@ class Dispatch {
           (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away. Do this job right after it?' + (r.hint.delay ? ' ' + (this._J.by.get(r.hint.by) || {}).wo + ' (higher priority) would start ' + dh(r.hint.delay) + ' later.' : ''),
           e('button', { type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'), style: { padding: '2px 8px', border: '1px solid ' + URG.blue.c, borderRadius: 3, background: C.white, color: URG.blue.c, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Move next')) : null,
         r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
+        this.noteBox(e, j, 'card'),
         this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.text } },
-          e('span', null, 'Customer: ' + (CONF[mt.conf || 'none'] || '—')), e('span', null, 'Technician: ' + STAT[mt.stat || 'none'] + (this.coOf(j) != null ? ' ' + hm(this.coOf(j)) : '')),
+          e('span', null, 'Customer: ' + (CONF[mt.conf || 'none'] || '—')), e('span', null, 'Technician: ' + STAT[mt.stat || 'none'] + (this.ciOf(j) != null ? ' · in ' + hm(this.ciOf(j)) : '') + (this.coOf(j) != null ? ' · out ' + hm(this.coOf(j)) : '')),
           mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))
         : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
           sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation'),
           sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status'),
-          mt.stat === 'checkout' ? this.coInput(e, P, j) : null,
+          mt.stat === 'checkin' || mt.stat === 'checkout' ? e('span', { key: 'tm', style: { display: 'flex', flexWrap: 'wrap', gap: 8, flexBasis: '100%' } }, this.timeBox(e, P, j, 'ci'), mt.stat === 'checkout' ? this.timeBox(e, P, j, 'co') : null) : null,
           lk ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
           lk ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
           lk ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
@@ -1875,8 +2084,8 @@ class Dispatch {
         ...[1, 2, 3, 5].map(v => chip('gk' + v, d.gridKm === v, v + ' km', null, null, () => set('gridKm', v)))]),
       ...crewRows,
       row('Lunch', [lab('Planned lunch from', 'lu1'), time('lunchAt'), lab('for', 'lu2'), num('lunchMin', 56, 5), lab('min in the default shift; other shifts take it the same time after their start (0 = none). Replaced by the real break once the technician app reports one.', 'lu3')]),
-      row('Breaks', [lab('Break estimate', 'be'), num('breakEst', 56, 5), lab('min · Problem estimate', 'pe'), num('probEst', 56, 5),
-        lab('min. Used until the technician app sends the end; after that the real duration counts.', 'bx')]),
+      row('Breaks', [lab('Break length', 'be'), num('breakEst', 56, 5), lab('min · Problem estimate', 'pe'), num('probEst', 56, 5),
+        lab('min. A break typed by a dispatcher lasts the break length from its start time (shown as a BREAK card in the route). Breaks and problems from the technician app use these estimates until the app sends the end.', 'bx')]),
       row('Road', [chip('ro', d.roadOn, 'Road drive times (OSRM)', null, null, () => set('roadOn', !d.roadOn)),
         e('input', { key: 'osrm', type: 'text', value: d.osrm, onChange: ev => set('osrm', ev.target.value), placeholder: 'https://router.project-osrm.org',
           style: { width: 260, padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
@@ -1889,6 +2098,8 @@ class Dispatch {
         lab('· Anchor teams with hours left take jobs within', 'l11'), num('ring2', 48), lab('cells (1 = the 8 neighbours) · a floater drives at most', 'l12'), num('hop2', 56), lab('min between jobs', 'l13')]),
       row('Nearby', [lab('Do a WO within', 'nb1'), num('nearM', 64, 50), lab('m of the job just finished next, if no WO misses its SLA, urgent VIP are never delayed and a higher-priority WO waits at most', 'nb2'), num('nearDelay', 56, 5), lab('min more (0 m = off)', 'nb3')]),
       row('Auto check-in', [lab('A WO is checked in automatically when its team\u2019s tracker is within', 'ac1'), num('ciM', 56, 10), lab('m of it and parked (5 km/h or slower, or two positions in a row inside the radius). 0 = off. Dispatchers can always change the status by hand.', 'ac2')]),
+      row('Auto check-out', [lab('A checked-in WO is checked out when its team\u2019s tracker is more than', 'ao1'), num('coM', 60, 10), lab('m away and driving (', 'ao2'), num('coKmh', 52, 1), lab('km/h or faster, or two positions in a row farther away), at least', 'ao3'), num('coMin', 52, 1),
+        lab('min after the check-in. The check-out time is when the technician left the site, worked back from the distance and speed (never before the last position on site). 0 m = off. Keep this radius well above the check-in radius so GPS drift on site never checks a job out.', 'ao4')]),
       row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
@@ -1977,7 +2188,7 @@ class Dispatch {
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
   // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
   replanKeys(base, d) {
-    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM'].includes(k));
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin'].includes(k));
     if (keys.includes('crew')) {
       const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
       if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
@@ -2015,7 +2226,7 @@ class Dispatch {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
       speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
