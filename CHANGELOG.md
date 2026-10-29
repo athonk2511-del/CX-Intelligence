@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-29 (back on site, GPS jumps)
+
+### Added
+
+- **Back on site** (Settings → Back on site, 60 min by default): a WO checked out automatically goes back to **Checked in** when the technician is back and parked at the same WO within that time: two positions in a row inside the check-out radius (150 m), or one inside the check-in radius (50 m). The check-in time stays. The card warns "Back on site since 12:40 after leaving 12:27 (tracker 30 m away): check for a problem", and the change log records it. Once the technician really leaves, the job is checked out again by the usual rule with the new leaving time, and the card keeps "Left at 12:27, came back 12:40, then finished".
+  - Not undone when the team has already checked in at another WO since (it moved on and only drove past), after a dispatcher set the status by hand (the dispatcher has taken over), or more than 3 times for one WO in a day.
+
+### Changed
+
+- **Automatic check-out needs two positions in a row outside the radius.** One stray GPS position never checks a job out. The leaving time is still taken from the first position outside, so the recorded time is not delayed.
+- **GPS jumps are ignored** by automatic check-in, check-out and back on site: a position more than 300 m from the last good one at an implied speed above 130 km/h. Two jumpy positions that agree with each other count as a real move.
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+
 ## 2026-10-29 (check-in/out times, breaks, notes, map list, automatic check-out)
 
 ### Added

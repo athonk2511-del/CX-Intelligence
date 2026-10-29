@@ -93,7 +93,7 @@ const DEF = {
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
-  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, jobTypes: null,
+  sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, coBack: 60, jobTypes: null,
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -229,24 +229,75 @@ class Dispatch {
   }
   // Automatic check-in: a team's tracker parked within ciM metres of a job of its route that is not started or on the way.
   // Parked = speed 5 km/h or less, or two different positions in a row inside the radius (a drive-by is not a visit).
+  // A GPS jump: a position farther than 300 m from the last good one at an implied speed above 130 km/h. Ignored by the
+  // automatic check-in, check-out and back-on-site checks. Two jumpy positions that agree with each other are a real move.
+  gpsJump(dv) {
+    const G = this._gps || (this._gps = {}), g = G[dv.id];
+    if (g && g.last === dv.last) return g.bad;
+    if (!g) { G[dv.id] = { t: dv.last, lat: dv.lat, lng: dv.lng, last: dv.last, bad: false, cand: null }; return false; }
+    const m = this.metres(g, dv), kmh = m / 1000 / (Math.max(1000, dv.last - g.t) / 3600e3);
+    let bad = m > 300 && kmh > 130;
+    if (bad && g.cand && this.metres(g.cand, dv) < 300) bad = false;
+    if (bad) g.cand = { lat: dv.lat, lng: dv.lng }; else { g.t = dv.last; g.lat = dv.lat; g.lng = dv.lng; g.cand = null; }
+    g.last = dv.last; g.bad = bad;
+    return bad;
+  }
+  // Back on site: a WO checked out automatically goes back to Checked in when, within coBack minutes of the check-out,
+  // its team's tracker is parked (5 km/h or slower) at the WO again: two positions in a row inside the check-out radius,
+  // or one inside the check-in radius. Not when the team has checked in at another WO since (it moved on), after a
+  // dispatcher took over (set the status by hand), or more than 3 times for one WO in a day. The check-in time stays;
+  // the job is checked out again by the usual rule once the technician really leaves.
+  autoReopen(P, minOf) {
+    const cfg = this.st.cfg, win = Math.max(0, +cfg.coBack || 0), R = Math.max(0, +cfg.coM || 0), Rin = Math.max(0, +cfg.ciM || 0), J = this._J;
+    if (!win) return;
+    const S = this._roSeen || (this._roSeen = {}), day = this.today(), done = [];
+    P.teams.forEach((ids, i) => {
+      const dv = this.trackerOf(i);
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) return;
+      ids.forEach(k => {
+        const j = J.by.get(k), mt = this.st.meta[k];
+        if (!j || !mt || mt.stat !== 'checkout' || !mt.coAuto || mt.coDay !== day || mt.noAutoCo === day || mt.co == null) return;
+        if (dv.last <= (mt.coAuto.fixAt || 0)) return;
+        const fixMin = minOf(dv.last);
+        if (fixMin - mt.co > win) { delete S[dv.id + '|' + k]; return; }
+        if (mt.reopen && mt.reopen.day === day && mt.reopen.n >= 3) return;
+        if (ids.some(o => o !== k && (x => x != null && x >= mt.co)(this.ciOf(J.by.get(o) || { key: o })))) return;
+        const key = dv.id + '|' + k, rs = S[key] || (S[key] = { lastFix: 0, n: 0 });
+        const d = this.metres(dv, j), parked = (+dv.speed || 0) <= 5;
+        if (dv.last !== rs.lastFix) { rs.lastFix = dv.last; rs.n = d <= R && parked ? rs.n + 1 : 0; }
+        if (!(rs.n >= 2 || (Rin && d <= Rin && parked))) return;
+        const n = mt.reopen && mt.reopen.day === day ? mt.reopen.n + 1 : 1;
+        mt.coUndo = { left: mt.co, back: Math.floor(fixMin), m: Math.round(d), dev: dv.name };
+        mt.reopen = { day, n };
+        mt.stat = 'checkin'; delete mt.co; delete mt.coDay; delete mt.coAuto;
+        delete S[key];
+        done.push(j.wo + ' (' + this.tn(i) + ', left ' + hm(mt.coUndo.left) + ', tracker ' + dv.name + ' back ' + mt.coUndo.m + ' m from the site at ' + hm(fixMin) + ')');
+      });
+    });
+    if (done.length) this.reflow(P, 'Check-out undone automatically, technician back on site: ' + done.join('; ') + '. Ask the team whether there is a problem.');
+  }
   // Automatic check-out (geofence exit, as in professional field-service tools): a checked-in WO is checked out when
   //  - its team's tracker is fresh (position at most 10 min old) and more than coM metres from the WO (an exit radius
   //    well above the check-in radius, so GPS drift while working never counts as leaving),
-  //  - the technician is driving away: coKmh or faster, or two positions in a row outside with the distance growing
-  //    (a 5-minute position can catch the motorbike at a red light),
+  //  - two positions in a row are outside (one stray GPS position never checks a job out; positions that jump faster
+  //    than 130 km/h are ignored as GPS jumps) and the technician is driving away: coKmh or faster, or the distance
+  //    growing between those positions (a 5-minute position can catch the motorbike at a red light),
   //  - and the job has been checked in for at least coMin minutes (a drive-by check-in is never closed by itself).
   // The check-out time is the moment of leaving, taken from the first position outside the radius: that time minus the
   // drive from the site at the measured speed, or (slow or unknown speed) halfway between the last position on site and
-  // that first position outside; never before the last position on site nor before the check-in. A dispatcher who sets the job back to
-  // Checked in (technician returned) switches this off for that WO for the day.
+  // that first position outside; never before the last position on site nor before the check-in.
+  // Back on site: an automatic check-out is undone when the tracker comes back and parks at the same WO within coBack
+  // minutes (see autoReopen). A dispatcher who sets the job back to Checked in by hand switches the automatic check-out
+  // off for that WO for the day (the dispatcher has taken over).
   autoCheckout(P) {
     const cfg = this.st.cfg, R = Math.max(0, +cfg.coM || 0), L = this.devs(), J = this._J;
     if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
     const S = this._coSeen || (this._coSeen = {}), day = this.today(), done = [];
     const minOf = t => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+    this.autoReopen(P, minOf);
     P.teams.forEach((ids, i) => {
       const dv = this.trackerOf(i);
-      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000) return;
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) return;
       ids.forEach(k => {
         const j = J.by.get(k), mt = this.st.meta[k];
         if (!j || !mt || mt.stat !== 'checkin' || mt.ci == null || mt.ciDay !== day || mt.noAutoCo === day) return;
@@ -261,14 +312,15 @@ class Dispatch {
         if (d <= R) return;
         const fixMin = minOf(dv.last);
         if (fixMin - mt.ci < Math.max(0, +cfg.coMin || 0)) return;
-        if (!(kmh >= (+cfg.coKmh || 10) || (cs.out >= 2 && cs.away))) return;
+        const fast = +cfg.coKmh || 10;
+        if (cs.out < 2 || !(kmh >= fast || (cs.first && cs.first.kmh >= fast) || cs.away)) return;
         // Leaving time from the first position outside: back by the drive from the site (metres / (km/h -> m/min)), or
         // halfway from the last position on site when the speed says nothing (stopped at a light, slow traffic).
         const f = cs.first || { t: dv.last, d, kmh }, fMin = minOf(f.t), inMin = cs.lastIn ? minOf(cs.lastIn) : null;
         let left = f.kmh >= 5 ? fMin - f.d / (f.kmh * 1000 / 60) : inMin != null ? (inMin + fMin) / 2 : fMin;
         if (inMin != null) left = Math.max(left, inMin);
         left = Math.floor(Math.min(fMin, this.nowMin(), Math.max(left, mt.ci + 1)));
-        mt.stat = 'checkout'; mt.co = left; mt.coDay = day; mt.coAuto = { m: Math.round(d), kmh: Math.round(kmh), dev: dv.name, seen: hm(fixMin) };
+        mt.stat = 'checkout'; mt.co = left; mt.coDay = day; mt.coAuto = { m: Math.round(d), kmh: Math.round(kmh), dev: dv.name, seen: hm(fixMin), fixAt: dv.last };
         delete S[key];
         done.push(j.wo + ' (' + this.tn(i) + ', left ' + hm(left) + '; tracker ' + dv.name + ' ' + Math.round(d) + ' m away at ' + Math.round(kmh) + ' km/h, ' + hm(fixMin) + ')');
       });
@@ -281,7 +333,7 @@ class Dispatch {
     const seen = this._ciSeen || (this._ciSeen = {}), day = this.today(), done = [];
     P.teams.forEach((ids, i) => {
       const dv = this.trackerOf(i);
-      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000) return;
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) return;
       let best = null;
       ids.forEach(k => {
         const j = J.by.get(k), mt = this.st.meta[k] || {};
@@ -902,7 +954,7 @@ class Dispatch {
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
       if (!J.by.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
-      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo;
+      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
@@ -1228,6 +1280,9 @@ class Dispatch {
         if (ciT != null) f.push(['good', 'Checked in ' + hm(ciT) + (ciM.ciAuto ? ' · automatic, tracker ' + ciM.ciAuto.dev + ' ' + ciM.ciAuto.m + ' m away' : '')]);
         if (co != null) f.push(['good', 'Checked out ' + hm(co) + (ciT != null ? ' · ' + Math.round(co - ciT) + ' min on site' : '') + (ciM.coAuto ? ' · automatic, tracker ' + ciM.coAuto.dev + ' ' + ciM.coAuto.m + ' m away at ' + ciM.coAuto.kmh + ' km/h' : '') + (Math.abs(dv) < 1 ? ', as projected' : ', ' + Math.abs(dv) + ' min ' + (dv < 0 ? 'earlier' : 'later') + ' than projected')]);
         if (co != null && ciT == null) f.push(['warn', 'Check-in time missing: type the arrival time']);
+        const un = ciM.coUndo;
+        if (un && co == null && ciT != null) f.push(['warn', 'Back on site since ' + hm(un.back) + ' after leaving ' + hm(un.left) + ' (tracker ' + un.m + ' m away): check for a problem']);
+        else if (un && co != null) f.push(['warn', 'Left at ' + hm(un.left) + ', came back ' + hm(un.back) + ', then finished']);
         else if (dv >= 1) f.push(['warn', 'Still working: ' + dv + ' min past the projected finish. Next ETAs moved.']);
         if (P.ret && P.ret[k]) f.push(['info', 'On the way back to base']);
         hops++; if (road) roadHops++;
@@ -1351,7 +1406,7 @@ class Dispatch {
     const mt = this.meta(j.key), was = this.coOf(j), prev = mt.stat;
     mt.stat = v;
     if (v === 'checkin') { if (mt.ci == null || mt.ciDay !== this.today()) { mt.ci = Math.floor(this.nowMin()); mt.ciDay = this.today(); delete mt.ciAuto; } }
-    else if (v === 'none' || v === 'start') { delete mt.ci; delete mt.ciDay; delete mt.ciAuto; }
+    else if (v === 'none' || v === 'start') { delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.coUndo; }
     // Set back by hand after a check-in: no automatic check-in for this job again today.
     if (prev === 'checkin' && (v === 'none' || v === 'start')) mt.noAuto = this.today();
     // Set back by hand after an automatic check-out (technician came back): no automatic check-out again today.
@@ -2099,7 +2154,9 @@ class Dispatch {
       row('Nearby', [lab('Do a WO within', 'nb1'), num('nearM', 64, 50), lab('m of the job just finished next, if no WO misses its SLA, urgent VIP are never delayed and a higher-priority WO waits at most', 'nb2'), num('nearDelay', 56, 5), lab('min more (0 m = off)', 'nb3')]),
       row('Auto check-in', [lab('A WO is checked in automatically when its team\u2019s tracker is within', 'ac1'), num('ciM', 56, 10), lab('m of it and parked (5 km/h or slower, or two positions in a row inside the radius). 0 = off. Dispatchers can always change the status by hand.', 'ac2')]),
       row('Auto check-out', [lab('A checked-in WO is checked out when its team\u2019s tracker is more than', 'ao1'), num('coM', 60, 10), lab('m away and driving (', 'ao2'), num('coKmh', 52, 1), lab('km/h or faster, or two positions in a row farther away), at least', 'ao3'), num('coMin', 52, 1),
-        lab('min after the check-in. The check-out time is when the technician left the site, worked back from the distance and speed (never before the last position on site). 0 m = off. Keep this radius well above the check-in radius so GPS drift on site never checks a job out.', 'ao4')]),
+        lab('min after the check-in. Two positions in a row must be outside, and a position that jumps faster than 130 km/h is ignored as a GPS jump. The check-out time is when the technician left the site, worked back from the distance and speed (never before the last position on site). 0 m = off. Keep this radius well above the check-in radius so GPS drift on site never checks a job out.', 'ao4')]),
+      row('Back on site', [lab('An automatic check-out is undone when the technician is back and parked at the same WO within', 'ab1'), num('coBack', 56, 5),
+        lab('min (two positions in a row inside the check-out radius, or one inside the check-in radius), unless the team has checked in at another WO since. The job shows "Back on site" so the dispatcher can ask about a problem. At most 3 times per WO a day. 0 = off.', 'ab2')]),
       row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
@@ -2188,7 +2245,7 @@ class Dispatch {
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
   // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
   replanKeys(base, d) {
-    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin'].includes(k));
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin', 'coBack'].includes(k));
     if (keys.includes('crew')) {
       const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
       if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
@@ -2226,7 +2283,7 @@ class Dispatch {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
       speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin), coBack: clean(d.coBack, 0, 480, DEF.coBack),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
