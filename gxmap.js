@@ -412,6 +412,14 @@ export async function createMap(el, data, opts) {
         t.pts.forEach((x, n) => { all.push([x.lat, x.lng]); L.marker([x.lat, x.lng], { icon: woIcon(n + 1, t.color, x.mark), zIndexOffset: x.mark === 'done' ? 500 : x.mark ? 650 : 600 }).bindTooltip(esc(x.title), { direction: 'top', offset: [0, -10] }).addTo(planLayer); });
       });
       p.next.forEach(x => { all.push([x.lat, x.lng]); L.circleMarker([x.lat, x.lng], { radius: 6, color: '#D9480F', weight: 2.5, fillColor: '#FFFFFF', fillOpacity: 1 }).bindTooltip(esc(x.title), { direction: 'top' }).addTo(planLayer); });
+      // Mass outages: red warning marker ringed in the team colour, dashed circle = the area that checks the team in/out.
+      (p.mass || []).forEach(o => {
+        all.push([o.lat, o.lng]);
+        if (o.live && o.r > 0) L.circle([o.lat, o.lng], { radius: o.r, color: '#B42318', weight: 1.5, dashArray: '5 4', fillColor: '#B42318', fillOpacity: 0.08, interactive: false }).addTo(planLayer);
+        L.marker([o.lat, o.lng], { zIndexOffset: 900, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+          html: '<div style="width:30px;height:30px;box-sizing:border-box;border-radius:50%;background:' + (o.live ? '#B42318' : '#9A9A95') + ';border:3px solid ' + o.color + ';box-shadow:0 0 0 2px #FFFFFF,0 1px 4px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font:700 15px \'IBM Plex Sans\',system-ui,sans-serif;color:#FFFFFF;opacity:' + (o.live ? 1 : 0.7) + '">!</div>' }) })
+          .bindTooltip(esc(o.title), { direction: 'top', offset: [0, -14] }).addTo(planLayer);
+      });
       BS.forEach(bb => L.marker([bb.lat, bb.lng], { zIndexOffset: 700, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div style="width:16px;height:16px;box-sizing:border-box;background:#1F1F1D;border:2px solid #E8B400;border-radius:2px"></div>' }) })
         .bindTooltip(esc(bb.title), { direction: 'top', offset: [0, -8] }).addTo(planLayer));
       if (p.fit && all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 15 });

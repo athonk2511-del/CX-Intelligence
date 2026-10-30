@@ -63,7 +63,7 @@ const URG = {
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Version of this planner, stamped on plans it makes (shows in the change log which screens are up to date).
-const MOD_V = '2026-10-30a';
+const MOD_V = '2026-10-30c';
 // Longest note on a work order: about four lines on a board card, five in the list, so it is always shown in full.
 const NOTE_MAX = 140;
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
@@ -93,7 +93,7 @@ const DEF = {
   teams: 10, gridKm: 3, speed: 35, road: 1.3, roadOn: true, osrm: 'https://router.project-osrm.org',
   zTour: 2.0, zDense: 1.7, zMid: 1.4, zOpen: 1.2, tR: 2.5,
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
-  dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30,
+  dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30, massH: 6, massM: 300,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
   sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, coBack: 60, jobTypes: null,
 };
@@ -104,6 +104,14 @@ const dh = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : M
 const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 const fmtN = v => Math.round(v).toLocaleString('en-US');
 const nf1 = v => (Math.round(v * 10) / 10).toFixed(1);
+// "lat, lng" as pasted from Google Maps (also "lat lng" or a maps link with @lat,lng or q=lat,lng). Indonesia only.
+const parseLL = t => {
+  const v = String(t || '').trim(); if (!v) return null;
+  const m = /@?(-?\d{1,2}\.\d+)\s*[,; ]\s*(-?\d{2,3}\.\d+)/.exec(v);
+  if (!m) return false;
+  const lat = +m[1], lng = +m[2];
+  return lat >= -11.5 && lat <= 6.5 && lng >= 94.5 && lng <= 141.5 ? { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 } : false;
+};
 const dd = m => m < 2880 ? dh(m) : Math.floor(m / 1440) + ' d';
 const tierOf = raw => { const v = String(raw || '').toLowerCase(); return /vip/.test(v) ? 'VIP' : /highest/.test(v) ? 'Highest' : /high/.test(v) ? 'High' : /low/.test(v) ? 'Low' : /normal|medium|standard/.test(v) ? 'Normal' : null; };
 function hav(a, b) {
@@ -328,6 +336,60 @@ class Dispatch {
       });
     });
     if (done.length) this.reflow(P, 'Checked out automatically: ' + done.join('; ') + '.');
+  }
+  // Outages with a location, tracked like a WO but over a wider area (massM): checked in when the team's tracker is
+  // parked inside the area; ended when it has left (two positions outside, driving or moving away, at least coMin
+  // after arrival); undone (back on site) when it parks inside the area again within coBack minutes.
+  autoMass(P) {
+    const cfg = this.st.cfg, R = Math.max(0, +cfg.massM || 0), L = this.devs();
+    if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
+    const S = this._msSeen || (this._msSeen = {}), now = this.nowMin(), out = [];
+    const minOf = t => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+    (P.teams || []).forEach((ids, i) => {
+      const dv = this.trackerOf(i);
+      if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) return;
+      (((P.ev || {})[i]) || []).filter(x => x.type === 'mass' && x.lat != null).forEach(ev => {
+        const eff = this.massAt(P, i, ev), key = dv.id + '|m|' + ev.at, cs = S[key] || (S[key] = { lastFix: 0, inN: 0, out: 0, dist: null, first: null, lastIn: null });
+        const d = this.metres(dv, ev), kmh = +dv.speed || 0, fix = minOf(dv.last), parked = kmh <= 5;
+        if (dv.last !== cs.lastFix) {
+          cs.lastFix = dv.last;
+          if (d <= R) { cs.inN = parked ? cs.inN + 1 : 0; cs.lastIn = dv.last; cs.out = 0; cs.first = null; cs.away = false; }
+          else { cs.inN = 0; cs.away = cs.out > 0 && cs.dist != null && d > cs.dist + 20; cs.out++; if (!cs.first) cs.first = { t: dv.last, d, kmh }; }
+          cs.dist = d;
+        }
+        if (fix < eff.at) return;   // still finishing the WO on site
+        // Arrival
+        if (ev.ci == null && ev.endAt == null && d <= R && parked) {
+          ev.ci = Math.floor(fix); ev.ciAuto = { m: Math.round(d), dev: dv.name };
+          out.push(this.tn(i) + ' arrived at the mass outage ' + hm(ev.ci) + ' (tracker ' + dv.name + ' ' + Math.round(d) + ' m away)');
+          return;
+        }
+        // Leaving
+        if (ev.ci != null && ev.endAt == null && ev.noAutoCo !== this.today() && d > R && cs.out >= 2 && fix - ev.ci >= Math.max(0, +cfg.coMin || 0)) {
+          const fast = +cfg.coKmh || 10;
+          if (!(kmh >= fast || (cs.first && cs.first.kmh >= fast) || cs.away)) return;
+          const f = cs.first || { t: dv.last, d, kmh }, fMin = minOf(f.t), inMin = cs.lastIn ? minOf(cs.lastIn) : null;
+          let left = f.kmh >= 5 ? fMin - Math.max(0, f.d - R) / (f.kmh * 1000 / 60) : inMin != null ? (inMin + fMin) / 2 : fMin;
+          if (inMin != null) left = Math.max(left, inMin);
+          left = Math.floor(Math.min(fMin, now, Math.max(left, ev.ci + 1)));
+          ev.endAt = left; ev.coAuto = { m: Math.round(d), kmh: Math.round(kmh), dev: dv.name, fixAt: dv.last };
+          delete S[key];
+          out.push(this.tn(i) + ' left the mass outage ' + hm(left) + ' (tracker ' + dv.name + ' ' + Math.round(d) + ' m away at ' + Math.round(kmh) + ' km/h)');
+          return;
+        }
+        // Back on site
+        const win = Math.max(0, +cfg.coBack || 0);
+        if (win && ev.coAuto && ev.endAt != null && dv.last > (ev.coAuto.fixAt || 0) && fix - ev.endAt <= win && cs.inN >= 2
+          && !ids.some(k => (x => x != null && x >= ev.endAt)(this.ciOf(this._J.by.get(k) || { key: k })))) {
+          const n = ev.reopen && ev.reopen.day === this.today() ? ev.reopen.n + 1 : 1;
+          if (n > 3) return;
+          ev.coUndo = { left: ev.endAt, back: Math.floor(fix) }; ev.reopen = { day: this.today(), n };
+          delete ev.endAt; delete ev.coAuto; delete S[key];
+          out.push(this.tn(i) + ' back at the mass outage ' + hm(fix) + ' after leaving ' + hm(ev.coUndo.left) + ': still handling');
+        }
+      });
+    });
+    if (out.length) this.changed(out.join('; ') + '. ETAs after it moved.');
   }
   autoCheckin(P) {
     const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J;
@@ -618,12 +680,48 @@ class Dispatch {
     return n > 0 ? [{ type: 'break', at, end: at + n, planned: true }] : [];
   }
   evList(P, i) {
-    const real = ((P && P.ev) || {})[i] || [];
+    const base = this.baseEv(P, i);
+    return base.concat((((P && P.ev) || {})[i] || []).filter(e => e.type === 'mass').map(e => this.massEff(e, base, this.massFrom(P, i, e)))).sort((a, b) => a.at - b.at);
+  }
+  // Where a team drives to an outage from: the WO it finishes first, else the last WO it checked in at before the call,
+  // else its hub.
+  massFrom(P, i, e) {
+    const J = this._J; if (!J || !P) return null;
+    const a = e.after && J.by.get(e.after); if (a) return a;
+    let best = null, bt = -1;
+    (P.teams[i] || []).forEach(k => { const j = J.by.get(k), c = j && this.ciOf(j); if (c != null && c <= e.at && c > bt) { bt = c; best = j; } });
+    return best || this.tbase(P, i);
+  }
+  // Breaks, problems and the planned lunch of a team (everything but mass outages), in time order.
+  baseEv(P, i) {
+    const real = (((P && P.ev) || {})[i] || []).filter(e => e.type !== 'mass');
     return real.concat(real.some(e => e.type === 'break') ? [] : this.lunchE(i)).slice().sort((a, b) => a.at - b.at);
+  }
+  massAt(P, i, e) { return this.massEff(e, this.baseEv(P, i), this.massFrom(P, i, e)); }
+  // Mass outage as it really runs: a team that was working on a WO when it was called finishes that WO first, so the
+  // outage starts at that WO's check-out (or its projected finish, not before now, while it is still checked in).
+  // It lasts its handling time from that start, or ends when a dispatcher ends it.
+  massEff(e, base, from) {
+    let at = e.at, wait = null;
+    const j = e.after && this._J ? this._J.by.get(e.after) : null;
+    if (j) {
+      const co = this.coOf(j), ci = this.ciOf(j);
+      // Projected finish of the WO on site, with the breaks and problems that fall inside it (same as its card).
+      let pf = null;
+      if (ci != null) { pf = ci + this.dur(j); (base || []).forEach(x => { if (x.at >= ci && x.at < pf) pf += this.evDur(x); }); }
+      const fin = co != null ? co : pf != null ? Math.max(pf, this.nowMin()) : null;
+      if (fin != null && fin > at) { at = fin; wait = co != null ? null : j.wo; }
+    }
+    // With a location: the team drives there from its last stop, handling starts on arrival (tracker or dispatcher
+    // check-in, else the estimated drive) and lasts the handling time; it ends when the team leaves (check-out).
+    const drive = e.lat != null && from ? this.travel(from, e) : 0;
+    const arr = e.ci != null ? Math.max(at, e.ci) : at + drive;
+    const end = e.endAt != null ? Math.max(at, e.endAt) : arr + Math.max(30, +e.dur || 360);
+    return { ...e, at, arr, end, drive, wait, orig: e };
   }
   // A team's running state for planning: { ids, t (free from), pos, E (breaks/problems), k (cursor into E) }.
   fresh(i, P, B) { return { i, ids: [], t: i != null ? this.tstart(i) : this.st.cfg.start, last: this.tlast(i), pos: B, E: i != null ? this.evList(P, i) : this.lunchE(), k: { i: 0 } }; }
-  fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.real(j, s.E, k, this.step(s.E, k, s.t, hop, this.dur(j))); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
+  fit(s, j) { const k = { i: s.k.i }, hop = this.travel(s.pos, j), sp = this.real(j, s.E, k, this.step(s.E, k, s.t, hop, this.dur(j), j)); return { arr: sp.arr, end: sp.end, hop, ki: k.i, last: s.last }; }
   // Check-out time typed by the dispatcher for today (minutes since midnight), or null.
   coOf(j) { const mt = this.st.meta[j.key]; return mt && mt.stat === 'checkout' && mt.co != null && mt.coDay === this.today() ? +mt.co : null; }
   // Check-in (arrival) time of today, kept after the check-out, or null.
@@ -638,13 +736,16 @@ class Dispatch {
     if (co != null) {
       const ci = this.ciOf(j);
       sp.arr = ci != null && ci <= co ? ci : Math.min(sp.arr, co); sp.end = co;
-      sp.hit = E.filter(x => x.at >= sp.arr && x.at < co); sp.dl = 0;
-      k.i = from(co);   // breaks / problems before the check-out are inside the real time; later ones move the next jobs
+      sp.hit = E.filter(x => x.at >= sp.arr && x.at < co && x.type !== 'mass'); sp.dl = 0;
+      // Breaks / problems before the check-out are inside the real time; later ones move the next jobs. A mass outage
+      // called while the team worked here starts after this job, so it stays for the next job.
+      let n = 0; while (n < E.length && E[n].at < co && !(E[n].type === 'mass' && E[n].at >= sp.arr)) n++;
+      k.i = n;
     } else if (st === 'checkin' || (j.prog && st !== 'start')) {
       const ci = this.ciOf(j);
       if (ci != null) {
         let n = from(ci), end = ci + this.dur(j), dl = 0; const hit = [];
-        while (n < E.length && E[n].at < end) { const x = this.evDur(E[n]); hit.push(E[n++]); end += x; dl += x; }
+        while (n < E.length && E[n].at < end && E[n].type !== 'mass') { const x = this.evDur(E[n]); hit.push(E[n++]); end += x; dl += x; }
         sp.arr = ci; sp.end = end; sp.hit = hit; sp.dl = dl; k.i = n;
       }
       sp.end = Math.max(sp.end, this.nowMin());
@@ -659,12 +760,27 @@ class Dispatch {
   put(s, j, f) { s.ids.push(j.key); s.t = f.end; s.pos = j; s.k.i = f.ki; }
   evDur(e) { return e.end != null ? Math.max(0, e.end - e.at) : Math.max(e.est || 0, this.nowMin() - e.at); }
   // Breaks and problems push back the job they fall in and everything after it.
-  step(E, k, t, hop, dur) {
-    let arr = t + hop, dl = 0, hit = [];
-    while (k.i < E.length && E[k.i].at <= arr) { const x = this.evDur(E[k.i]); hit.push(E[k.i++]); arr += x; dl += x; }
+  // A mass outage that comes before the end of a job that has not started, or that has already begun, takes the team
+  // away first: the job starts after the outage plus the drive (a job still not started is pending, whatever its old ETA). It never interrupts a job (that job is finished first). The planned lunch that
+  // falls inside an outage is not added again.
+  step(E, k, t, hop, dur, j) {
+    let arr = t + hop, dl = 0, hit = [], mEnd = -1, mHop = null;
+    const now = this.nowMin(), takes = x => x.type === 'mass' && (x.at < arr + dur || x.at <= now);
+    for (;;) {
+      // A mass outage further down the list that takes the team before this job: events before it (lunch, breaks) were
+      // taken while the job was still waiting and do not move this job; the outage does.
+      let mi = -1; for (let n = k.i; n < E.length && mi < 0; n++) if (takes(E[n]) && E[n].at > arr) mi = n;
+      if (mi > k.i && E[k.i].at > arr) k.i = mi;
+      if (!(k.i < E.length && (E[k.i].at <= arr || takes(E[k.i])))) break;
+      const ev = E[k.i++];
+      if (ev.planned && ev.at < mEnd) continue;
+      const x = this.evDur(ev); hit.push(ev);
+      if (ev.type === 'mass') { const back = ev.lat != null && j ? this.travel(ev, j) : hop, s0 = Math.max(ev.at, t), na = Math.max(arr, s0 + x + back); dl += na - arr; arr = na; mEnd = s0 + x; if (ev.lat != null && j) mHop = back; }
+      else { arr += x; dl += x; }
+    }
     let end = arr + dur;
-    while (k.i < E.length && E[k.i].at < end) { const x = this.evDur(E[k.i]); hit.push(E[k.i++]); end += x; dl += x; }
-    return { arr, end, dl, hit };
+    while (k.i < E.length && E[k.i].at < end && E[k.i].type !== 'mass') { const ev = E[k.i++]; if (ev.planned && ev.at < mEnd) continue; const x = this.evDur(ev); hit.push(ev); end += x; dl += x; }
+    return { arr, end, dl, hit, mHop };
   }
   nearBase(j) { const BS = this._BS || []; let bi = 0, bt = Infinity; BS.forEach((b, n) => { const t = this.travel(b, j); if (t < bt) { bt = t; bi = n; } }); return bi; }
   draftBases(d, name) {
@@ -1305,9 +1421,9 @@ class Dispatch {
       const tEnd = this.tend(ti), tLast = this.tlast(ti);
       const E = this.evList(P, ti), kk = { i: 0 };
       const rows = ids.map((k, n) => {
-        const j = J.by.get(k), hop = this.travel(pos, j), d = this.km(pos, j), road = this.isRoad(pos, j), sp = this.real(j, E, kk, this.step(E, kk, t, hop, this.dur(j))), arr = sp.arr, end = sp.end, f = [];
+        const j = J.by.get(k), hop = this.travel(pos, j), d = this.km(pos, j), road = this.isRoad(pos, j), sp = this.real(j, E, kk, this.step(E, kk, t, hop, this.dur(j), j)), arr = sp.arr, end = sp.end, f = [];
         const realHit = sp.hit.filter(x => !x.planned), lunch = sp.hit.find(x => x.planned);
-        if (realHit.length) f.push(['warn', 'ETA +' + Math.round(realHit.reduce((a, x) => a + this.evDur(x), 0)) + ' min: ' + realHit.map(x => (x.type === 'break' ? 'break' : 'problem') + ' ' + hm(x.at)).join(', ')]);
+        if (realHit.length) f.push(['warn', 'ETA +' + Math.round(realHit.reduce((a, x) => a + this.evDur(x), 0)) + ' min: ' + realHit.map(x => (x.type === 'break' ? 'break' : x.type === 'mass' ? 'mass outage' : 'problem') + ' ' + hm(x.at)).join(', ')]);
         if (lunch) f.push(['info', 'Lunch ' + hm(lunch.at) + '–' + hm(lunch.end) + ' included']);
         const co = this.coOf(j), dv = Math.round(end - sp.proj);
         const ciM = this.st.meta[k] || {};
@@ -1375,11 +1491,13 @@ class Dispatch {
   breaksOf(P, i) { return ((P.ev || {})[i] || []).filter(x => x.type === 'break').slice().sort((a, b) => a.at - b.at); }
   // Where each break sits in the route: before the first job that starts at or after it, else after the last job.
   breakSlots(P, i, rows) {
-    return this.breaksOf(P, i).map(x => { const n = rows.findIndex(r => r.arr >= x.at); return { idx: n < 0 ? rows.length : n, x }; });
+    return this.evList(P, i).filter(x => !x.planned && (x.type === 'break' || x.type === 'mass'))
+      .map(x => { const n = rows.findIndex(r => r.arr >= x.at); return { idx: n < 0 ? rows.length : n, x }; });
   }
   // Route items in order: job elements with the BREAK elements put in their place.
   withBreaks(P, n, rows, job, brk) {
     const S = this.breakSlots(P, n, rows), out = [];
+    this._late = { n, keys: rows.filter(r => r.arr > this.tlast(n) && !this.locked(r.j)).map(r => r.k) };
     rows.forEach((r, i) => { S.forEach((b, k) => { if (b.idx === i) out.push(brk(b.x, k)); }); out.push(job(r, i)); });
     S.forEach((b, k) => { if (b.idx >= rows.length) out.push(brk(b.x, k)); });
     return out;
@@ -1389,8 +1507,126 @@ class Dispatch {
     const st = now < x.at ? 'starts in ' + dh(x.at - now) : now < end ? 'resting now · back ' + hm(end) : 'done';
     return { range: hm(x.at) + '–' + hm(end) + ' · ' + Math.round(end - x.at) + ' min', st, on: now >= x.at && now < end };
   }
+  /* ---------- mass outage ---------- */
+  // The mass outage of team i that is not over yet (raw event), or null.
+  massOf(P, i) { const now = this.nowMin(); return (((P.ev || {})[i]) || []).find(x => x.type === 'mass' && this.massAt(P, i, x).end > now) || null; }
+  // A dispatcher sends team i to a mass outage: start time (default now), handling time in hours (default massH) and a
+  // short place/area note. A team on site at a WO (checked in, not checked out) finishes it first. Jobs the team was
+  // driving to (On the way) go back to Not started. The outage shows in the route as a MASS OUTAGE HANDLING card and
+  // every ETA after it moves; nothing is reassigned by itself (Defer late WO to H+1 is offered on the card).
+  startMass(P, i, startText, hoursText, note, llText) {
+    const err = this.ui.massErr || (this.ui.massErr = {});
+    if (this.future(P)) return this.block('This plan is for ' + this.fmtDay(P.date) + '. A mass outage can be logged from that day.');
+    if (this.massOf(P, i)) { err[i] = 'This team is already on a mass outage. End it first.'; return this.onChange(); }
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(startText || '').trim());
+    if (!m || +m[1] > 23 || +m[2] > 59) { err[i] = 'Type the start as hh:mm, for example 13:20.'; return this.onChange(); }
+    const at = +m[1] * 60 + +m[2], h = +String(hoursText || '').replace(',', '.');
+    if (!isFinite(h) || h < 0.5 || h > 12) { err[i] = 'Handling time: 0.5 to 12 hours.'; return this.onChange(); }
+    if (at < this.tstart(i)) { err[i] = 'The start cannot be before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
+    const ll = parseLL(llText);
+    if (ll === false) { err[i] = 'Location: paste latitude, longitude, for example -8.6638, 115.1673.'; return this.onChange(); }
+    delete err[i]; this.ui.massFor = null;
+    const J = this._J, ids = P.teams[i] || [];
+    const on = ids.find(k => { const j = J.by.get(k); return j && this.ciOf(j) != null && this.coOf(j) == null; });
+    const back = ids.filter(k => (this.st.meta[k] || {}).stat === 'start');
+    back.forEach(k => { const mt = this.meta(k); mt.stat = 'none'; });
+    if (!P.ev) P.ev = {};
+    const ev = { type: 'mass', at, dur: Math.round(h * 60), fixed: true, src: 'dispatcher', by: this.user || '', note: String(note || '').replace(/\s+/g, ' ').trim().slice(0, 60), after: on || null, ...(ll || {}) };
+    (P.ev[i] || (P.ev[i] = [])).push(ev);
+    P.ev[i].sort((a, b) => a.at - b.at);
+    const eff = this.massAt(P, i, ev), jw = on ? J.by.get(on) : null;
+    this.changed(this.tn(i) + ': sent to a mass outage' + (ev.note ? ' (' + ev.note + ')' : '') + (ll ? ' at ' + ll.lat + ', ' + ll.lng : '') + ', ' + nf1(h).replace('.0', '') + ' h' + (jw ? ', after finishing ' + jw.wo + ' (about ' + hm(eff.at) + ')' : ' from ' + hm(at)) + (back.length ? '; ' + back.map(k => (J.by.get(k) || {}).wo).join(', ') + ' set back to Not started' : '') + '. ETAs after it moved.');
+  }
+  setMassLoc(P, i, ev, text) {
+    const ll = parseLL(text);
+    if (ll === false) return this.block('Location: paste latitude, longitude, for example -8.6638, 115.1673.');
+    if (!ll) { if (ev.lat == null) return this.onChange(); delete ev.lat; delete ev.lng; return this.changed(this.tn(i) + ': mass outage location removed.'); }
+    if (ev.lat === ll.lat && ev.lng === ll.lng) return this.onChange();
+    ev.lat = ll.lat; ev.lng = ll.lng;
+    this.changed(this.tn(i) + ': mass outage location set to ' + ll.lat + ', ' + ll.lng + '. Drive times to and from it are counted.');
+  }
+  // Arrival at / leaving the outage typed by the dispatcher (hh:mm of today, empty clears it).
+  setMassTime(P, i, ev, kind, text) {
+    const v = String(text || '').trim(), word = kind === 'ci' ? 'arrival' : 'leaving time', key = kind === 'ci' ? 'ci' : 'endAt';
+    if (!v) { if (ev[key] == null) return this.onChange(); delete ev[key]; delete ev[kind === 'ci' ? 'ciAuto' : 'coAuto']; return this.changed(this.tn(i) + ': mass outage ' + word + ' cleared.'); }
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(v);
+    if (!m || +m[1] > 23 || +m[2] > 59) return this.block('Use hh:mm, for example 14:35.');
+    const t = +m[1] * 60 + +m[2];
+    if (t > this.nowMin() + 5) return this.block('The ' + word + ' cannot be later than now (' + hm(this.nowMin()) + ').');
+    if (t < ev.at) return this.block('The ' + word + ' cannot be before the call (' + hm(ev.at) + ').');
+    if (kind === 'co' && ev.ci != null && t < ev.ci) return this.block('Leaving cannot be before the arrival (' + hm(ev.ci) + ').');
+    if (kind === 'ci' && ev.endAt != null && t > ev.endAt) return this.block('Arrival cannot be after leaving (' + hm(ev.endAt) + ').');
+    ev[key] = t; delete ev[kind === 'ci' ? 'ciAuto' : 'coAuto'];
+    this.changed(this.tn(i) + ': mass outage ' + word + ' set at ' + hm(t) + '. ETAs after it moved.');
+  }
+  setMassDur(P, i, ev, hoursText) {
+    const h = +String(hoursText || '').replace(',', '.');
+    if (!isFinite(h) || h < 0.5 || h > 12) return this.block('Handling time: 0.5 to 12 hours.');
+    const d = Math.round(h * 60); if (d === ev.dur && ev.endAt == null) return this.onChange();
+    const old = ev.dur; ev.dur = d; delete ev.endAt;
+    this.changed(this.tn(i) + ': mass outage handling time changed from ' + nf1(old / 60).replace('.0', '') + ' h to ' + nf1(h).replace('.0', '') + ' h. ETAs after it moved.');
+  }
+  endMass(P, i, ev) {
+    const eff = this.massAt(P, i, ev), now = Math.floor(this.nowMin());
+    if (now < eff.at) { P.ev[i] = P.ev[i].filter(x => x !== ev); return this.changed(this.tn(i) + ': mass outage cancelled before it started.'); }
+    ev.endAt = now; delete ev.coAuto;
+    this.changed(this.tn(i) + ': mass outage ended at ' + hm(now) + ' after ' + dh(now - eff.at) + '. ETAs after it moved.');
+  }
+  // Jobs of team i that now start after its last-start time go to H+1 (internal reason, aging +200 tomorrow).
+  deferLate(P, i, keys) {
+    const J = this._J, ks = (keys || []).filter(k => (P.teams[i] || []).includes(k) && J.by.has(k) && !this.locked(J.by.get(k)));
+    if (!ks.length) return this.onChange();
+    P.teams[i] = P.teams[i].filter(k => !ks.includes(k));
+    ks.forEach(k => { P.next.push(k); P.why[k] = 'internal'; P.manual[k] = true; });
+    if (!P.teams[i].length) { P.home[i] = null; if (P.role) P.role[i] = null; }
+    this.changed(this.tn(i) + ': ' + ks.length + ' WO that no longer fit the shift after the mass outage deferred to H+1 (' + ks.map(k => J.by.get(k).wo).join(', ') + ').');
+  }
+  massCard(e, P, x, k, row, span) {
+    const now = this.nowMin(), ev = x.orig || x, i = +String(k).split('-')[0];
+    const arrived = ev.ci != null;
+    const st = now < x.at ? (x.wait ? 'goes after finishing ' + x.wait + ' (about ' + hm(x.at) + ')' : 'starts in ' + dh(x.at - now))
+      : now >= x.end ? 'done'
+      : ev.lat != null && !arrived && now < x.arr ? 'driving there · arrives about ' + hm(x.arr) + ' (' + x.drive + ' min)'
+      : ev.lat != null && !arrived ? 'should be there (no arrival yet) · until ' + hm(x.end)
+      : 'handling now · until ' + hm(x.end);
+    const on = now >= x.at && now < x.end, red = '#B42318', ink = '#7A1C12';
+    const late = this._late && this._late.n === i ? this._late.keys : [];
+    const box = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, textAlign: 'center',
+      background: 'repeating-linear-gradient(135deg, #FDF0EE 0 8px, #F9E1DD 8px 16px)', border: '1px ' + (on ? 'solid' : 'dashed') + ' ' + red, borderLeft: '5px solid ' + red, borderRadius: 3 };
+    const ctl = !this.readOnly && now < x.end ? e('span', { key: 'c', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 2, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+      'Handling', e('input', { key: 'd' + (ev.dur || 0), type: 'number', step: 0.5, min: 0.5, max: 12, defaultValue: nf1((ev.dur || 360) / 60).replace('.0', ''), 'aria-label': 'Mass outage handling time in hours',
+        onBlur: ev2 => this.setMassDur(P, i, ev, ev2.target.value), onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); },
+        style: { width: 46, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }), 'h',
+      e('button', { key: 'x', type: 'button', onClick: () => this.endMass(P, i, ev), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: C.white, color: red, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, now < x.at ? 'Cancel' : 'End now')) : null;
+    const lateRow = late.length ? e('span', { key: 'l', style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: red } },
+      late.length + ' WO now start' + (late.length === 1 ? 's' : '') + ' after ' + hm(this.tlast(i)) + ' (too late for this shift)',
+      this.readOnly ? null : e('button', { key: 'dl', type: 'button', onMouseDown: ev2 => ev2.stopPropagation(), onClick: () => this.deferLate(P, i, late), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: red, color: C.white, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Defer them to H+1')) : null;
+    const dv = this.trackerOf(i), ro = this.readOnly, tin = { width: 50, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white };
+    const tBox = (kind, val, auto) => ro ? e('span', { key: kind, style: { font: MONO, color: C.ink } }, (kind === 'ci' ? 'Arrived ' : 'Left ') + (val != null ? hm(val) : '—'))
+      : e('label', { key: kind, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, kind === 'ci' ? 'Arrived' : 'Left',
+        e('input', { key: kind + (val == null ? '' : val), type: 'text', inputMode: 'numeric', maxLength: 5, placeholder: 'hh:mm', defaultValue: val != null ? hm(val) : '', 'aria-label': kind === 'ci' ? 'Arrival at the mass outage' : 'Leaving the mass outage',
+          onBlur: ev2 => { if (ev2.target.value !== (val != null ? hm(val) : '')) this.setMassTime(P, i, ev, kind, ev2.target.value); }, onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); }, style: tin }),
+        auto ? e('span', { style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null);
+    const locRow = e('span', { key: 'loc', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+      ro ? (ev.lat != null ? e('span', { key: 'll', style: { font: MONO } }, ev.lat + ', ' + ev.lng) : e('span', { key: 'll' }, 'No location'))
+        : e('input', { key: 'll' + (ev.lat || ''), type: 'text', maxLength: 80, defaultValue: ev.lat != null ? ev.lat + ', ' + ev.lng : '', placeholder: 'latitude, longitude', 'aria-label': 'Mass outage location',
+          onBlur: ev2 => this.setMassLoc(P, i, ev, ev2.target.value), onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); }, style: { ...tin, width: 170, font: "500 11px 'IBM Plex Mono',ui-monospace,monospace" } }),
+      ev.lat != null ? e('button', { key: 'lc', type: 'button', onClick: () => this.onPan && this.onPan(ev.lat, ev.lng), style: { padding: '1px 8px', border: '1px solid ' + C.badLine, borderRadius: 3, background: C.white, color: ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Locate') : null,
+      ev.lat != null && dv && dv.lat != null ? e('span', { key: 'tk', style: { font: MONO, color: this.metres(dv, ev) <= (+this.st.cfg.massM || 300) ? C.good : ink } },
+        'tracker ' + (this.metres(dv, ev) >= 1000 ? nf1(this.metres(dv, ev) / 1000) + ' km' : this.metres(dv, ev) + ' m') + ' away' + (dv.last ? ' · ' + hm((d => d.getHours() * 60 + d.getMinutes())(new Date(dv.last))) : '')) : null);
+    const timesRow = ev.lat != null || arrived || ev.endAt != null ? e('span', { key: 'tm', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 10, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+      tBox('ci', ev.ci, ev.ciAuto), tBox('co', ev.endAt, ev.coAuto)) : null;
+    const undo = ev.coUndo && ev.endAt == null ? e('span', { key: 'ud', style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: red } }, 'Back at the outage since ' + hm(ev.coUndo.back) + ' after leaving ' + hm(ev.coUndo.left)) : null;
+    const inner = [e('span', { key: 'w', style: { font: "700 12.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.18em', color: ink, paddingLeft: '0.18em' } }, 'MASS OUTAGE HANDLING'),
+      ev.note ? e('span', { key: 'n', style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, overflowWrap: 'anywhere' } }, ev.note) : null,
+      e('span', { key: 'r', style: { font: MONO, color: ink } }, hm(x.at) + '–' + hm(x.end) + ' · ' + dh(x.end - x.at) + ' · ' + st + (ev.by ? ' · ' + ev.by : '')),
+      locRow, timesRow, undo, ctl, lateRow];
+    if (row) return e('tr', { key: 'brk' + k }, e('td', { colSpan: span, style: { padding: '4px 8px', borderBottom: '1px solid ' + C.soft } }, e('div', { style: { ...box, padding: '7px 8px' } }, ...inner)));
+    return e('div', { key: 'brk' + k, style: { ...box, padding: '9px 9px', marginBottom: 6, minHeight: 48 } }, ...inner);
+  }
   // The BREAK card that sits between the jobs of a route (board) or the BREAK row (list).
   breakCard(e, x, k, row, span) {
+    if (x.type === 'mass') return this.massCard(e, this._ctx && this._ctx.P, x, k, row, span);
     const b = this.breakLabel(x);
     const bg = 'repeating-linear-gradient(135deg, #EEF1F5 0 8px, #E2E7EE 8px 16px)';
     const inner = [e('span', { key: 'w', style: { font: "700 13px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.35em', color: '#2F3B4A', paddingLeft: '0.35em' } }, 'BREAK'),
@@ -1663,7 +1899,7 @@ class Dispatch {
     }
     // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
     const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
-    if (this.active) { this.autoCheckout(P); this.autoCheckin(P); }
+    if (this.active) { this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); }
     const T = this.calc(P, B);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
@@ -1994,12 +2230,42 @@ class Dispatch {
     return e('div', { key: 'ev', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
       this.readOnly ? null : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
         b('br', br ? (later ? 'Cancel break ' + hm(br.at) : 'End break') : open ? 'Break…' : 'Break', !!br, () => br ? this.endEv(P, n, 'break') : (this.ui.brkFor = open ? null : n, this.onChange())),
-        b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem'))),
+        b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem')),
+        (ms => e('button', { key: 'ms', type: 'button', title: 'Send this team to a mass outage (gangguan massal)',
+          onClick: () => { if (ms) return this.endMass(P, n, ms); this.ui.massFor = this.ui.massFor === n ? null : n; this.onChange(); },
+          style: { padding: '2px 8px', border: '1px solid #B42318', borderRadius: 3, background: ms ? '#B42318' : C.white, color: ms ? C.white : '#B42318', font: SANS, fontSize: 11.5, fontWeight: 600, cursor: 'pointer' } },
+          ms ? (this.nowMin() < this.massAt(P, n, ms).at ? 'Cancel mass outage' : 'End mass outage') : this.ui.massFor === n ? 'Mass outage…' : 'Mass outage'))(this.massOf(P, n))),
       form,
+      this.massForm(e, P, n, b),
       ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.planned ? C.muted : x.type === 'break' ? (this.breakLabel(x).on ? '#2F3B4A' : C.muted) : x.end == null ? C.bad : C.muted, fontWeight: !x.planned && x.type === 'break' && this.breakLabel(x).on ? 700 : 500 } },
         x.planned ? 'Lunch ' + hm(x.at) + '–' + hm(x.end) + ' · ' + Math.round(this.evDur(x)) + ' min · planned'
+          : x.type === 'mass' ? 'Mass outage ' + hm(x.at) + '–' + hm(x.end) + ' · ' + dh(x.end - x.at) + (x.note ? ' · ' + x.note : '') + ' · ' + (x.by || 'dispatcher')
           : x.type === 'break' ? 'Break ' + this.breakLabel(x).range + ' · ' + this.breakLabel(x).st + ' · ' + (x.src === 'app' ? 'app' : x.by || x.src || 'dispatcher')
           : 'Problem ' + hm(x.at) + '–' + (x.end != null ? hm(x.end) : 'now') + ' · ' + Math.round(this.evDur(x)) + ' min' + (x.end == null && this.evDur(x) <= (x.est || 0) ? ' (est.)' : '') + ' · ' + (x.src || 'dispatcher'))));
+  }
+  massForm(e, P, n, b) {
+    if (this.readOnly || this.ui.massFor !== n) return null;
+    const err = (this.ui.massErr || {})[n], J = this._J, now = Math.floor(this.nowMin());
+    const def = hm(Math.max(this.tstart(n), Math.min(now, this.tend(n) - 1))), hrs = nf1(+this.st.cfg.massH || 6).replace('.0', '');
+    const on = (P.teams[n] || []).map(k => J.by.get(k)).find(j => j && this.ciOf(j) != null && this.coOf(j) == null);
+    const tx = { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white };
+    const go = el => { const f = el.closest('[data-mass]'); this.startMass(P, n, f.querySelector('[name=ms]').value, f.querySelector('[name=mh]').value, f.querySelector('[name=mn]').value, f.querySelector('[name=ml]').value); };
+    return e('div', { key: 'mf', 'data-mass': '1', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 8px', border: '1px solid #B42318', borderRadius: 3, background: '#FDF0EE' } },
+      e('span', { style: { font: "700 11px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.12em', color: '#7A1C12' } }, 'MASS OUTAGE HANDLING'),
+      e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: C.ink } }, 'Called at',
+        e('input', { name: 'ms', type: 'text', inputMode: 'numeric', defaultValue: def, maxLength: 5, placeholder: 'hh:mm', 'aria-label': 'Mass outage start', style: { ...tx, width: 52 } }),
+        'for', e('input', { name: 'mh', type: 'number', step: 0.5, min: 0.5, max: 12, defaultValue: hrs, 'aria-label': 'Handling time in hours', style: { ...tx, width: 52 } }), 'h'),
+      e('input', { name: 'ml', type: 'text', maxLength: 80, placeholder: 'Location: lat, lng (from Google Maps)', 'aria-label': 'Mass outage location (latitude, longitude)',
+        style: { ...tx, font: "500 12px 'IBM Plex Mono',ui-monospace,monospace", width: '100%', boxSizing: 'border-box' } }),
+      e('input', { name: 'mn', type: 'text', maxLength: 60, placeholder: 'Area / ODP / ticket (optional)', 'aria-label': 'Mass outage place or note',
+        onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
+        style: { ...tx, font: "400 12px 'IBM Plex Sans',system-ui,sans-serif", width: '100%', boxSizing: 'border-box' } }),
+      on ? e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'On site at ' + on.wo + ': the team finishes it first, then goes (about ' + hm(this.massEff({ at: now, dur: 60, after: on.key }, this.baseEv(P, n)).at) + ').') : null,
+      e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Every ETA after it moves. Jobs this team was driving to go back to Not started. With a location, the outage shows on the map, drives to and from it are counted, and the tracker checks the team in and out.'),
+      e('span', { style: { display: 'flex', gap: 6 } },
+        e('button', { type: 'button', onClick: ev => go(ev.currentTarget), style: { padding: '3px 10px', border: '1px solid #B42318', borderRadius: 3, background: '#B42318', color: C.white, font: SANS, fontWeight: 600, cursor: 'pointer' } }, 'Send to mass outage'),
+        b('mc', 'Cancel', false, () => { this.ui.massFor = null; if (this.ui.massErr) delete this.ui.massErr[n]; this.onChange(); })),
+      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
   }
   nameInput(e, n) {
     if (this.readOnly) return e('span', { key: 'nm' + n, style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.tn(n));
@@ -2185,6 +2451,9 @@ class Dispatch {
         ...[1, 2, 3, 5].map(v => chip('gk' + v, d.gridKm === v, v + ' km', null, null, () => set('gridKm', v)))]),
       ...crewRows,
       row('Lunch', [lab('Planned lunch from', 'lu1'), time('lunchAt'), lab('for', 'lu2'), num('lunchMin', 56, 5), lab('min in the default shift; other shifts take it the same time after their start (0 = none). Replaced by the real break once the technician app reports one.', 'lu3')]),
+      row('Mass outage', [lab('Default handling time', 'mo1'), num('massH', 56, 0.5), lab('h. Used when a dispatcher sends a team to a mass outage (can be changed per outage). A team working on a WO finishes it first, then goes.', 'mo2')]),
+      row('Outage area', [lab('With a location, the team is checked in at the outage when its tracker is parked within', 'ma1'), num('massM', 64, 50),
+        lab('m of it, and the outage ends when the tracker has left that area (two positions outside, driving, at least the minimum time on site of Auto check-out). Back on site applies too. 0 = off. An outage is an area (cable route, ODP, poles), so this radius is wider than a WO\u2019s.', 'ma2')]),
       row('Breaks', [lab('Break length', 'be'), num('breakEst', 56, 5), lab('min · Problem estimate', 'pe'), num('probEst', 56, 5),
         lab('min. A break typed by a dispatcher lasts the break length from its start time (shown as a BREAK card in the route). Breaks and problems from the technician app use these estimates until the app sends the end.', 'bx')]),
       row('Road', [chip('ro', d.roadOn, 'Road drive times (OSRM)', null, null, () => set('roadOn', !d.roadOn)),
@@ -2291,7 +2560,7 @@ class Dispatch {
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
   // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
   replanKeys(base, d) {
-    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin', 'coBack'].includes(k));
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin', 'coBack', 'massH', 'massM'].includes(k));
     if (keys.includes('crew')) {
       const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
       if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
@@ -2333,7 +2602,7 @@ class Dispatch {
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
-      breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst),
+      breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst), massH: clean(d.massH, 0.5, 12, DEF.massH), massM: Math.round(clean(d.massM, 0, 2000, DEF.massM)),
       gridMin: Math.round(clean(d.gridMin, 0, 50, DEF.gridMin)), floatPct: clean(d.floatPct, 0, 50, DEF.floatPct),
       lunchAt: clean(d.lunchAt, 0, 1439, DEF.lunchAt), lunchMin: clean(d.lunchMin, 0, 180, DEF.lunchMin), slaB0: clean(d.slaB0, 0, 5000, DEF.slaB0), slaBd: clean(d.slaBd, 0, 5000, DEF.slaBd),
       sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
@@ -2365,7 +2634,7 @@ class Dispatch {
   }
   layer() {
     const x = this._ctx; if (!x || !this._J || !x.P || !this._cells) return null;
-    const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length + '|' + [...this.ui.hidden].join(',') + '|' + this.ui.hideNext;
+    const k = this.type + '|' + this.ver + '|' + this.road.ver + '|' + x.name + '|' + this._J.list.length + '|' + [...this.ui.hidden].join(',') + '|' + this.ui.hideNext + '|' + Math.floor(this.nowMin() / 5);
     if (this._layer && this._layer.key === k) return this._layer;
     const J = this._J, P = x.P, cfg = this.st.cfg;
     const stTxt = j => { const mt = this.st.meta[j.key] || {}; return [mt.stat && mt.stat !== 'none' ? STAT[mt.stat] : '', mt.conf && mt.conf !== 'none' ? CONF[mt.conf] : ''].filter(Boolean).join(' · '); };
@@ -2380,6 +2649,13 @@ class Dispatch {
       teams: P.teams.map((ids, n) => this.ui.hidden.has(n) ? null : ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, this.tbase(P, n))) || null : null,
         pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), mark: this.markOf(j) })) })).filter(t => t && t.pts.length),
       next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j) })),
+      // Mass outages with a location: one marker per outage in the team colour, with its area radius.
+      mass: P.teams.map((ids, n) => (((P.ev || {})[n]) || []).filter(x => x.type === 'mass' && x.lat != null).map(x => {
+        const f = this.massAt(P, n, x), nowM = this.nowMin(), live = nowM < f.end;
+        const st = !live ? 'done ' + hm(f.end) : x.ci != null ? 'handling since ' + hm(x.ci) + ' · until ' + hm(f.end) : nowM < f.at ? 'starts about ' + hm(f.at) : nowM < f.arr ? 'on the way · arrives about ' + hm(f.arr) : 'should be there, no arrival yet · until ' + hm(f.end);
+        return { lat: x.lat, lng: x.lng, live, r: +cfg.massM || 0, color: this.pal[n % this.pal.length],
+          title: 'MASS OUTAGE · ' + this.tn(n) + (x.note ? ' · ' + x.note : '') + ' · ' + hm(f.at) + '–' + hm(f.end) + ' · ' + st };
+      })).flat(),
     };
     return this._layer;
   }

@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-30 (mass outage location, map, automatic arrival and leaving)
+
+### Added
+
+- **Mass outage location.** The Mass outage form has a **Location** field: paste latitude, longitude from Google Maps (for example `-8.6638, 115.1673`, or a maps link with `@lat,lng` / `q=lat,lng`). Only points in Indonesia are accepted. It can also be added, changed or removed later on the outage card.
+- **On the IDS map:** a red **!** marker ringed in the team colour, with a dashed circle for the outage area. The tooltip shows team, note, time range and status (on the way · arrives about 11:41 / handling since 11:45 · until 17:45 / should be there, no arrival yet / done). The live technician trackers on the same map show where the team in charge is. **Locate** on the card moves the map to the outage. The card also shows how far the team's tracker is from it.
+- **Drive times to and from the outage are counted.** The team drives from the WO it finishes first (else the last WO it checked in at, else its hub); handling starts on arrival and lasts the handling time; the next WO's ETA is the outage end plus the drive **from the outage** to that WO. Without a location, nothing changes from before.
+- **Automatic arrival and leaving** (Settings → Outage area, **300 m** by default, wider than a WO because an outage is a cable route / ODP / poles):
+  - **Arrived**: the team's tracker is parked inside the area, after the WO it had to finish.
+  - **Left**: two positions in a row outside the area, driving (or moving away in slow traffic), at least the Auto check-out minimum time after arrival. The leaving time is worked back from the first position outside. GPS jumps are ignored.
+  - **Back on site**: parked inside the area again within the Back on site time: leaving undone, "Back at the outage since …" on the card. Not when the team has checked in at a WO since.
+  - **Arrived** and **Left** are also hh:mm boxes on the card for the dispatcher (AUTO mark when set by the tracker). End now still ends the outage by hand.
+- `index.html`: IDS and map module versions bumped so browsers load the new files.
+
+
+## 2026-10-30 (mass outage handling)
+
+### Added
+
+- **Mass outage** button on every team, next to Break and Problem (board and list). A dispatcher sends the team to a mass outage (gangguan massal): called-at time (default now), handling time (default **6 h**, Settings → Mass outage, 0.5 to 12 h) and an optional area / ODP / ticket note (60 characters).
+  - **A team on site finishes its WO first.** When the team is checked in at a WO (not checked out), the outage starts at that WO's check-out, or at its projected finish (with breaks inside it, never before now) until then. The card says "goes after finishing WWR-… (about 14:00)".
+  - **A team on the way leaves its trip.** Jobs the team was driving to go back to Not started.
+  - **The route shows a red striped MASS OUTAGE HANDLING card** (board) or row (list) after the job on site, with the note, time range, status ("handling now · until 20:00"), who sent the team, and the handling time, which can be changed on the card. **End now** ends it early; **Cancel** removes it before it starts. The team header shows Cancel / End mass outage.
+  - **ETAs follow the existing formula:** every job not started yet comes after the outage: outage end + drive, then work time, breaks and the next drives as before. The planned lunch inside the outage is not added again. Nothing is reassigned by itself; the card counts the WO that now start after the team's last-start time and offers **Defer them to H+1** (internal reason, aging +200 tomorrow). A check-out of the team later recalculates the plan as usual.
+  - Shared with every screen and recorded in the change log. One mass outage per team at a time.
+- The drive after an outage is counted from the team's previous stop (the outage location is not on the map).
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+
 ## 2026-10-30 (keep last night's plan)
 
 ### Fixed
