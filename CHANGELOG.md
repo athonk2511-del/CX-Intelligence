@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-30 (keep last night's plan)
+
+### Fixed
+
+- **Morning asked for a re-plan of a plan made the evening before.** When dispatchers arranged tomorrow's work on that day's board (without pressing Prepare plan first), the plan stayed dated that day. The next morning the board only offered Make today's plan, which built the routes again from scratch, so the order sent to the field changed.
+
+### Added
+
+- **"Yes: keep this plan for today (same order)"** on the morning card when the last plan is from an earlier day. The plan becomes today's plan with the same teams and the same order, no re-plan:
+  - work orders checked out on that day are taken out (and not brought back while the data still lists them as open);
+  - jobs started or checked in on that day but not finished get aging +200 (they slipped a day); jobs nobody touched keep their score;
+  - customer confirmations, notes and hand moves stay; technician statuses, check-in/out times and breaks of that day are cleared;
+  - closed work orders drop out and new ones join the end of a fitting route, as on any morning.
+- **"No: make a new plan for today"** needs two clicks now (red "Click again: make a new plan (order will change)"), so the order sent to the field is not replaced by accident.
+- **Evening reminder:** from 30 minutes before the last shift end, the Plan row shows "Planning tomorrow? Press Prepare plan first: this board is today's plan."
+- Plans carry the planner version that made them (`2026-10-30a`), to tell from the shared plan which screens are up to date.
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+
 ## 2026-10-29 (back on site, GPS jumps)
 
 ### Added

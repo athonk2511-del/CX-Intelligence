@@ -62,6 +62,8 @@ const URG = {
   done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
+// Version of this planner, stamped on plans it makes (shows in the change log which screens are up to date).
+const MOD_V = '2026-10-30a';
 // Longest note on a work order: about four lines on a board card, five in the list, so it is always shown in full.
 const NOTE_MAX = 140;
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
@@ -966,7 +968,7 @@ class Dispatch {
     const JJ = done && done.length ? { ...J, list: J.list.filter(j => !gone[j.key]) } : J;
     const P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: !ahead && this.nowMin() >= this.st.cfg.rebAt ? day : null };
     this.autoPlan(P, JJ, B, false);
-    P.dataAt = this.dataAt || 0; P.gone = gone; P.goneV = 2; P.born = now; P.touched = false;
+    P.dataAt = this.dataAt || 0; P.gone = gone; P.goneV = 2; P.born = now; P.touched = false; P.v = MOD_V;
     this.note(this.type + ' plan for ' + name + ' on ' + this.fmtDay(day) + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
     this.save();
     return P;
@@ -992,6 +994,39 @@ class Dispatch {
     this.note('Plan prepared by hand for ' + this.fmtDay(day) + (live ? '; the plan of ' + this.fmtDay(live.date) + ' was closed' : '') + (done.length ? ' (' + done.length + ' checked-out WO left out)' : '') + '.');
     this.ui.prepDay = null; this.stale = null;
     this._ctx.P = P; this.ver++; this.save(); this.onChange();
+  }
+  // "Keep this plan for today": the last plan is from an earlier day, but it is the schedule the dispatchers made the
+  // evening before and sent to the field (planned on that day's board instead of with Prepare plan). It becomes today's
+  // plan with the same teams and the same order: no re-plan. Work orders checked out on that day are taken out. Jobs that
+  // were started or checked in on that day but not finished slipped a day: aging +200 (internal), like the day close.
+  // Jobs nobody touched keep their score (no aging). Customer confirmations and notes stay (the evening follow-up is
+  // for today); technician statuses, check-in/out times and breaks of that day are cleared. Closed work orders drop out
+  // and new ones are added at the end of a fitting route, as on any morning.
+  carryOver() {
+    const x = this._ctx, today = this.today();
+    if (!x || !this._J || this.readOnly || this.behind) return;
+    const P = this.st.plans[x.name];
+    if (!P || !Array.isArray(P.home) || P.date >= today) return;
+    const J = this._J, from = P.date, done = [], slip = [];
+    P.teams = P.teams.map(ids => ids.filter(k => {
+      const st = (this.st.meta[k] || {}).stat;
+      if (st === 'checkout') { done.push(k); return false; }
+      if (st === 'start' || st === 'checkin') { const mt = this.meta(k); if (J.by.has(k) && !mt.aging.includes(from)) { mt.aging.push(from); slip.push(k); } }
+      return true;
+    }));
+    P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; if (P.role) P.role[i] = null; } });
+    const inPlan = new Set([...P.teams.flat(), ...P.next]);
+    Object.keys(this.st.meta).forEach(k => {
+      const mt = this.st.meta[k];
+      if (!J.by.has(k) && !inPlan.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
+      mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
+    });
+    const gone = P.gone || (P.gone = {}), now = Date.now();
+    done.forEach(k => { gone[k] = now; });
+    P.date = today; P.ev = {}; P.prov = false; P.reb = this.nowMin() >= this.st.cfg.rebAt ? today : null; P.touched = true; P.v = MOD_V;
+    this.stale = null; this.ui.newArmed = false;
+    this.note('Plan of ' + this.fmtDay(from) + ' kept for ' + this.fmtDay(today) + ' as it was (same teams and order, no re-plan)' + (done.length ? '; ' + done.length + ' checked-out WO taken out' : '') + (slip.length ? '; ' + slip.length + ' WO started but not finished on ' + this.fmtDay(from, true) + ' got aging +' + AGING : '') + '. Customer confirmations and notes kept.');
+    this.ver++; this.save(); this.onChange();
   }
   // Short message for actions that are not possible right now (shown on the Shared line).
   block(text) { this.sh.msg = { text, at: Date.now() }; this.onChange(); }
@@ -1603,13 +1638,22 @@ class Dispatch {
     this._devs = ctx.devices || null;
     const P = this.plan(m, bi, J, B);
     if (!P && this.stale) {
-      const txt = 'The last ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' is for ' + this.fmtDay(this.stale) + '. A new day never replaces a plan by itself' + (this.readOnly
-        ? ': the board appears as soon as a dispatcher prepares today\u2019s plan.'
-        : '. Make today\u2019s plan now (jobs not done carry over with aging; that day\u2019s statuses and confirmations are cleared). Next time, use Prepare plan the evening before, so the morning keeps the plan you sent to the field.');
-      if (this.readOnly) return note('Shared plan', txt, C.muted);
+      const old = this.st.plans[m.branches[bi]] || {}, nJob = (old.teams || []).flat().length, nMan = Object.keys(old.manual || {}).length;
+      const nConf = (old.teams || []).flat().filter(k => { const c = (this.st.meta[k] || {}).conf; return c && c !== 'none'; }).length;
+      if (this.readOnly) return note('Shared plan', 'The last ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' is for ' + this.fmtDay(this.stale) + '. The board appears as soon as a dispatcher confirms today\u2019s plan.', C.muted);
+      const P0 = { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: C.text };
+      const armed = this.ui.newArmed;
+      const b = (label, fn, dark, extra) => e('button', { type: 'button', onClick: fn, style: { padding: '6px 12px', border: '1px solid ' + (dark ? C.ink : C.line), borderRadius: 3, background: dark ? C.ink : C.white, color: dark ? C.white : C.ink, font: SANS, cursor: 'pointer', ...(extra || {}) } }, label);
       return { kpis: [], cards: [host.card('Shared plan', { span: 12, body: e('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 } },
-        e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: C.text } }, txt),
-        e('button', { type: 'button', onClick: () => this.prepare(this.today()), style: { padding: '5px 11px', border: '1px solid ' + C.ink, borderRadius: 3, background: C.ink, color: C.white, font: SANS, cursor: 'pointer' } }, 'Make today\u2019s plan (' + this.fmtDay(this.today()) + ')')) })] };
+        e('p', { style: P0 }, 'The last ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' is dated ' + this.fmtDay(this.stale) + ' (' + nJob + ' jobs in teams' + (nMan ? ', ' + nMan + ' moved by hand' : '') + (nConf ? ', ' + nConf + ' customer confirmations' : '') + '). A new day never replaces a plan by itself.'),
+        e('p', { style: { ...P0, color: C.ink, fontWeight: 600 } }, 'Was this plan made last night for today and already sent to the field?'),
+        e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' } },
+          b('Yes: keep this plan for today (same order)', () => this.carryOver(), true),
+          b(armed ? 'Click again: make a new plan (order will change)' : 'No: make a new plan for today', () => {
+            if (!armed) { this.ui.newArmed = true; clearTimeout(this._narm); this._narm = setTimeout(() => { this.ui.newArmed = false; this.onChange(); }, 6000); return this.onChange(); }
+            this.ui.newArmed = false; this.prepare(this.today());
+          }, false, armed ? { background: C.bad, borderColor: C.bad, color: C.white } : null)),
+        e('p', { style: { ...P0, fontSize: 12, color: C.muted } }, 'Keep: same teams and order; checked-out WO taken out; jobs started but not finished on ' + this.fmtDay(this.stale, true) + ' get aging +' + AGING + '; confirmations and notes stay; closed WO drop out and new WO join the end of a route. New plan: jobs not done carry over with aging, confirmations are cleared, the planner builds the routes again, so the order can change. Next time, press Prepare plan before planning tomorrow in the evening.')) })] };
     }
     if (!P) return note('Shared plan', 'No ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' today yet. It appears here as soon as a dispatcher opens IDS.', C.muted);
     this._ctx.P = P;
@@ -1673,6 +1717,8 @@ class Dispatch {
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
         this.readOnly ? e('span', { key: 'ro', style: { padding: '2px 8px', borderRadius: 3, background: C.soft, color: C.ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, 'View only') : null,
         this.readOnly ? null : btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
+        !this.readOnly && P.date === this.today() && this.nowMin() >= Math.max(...P.teams.map((t, i) => this.tend(i)), cfg.end) - 30
+          ? e('span', { key: 'eve', style: { padding: '2px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.warnBg, color: C.warn, font: SANS } }, 'Planning tomorrow? Press Prepare plan first: this board is today\u2019s plan.') : null,
         !this.readOnly && P.date === this.today() ? (() => {
           const tgt = this.ui.prepDay && this.ui.prepDay > this.today() ? this.ui.prepDay : this.dayAfter(1), on = this.ui.prepArmed;
           return e('span', { key: 'prep', style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
