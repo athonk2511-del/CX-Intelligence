@@ -63,7 +63,7 @@ const URG = {
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Version of this planner, stamped on plans it makes (shows in the change log which screens are up to date).
-const MOD_V = '2026-10-30c';
+const MOD_V = '2026-10-30d';
 // Longest note on a work order: about four lines on a board card, five in the list, so it is always shown in full.
 const NOTE_MAX = 140;
 // Built-in hubs per branch. The first hub is the default: every team departs from it unless another hub is assigned.
@@ -2048,7 +2048,7 @@ class Dispatch {
       host.card('Dispatch board', {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          e('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, this.layoutToggle(e)),
+          e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
@@ -2057,6 +2057,220 @@ class Dispatch {
     // Dispatchers (non-admin): the map and the dispatch board only; team setup opens from the map controls.
     if (this.limited) return { kpis: [], cards: [cards[0], cards[2]] };
     return { kpis, cards };
+  }
+
+  /* ---------- search: where is a customer in today's plan ---------- */
+  // Technician status of a job as one line for people: label, colour tone and the time behind it.
+  woState(P, j, r, T) {
+    const mt = this.st.meta[j.key] || {}, ci = this.ciOf(j), co = this.coOf(j), now = this.nowMin();
+    if (co != null) return { label: 'Checked out', tone: 'done', t: 'in ' + (ci != null ? hm(ci) : '—') + ' · out ' + hm(co), rank: 3 };
+    if (mt.stat === 'checkin' || ci != null) return { label: 'On site', tone: 'good', t: 'checked in ' + (ci != null ? hm(ci) : '—') + (r ? ' · done about ' + hm(r.end) : ''), rank: 0 };
+    if (mt.stat === 'start') return { label: 'On the way', tone: 'acc', t: r ? 'arrives about ' + hm(r.arr) : '', rank: 1 };
+    const ti = this.teamOf(P, j.key);
+    if (ti != null) {
+      const ms = this.massOf(P, ti), br = this.activeEv(P, ti, 'break');
+      if (ms && now >= this.massAt(P, ti, ms).at) return { label: 'Waiting · mass outage', tone: 'bad', t: 'team on a mass outage until ' + hm(this.massAt(P, ti, ms).end), rank: 2 };
+      if (br && now >= br.at) return { label: 'Waiting · team break', tone: 'warn', t: 'team back ' + hm(br.end != null ? br.end : br.at + this.evDur(br)), rank: 2 };
+    }
+    if (r && r.arr < now - 15) return { label: 'Scheduled · late', tone: 'warn', t: 'ETA ' + hm(r.arr) + ' passed, no check-in', rank: 2 };
+    return { label: 'Scheduled', tone: null, t: r ? 'ETA in ' + dh(Math.max(0, r.arr - now)) : '', rank: 2 };
+  }
+  // Every open WO of this type matching the text (CID, user ID, WO number, name, area), with where it is today.
+  searchHits(P, T, q) {
+    q = String(q || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    const J = this._J, rowOf = new Map();
+    T.forEach((t, i) => t.rows.forEach((r, n) => rowOf.set(r.k, { i, n, r })));
+    const out = [];
+    J.list.forEach(j => {
+      const f = [j.cid, j.uid, j.wo, j.name, j.area].map(v => String(v || '').toLowerCase());
+      if (!f.some(v => v.includes(q))) return;
+      const exact = f.slice(0, 3).some(v => v === q);
+      const at = rowOf.get(j.key), nx = P.next.indexOf(j.key);
+      out.push({ j, at, nx, exact });
+    });
+    return out.sort((a, b) => (b.exact - a.exact) || ((a.at ? a.at.r.arr : 1e9) - (b.at ? b.at.r.arr : 1e9))).slice(0, 12);
+  }
+  // Scroll the board (or list) to a job and outline it for a few seconds.
+  showOnBoard(j) {
+    this.ui.hl = j.key; this.onChange();
+    clearTimeout(this._hlT); this._hlT = setTimeout(() => { if (this.ui.hl === j.key) { this.ui.hl = null; this.onChange(); } }, 8000);
+    setTimeout(() => { try { const el = document.getElementById('ids-wo-' + this.type + '-' + j.key); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }); } catch (x) {} }, 60);
+  }
+  searchBox(e, P, T, pill) {
+    const q = this.ui.findQ || '', hits = this.searchHits(P, T, q), tq = q.trim();
+    const toneC = { good: C.good, acc: C.accDeep, bad: C.bad, warn: C.warn, done: C.muted };
+    const input = e('input', { key: 'fq', type: 'search', value: q, placeholder: 'Find a customer: CID, user ID, WO, name…', 'aria-label': 'Find a customer in today\u2019s plan',
+      onChange: ev => { this.ui.findQ = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Escape') { this.ui.findQ = ''; this.onChange(); } if (ev.key === 'Enter' && hits[0] && hits[0].at) this.showOnBoard(hits[0].j); },
+      style: { width: '100%', boxSizing: 'border-box', padding: '7px 10px', border: '1px solid ' + (tq ? C.ink : C.line), borderRadius: 3, background: C.white, color: C.ink, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } });
+    const res = tq.length < 2 ? null : !hits.length
+      ? e('div', { key: 'nr', style: { padding: '8px 10px', border: '1px solid ' + C.line, borderTop: 'none', background: C.white, font: SANS, color: C.muted } }, 'No open ' + this.type + ' work order for "' + tq + '" in ' + ((this._ctx && this._ctx.name) || 'this branch') + '. The customer may have no open ' + this.type + ' WO, or it belongs to the other IDS board.')
+      : e('div', { key: 'rs', style: { border: '1px solid ' + C.line, borderTop: 'none', background: C.white, maxHeight: 380, overflowY: 'auto' } },
+        ...hits.map(h => {
+          const j = h.j, mt = this.st.meta[j.key] || {}, r = h.at ? h.at.r : null, st = this.woState(P, j, r, T), ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
+          const where = h.at ? this.tn(h.at.i) + ' · stop ' + (h.at.n + 1) + ' of ' + T[h.at.i].rows.length + ' · ETA ' + hm(r.arr)
+            : h.nx >= 0 ? 'Deferred to H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request' : 'internal reason') : 'Not in today\u2019s plan';
+          return e('div', { key: j.key, style: { display: 'grid', gridTemplateColumns: 'minmax(170px,1.1fr) minmax(190px,1.3fr) minmax(150px,1fr) auto', gap: '4px 12px', alignItems: 'center', padding: '8px 10px', borderTop: '1px solid ' + C.soft, borderLeft: '4px solid ' + ug.c } },
+            e('div', { style: { minWidth: 0 } },
+              e('div', { style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (j.uid || '—') + ' · CID ' + j.cid),
+              e('div', { style: { font: MONO, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, j.wo + ' · ' + (j.name || '—') + (j.area ? ' · ' + j.area : ''))),
+            e('div', { style: { minWidth: 0 } },
+              e('div', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: h.at ? C.ink : h.nx >= 0 ? C.warn : C.muted } }, where),
+              e('div', { style: { font: MONO, color: C.muted } }, j.cat + ' · ' + j.tier + ' · ' + ug.label + (mt.conf && mt.conf !== 'none' ? ' · customer: ' + CONF[mt.conf] : ''))),
+            e('div', { style: { minWidth: 0 } },
+              e('div', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: toneC[st.tone] || C.text } }, st.label),
+              e('div', { style: { font: MONO, color: C.muted } }, st.t),
+              mt.note ? e('div', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.accDeep, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: mt.note }, 'Note: ' + mt.note) : null),
+            e('div', { style: { display: 'flex', gap: 4 } },
+              h.at || h.nx >= 0 ? e('button', { type: 'button', onClick: () => this.showOnBoard(j), style: { padding: '3px 9px', border: '1px solid ' + C.ink, borderRadius: 3, background: C.ink, color: C.white, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap' } }, 'Show on board') : null,
+              e('button', { type: 'button', onClick: () => this.locate(j), style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, 'Locate')));
+        }));
+    return e('div', { key: 'find', style: { flex: '1 1 420px', maxWidth: 820, display: 'flex', flexDirection: 'column' } }, input, res);
+  }
+
+  /* ---------- arrivals board (airport style, read only) ---------- */
+  // Board settings of this screen (sort, filters, page time, rows): kept in this browser only.
+  arrPrefs() {
+    if (!this._arrP) { const v = store.load('gx.ids.arr.' + this.type) || {}; this._arrP = { sort: 'eta', team: 'all', status: 'all', area: 'all', sec: 15, rows: 'auto', ...v }; }
+    return this._arrP;
+  }
+  setArr(patch) { Object.assign(this.arrPrefs(), patch); store.save('gx.ids.arr.' + this.type, this._arrP); this.ui.arrPage = 0; this._arrAt = Date.now(); this.onChange(); }
+  // One timer per board: turns the page every `sec` seconds and keeps the clock and the statuses fresh.
+  arrTimer() {
+    if (this._arrT) return;
+    this._arrAt = Date.now(); this._arrMin = -1;
+    this._arrT = setInterval(() => {
+      if (!this.arrOn) return;
+      const pr = this.arrPrefs(), now = Date.now(), min = Math.floor(now / 30000);
+      let ch = false;
+      if (!this.ui.arrPause && this._arrPages > 1 && now - this._arrAt >= Math.max(5, +pr.sec || 15) * 1000) { this.ui.arrPage = ((this.ui.arrPage || 0) + 1) % this._arrPages; this._arrAt = now; ch = true; }
+      if (min !== this._arrMin) { this._arrMin = min; ch = true; }
+      if (ch) this.onChange();
+    }, 1000);
+  }
+  arrivals(m, ctx) {
+    const R = this.R, e = R.createElement, host = ctx.host;
+    const bi = this.branchIdx(m, ctx.hostBi), name = m.branches[bi];
+    const note = (text, tone) => ({ kpis: [], cards: [host.card(this.type + ' arrivals board', { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: tone || C.muted } }, text) })] });
+    if (this.api && !this.sh.ready) { this.shPoll(true); return note('Loading the shared ' + this.type + ' plan…'); }
+    if (ctx.dataProblem) return note('The work-order files could not be read on this screen. ' + ctx.dataProblem, C.bad);
+    const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0];
+    this.ensureRoad(J, B);
+    this._devs = ctx.devices || null;
+    const P0 = this.st.plans[name], today = this.today();
+    if (!P0 || !Array.isArray(P0.home)) return note('No ' + this.type + ' plan for ' + name + ' yet. The board fills as soon as a dispatcher opens the planner.');
+    if (P0.date < today) return note('The last ' + this.type + ' plan for ' + name + ' is dated ' + this.fmtDay(P0.date) + '. The board fills as soon as a dispatcher confirms today\u2019s plan.');
+    // Work orders the plan has but this screen's data does not yet: reload the data (the plan was made from newer data).
+    const miss = [...P0.teams.flat(), ...P0.next].some(k => !J.by.has(k));
+    if (miss && host.idsBehind) host.idsBehind();
+    if (host.idsBehind && Date.now() - (this.dataAt || Date.now()) > 15 * 60000) host.idsBehind();
+    const P = { ...P0, teams: P0.teams.map(t => t.filter(k => J.by.has(k))), next: P0.next.filter(k => J.by.has(k)) };
+    this._ctx = { m, bi, B, name, P };
+    const T = this.calc(P, B), now = this.nowMin(), pr = this.arrPrefs();
+    this.arrTimer();
+    const rows = [];
+    T.forEach((t, i) => t.rows.forEach((r, n) => { const st = this.woState(P, r.j, r, T); rows.push({ r, i, n, st, j: r.j }); }));
+    const areaOf = x => x.j.area || this.cellName(x.j);
+    const next = rows.filter(x => x.st.rank <= 2 && x.st.label !== 'On site' && x.r.arr >= now - 15).sort((a, b) => a.r.arr - b.r.arr)[0];
+    // KPIs over the whole plan, not the filter
+    const onSite = rows.filter(x => x.st.rank === 0).length, onWay = rows.filter(x => x.st.rank === 1).length, done = rows.filter(x => x.st.rank === 3).length;
+    const late = rows.filter(x => x.st.label === 'Scheduled · late').length;
+    const kpis = [
+      { label: 'On site now', value: fmtN(onSite), sub: 'technicians checked in at a WO' },
+      { label: 'On the way', value: fmtN(onWay), sub: 'driving to their next WO' },
+      { label: 'Next arrival', value: next ? hm(next.r.arr) : '—', sub: next ? (next.j.uid || 'CID ' + next.j.cid) + ' · ' + this.tn(next.i) : 'nothing scheduled' },
+      { label: 'Done today', value: fmtN(done), sub: 'of ' + fmtN(rows.length) + ' WO in today\u2019s plan' },
+      { label: 'Waiting', value: fmtN(rows.length - done - onSite - onWay), sub: (late ? late + ' past their ETA · ' : '') + P.next.length + ' deferred to H+1' },
+    ];
+    // Filters and sort
+    let list = rows.filter(x => (pr.team === 'all' || String(x.i) === String(pr.team)) && (pr.area === 'all' || areaOf(x) === pr.area)
+      && (pr.status === 'all' || (pr.status === 'active' ? x.st.rank <= 1 : pr.status === 'onsite' ? x.st.rank === 0 : pr.status === 'onway' ? x.st.rank === 1 : pr.status === 'waiting' ? x.st.rank === 2 : pr.status === 'notdone' ? x.st.rank < 3 : x.st.rank === 3)));
+    const byEta = (a, b) => a.r.arr - b.r.arr;
+    list.sort(pr.sort === 'team' ? (a, b) => a.i - b.i || a.n - b.n : pr.sort === 'status' ? (a, b) => a.st.rank - b.st.rank || byEta(a, b) : byEta);
+    // Pages
+    const fsEl = typeof document !== 'undefined' ? document.fullscreenElement : null, fs = !!(fsEl && fsEl.id === 'ids-arr-' + this.type);
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+    const per = pr.rows === 'auto' ? Math.max(6, Math.min(30, Math.floor((vh - (fs ? 190 : 330)) / 47))) : Math.max(5, +pr.rows || 15);
+    const pages = this._arrPages = Math.max(1, Math.ceil(list.length / per));
+    if ((this.ui.arrPage || 0) >= pages) this.ui.arrPage = 0;
+    const pg = this.ui.arrPage || 0, shown = list.slice(pg * per, pg * per + per);
+    // ---------- view ----------
+    const MONO12 = "600 12px 'IBM Plex Mono',ui-monospace,monospace";
+    const sel = (key, label, val, opts, on) => e('label', { key, style: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 4px 4px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
+      e('span', { style: { font: "600 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.muted } }, label),
+      e('select', { value: val, onChange: ev => on(ev.target.value), 'aria-label': label, style: { border: 'none', background: 'transparent', color: C.ink, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", padding: '2px 4px', cursor: 'pointer', maxWidth: 190 } },
+        ...opts.map(([k, v]) => e('option', { key: k, value: k }, v))));
+    const btn = (key, label, on, dark, title) => e('button', { key, type: 'button', onClick: on, title, style: { padding: '5px 11px', border: '1px solid ' + (dark ? C.ink : C.line), borderRadius: 3, background: dark ? C.ink : C.white, color: dark ? C.white : C.ink, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const areas = [...new Set(rows.map(areaOf))].sort();
+    const d = new Date(), clock = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    const head = e('div', { key: 'hd', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', background: C.ink, color: C.white, borderRadius: '3px 3px 0 0', borderBottom: '3px solid ' + C.acc } },
+      e('div', null,
+        e('div', { style: { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.16em', textTransform: 'uppercase', color: C.acc } }, (this.type === 'WCM' ? 'WCM maintenance' : 'WWR wiredown') + ' · ' + name),
+        e('div', { style: { font: "600 20px 'IBM Plex Sans',system-ui,sans-serif", letterSpacing: '0.02em' } }, 'Technician arrivals')),
+      e('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+        e('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 7, font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.12em' } },
+          e('span', { style: { width: 9, height: 9, borderRadius: '50%', background: this.sh.err ? C.bad : C.acc, boxShadow: '0 0 0 3px rgba(232,180,0,.25)' } }), this.sh.err ? 'RECONNECTING' : 'LIVE'),
+        e('div', { style: { textAlign: 'right' } },
+          e('div', { style: { font: "600 24px 'IBM Plex Mono',ui-monospace,monospace", lineHeight: 1 } }, clock),
+          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: '#B8B8B3' } }, this.fmtDay(P.date)))));
+    const ctrl = e('div', { key: 'ct', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', background: C.paper, borderLeft: '1px solid ' + C.line, borderRight: '1px solid ' + C.line } },
+      sel('so', 'Sort', pr.sort, [['eta', 'ETA, earliest first'], ['status', 'Status, then ETA'], ['team', 'Team route order']], v => this.setArr({ sort: v })),
+      sel('tm', 'Team', pr.team, [['all', 'All teams']].concat(T.map((t, i) => t.rows.length ? [String(i), this.tn(i)] : null).filter(Boolean)), v => this.setArr({ team: v })),
+      sel('st', 'Status', pr.status, [['all', 'All status'], ['active', 'On site + on the way'], ['onsite', 'On site'], ['onway', 'On the way'], ['waiting', 'Waiting / scheduled'], ['notdone', 'Not done yet'], ['done', 'Checked out']], v => this.setArr({ status: v })),
+      sel('ar', 'Area', pr.area, [['all', 'All areas']].concat(areas.map(a => [a, a])), v => this.setArr({ area: v })),
+      e('span', { key: 'sp', style: { flex: 1 } }),
+      e('button', { key: 'pp', type: 'button', title: this.ui.arrPause ? 'Resume page turning' : 'Pause page turning', onClick: () => { this.ui.arrPause = !this.ui.arrPause; this._arrAt = Date.now(); this.onChange(); },
+        style: { width: 32, height: 30, border: '1px solid ' + C.acc, borderRadius: 3, background: this.ui.arrPause ? C.acc : '#FBF3D6', color: C.ink, font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", cursor: 'pointer' } }, this.ui.arrPause ? '▶' : 'II'),
+      e('label', { key: 'sc', style: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Next page every',
+        e('input', { key: 'sec' + pr.sec, type: 'number', min: 5, max: 300, step: 5, defaultValue: pr.sec, 'aria-label': 'Seconds per page', onBlur: ev => { const v = Math.round(+ev.target.value); if (v >= 5 && v <= 300 && v !== pr.sec) this.setArr({ sec: v }); }, onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); },
+          style: { width: 46, padding: '2px 4px', border: '1px solid ' + C.line, borderRadius: 3, font: MONO12, color: C.ink, textAlign: 'center' } }), 's'),
+      sel('rw', 'Rows', String(pr.rows), [['auto', 'Fit screen'], ['10', '10'], ['15', '15'], ['20', '20'], ['25', '25']], v => this.setArr({ rows: v })),
+      e('span', { key: 'cnt', style: { padding: '6px 10px', borderRadius: 3, background: C.acc, color: C.ink, font: MONO12 } }, fmtN(list.length) + ' WO'),
+      btn('fs', fs ? 'Exit TV mode' : 'TV mode', () => { try { if (fs) document.exitFullscreen(); else { const el = document.getElementById('ids-arr-' + this.type); if (el && el.requestFullscreen) el.requestFullscreen(); } } catch (x) {} }, true, 'Full screen for a TV'));
+    const th = { padding: '9px 12px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink, textAlign: 'left', background: C.acc, whiteSpace: 'nowrap' };
+    const toneC = { good: C.good, acc: C.accDeep, bad: C.bad, warn: C.warn, done: C.muted };
+    const dot = { good: '#2E7D4F', acc: C.acc, bad: C.bad, warn: '#D09A1C', done: '#9A9A95' };
+    const td = { padding: '9px 12px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'middle' };
+    const body = shown.map(x => {
+      const j = x.j, r = x.r, ug = URG[r.urg] || URG.blue, isNext = next && next.j.key === j.key, done = x.st.rank === 3;
+      return e('tr', { key: j.key, style: { background: isNext ? '#FFFBEA' : done ? C.paper : C.white, opacity: done ? 0.72 : 1 } },
+        e('td', { style: { ...td, borderLeft: '5px solid ' + (isNext ? C.acc : done ? C.line : ug.c) } },
+          e('div', { style: { display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0 8px' } },
+            e('span', { style: { font: "600 15px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, j.uid || j.name || '—'),
+            e('span', { style: { padding: '0 5px', border: '1px solid ' + C.line, borderRadius: 2, font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, 'CID'),
+            e('span', { style: { font: MONO12, color: C.text } }, j.cid)),
+          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, j.wo + ' · ' + j.cat + ' · ' + j.tier)),
+        e('td', { style: td },
+          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 13.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } },
+            e('span', { style: { width: 10, height: 10, borderRadius: 2, flex: 'none', background: this.pal[x.i % this.pal.length] } }), this.tn(x.i)),
+          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, 'stop ' + (x.n + 1) + ' of ' + T[x.i].rows.length)),
+        e('td', { style: td },
+          e('div', { style: { font: "600 17px 'IBM Plex Mono',ui-monospace,monospace", color: done ? C.muted : C.ink } }, hm(r.arr), isNext ? e('span', { style: { marginLeft: 8, padding: '1px 6px', borderRadius: 2, background: C.acc, color: C.ink, font: "700 10px 'IBM Plex Mono',ui-monospace,monospace", verticalAlign: 'middle' } }, 'NEXT') : null),
+          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, (this.ciOf(j) != null ? 'arrived · ' : 'ETA · ') + this.fmtDay(P.date, true))),
+        e('td', { style: td },
+          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.04em', textTransform: 'uppercase', color: toneC[x.st.tone] || C.text } },
+            e('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: 'none', background: dot[x.st.tone] || C.line } }), x.st.label),
+          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, x.st.t || '—')),
+        e('td', { style: { ...td, whiteSpace: 'nowrap' } }, e('span', { title: ug.tip, style: { padding: '2px 8px', borderRadius: 3, background: done ? C.soft : ug.c, color: done ? C.muted : C.white, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, done ? 'Done' : ug.label)),
+        e('td', { style: { ...td, textAlign: 'right' } }, e('span', { style: { display: 'inline-block', padding: '4px 10px', border: '1.5px solid ' + C.ink, borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: areaOf(x) }, areaOf(x))));
+    });
+    const table = e('div', { key: 'tb', style: { overflowX: 'auto', border: '1px solid ' + C.line, borderTop: 'none', background: C.white } },
+      e('table', { style: { width: '100%', minWidth: 860, borderCollapse: 'collapse' } },
+        e('thead', null, e('tr', null, ...['User ID / CID', 'Team', 'ETA', 'Technician track', 'Priority', 'Area'].map((h2, i) => e('th', { key: i, style: { ...th, textAlign: i === 5 ? 'right' : 'left' } }, h2)))),
+        e('tbody', null, ...(body.length ? body : [e('tr', { key: 'em' }, e('td', { colSpan: 6, style: { ...td, padding: '28px 12px', textAlign: 'center', font: SANS, color: C.muted } }, rows.length ? 'No work order matches these filters.' : 'No work orders in today\u2019s plan.'))]))));
+    const pb = (k, label, on, active) => e('button', { key: k, type: 'button', onClick: on, style: { minWidth: 30, height: 28, padding: '0 6px', border: '1px solid ' + (active ? C.acc : C.line), borderRadius: 3, background: active ? C.acc : C.white, color: C.ink, font: MONO12, cursor: 'pointer' } }, label);
+    const go = n => { this.ui.arrPage = (n + pages) % pages; this._arrAt = Date.now(); this.onChange(); };
+    const nums = []; for (let n = 0; n < pages; n++) if (pages <= 11 || n < 2 || n >= pages - 2 || Math.abs(n - pg) <= 2) nums.push(n); else if (nums[nums.length - 1] !== -1) nums.push(-1);
+    const foot = e('div', { key: 'ft', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px', background: C.paper, border: '1px solid ' + C.line, borderTop: 'none', borderRadius: '0 0 3px 3px' } },
+      e('span', { style: { font: SANS, color: C.muted } }, list.length ? 'Showing ' + (pg * per + 1) + '–' + Math.min(list.length, pg * per + per) + ' of ' + fmtN(list.length) + ' WO' : '—'),
+      e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } }, pb('pv', '‹', () => go(pg - 1)), ...nums.map((n, i) => n < 0 ? e('span', { key: 'g' + i, style: { padding: '4px 2px', color: C.muted } }, '…') : pb('p' + n, String(n + 1), () => go(n), n === pg)), pb('nx', '›', () => go(pg + 1))),
+      e('span', { style: { font: MONO, color: C.ink } }, (this.ui.arrPause ? 'Paused' : 'Auto · ' + pr.sec + ' s') + ' · page ' + (pg + 1) + ' / ' + pages));
+    const wrap = e('div', { id: 'ids-arr-' + this.type, style: { display: 'flex', flexDirection: 'column', background: fs ? C.bg : 'transparent', padding: fs ? 18 : 0, minHeight: fs ? '100vh' : 0, boxSizing: 'border-box', overflowY: fs ? 'auto' : 'visible' } },
+      head, ctrl, table, foot,
+      e('div', { key: 'nt', style: { marginTop: 8, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } },
+        'Read only: follows the shared ' + this.type + ' plan of the dispatchers within about 10 seconds. ETA = planned arrival on the current route (arrival time once checked in). Sort, filters, page time and rows are kept on this screen only.'));
+    if (!this._fsHook && typeof document !== 'undefined') { this._fsHook = true; document.addEventListener('fullscreenchange', () => this.onChange()); window.addEventListener('resize', () => { if (this.arrOn) this.onChange(); }); }
+    return { kpis: fs ? [] : kpis, cards: [host.card(this.type + ' arrivals board', { span: 12, meta: fmtN(rows.length) + ' WO today · ' + done + ' done', body: wrap })] };
   }
 
   /* ---------- layout toggle (Google Drive style) and list layout ---------- */
@@ -2120,12 +2334,12 @@ class Dispatch {
     const drop = this.ui.drop, line = drop && drop.col === colId && drop.idx === idx && this.ui.drag !== j.key;
     const flags = r ? r.f.filter(f => f[0] !== 'info' || /Nearby|Lunch/.test(f[1])) : [];
     const co = this.coOf(j);
-    return e('tr', { key: j.key, draggable: !lk && !ro,
+    return e('tr', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, draggable: !lk && !ro,
       onDragStart: ev => { if (ro) return; this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
       onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
       onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
       onDrop: ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-      style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: lk || ro ? 'default' : 'grab', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none' } },
+      style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: lk || ro ? 'default' : 'grab', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none', outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: -3 } },
       td('n', colId === 'next' ? '—' : String(idx + 1), { borderLeft: '5px solid ' + ug.c, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, width: 28 }),
       td('wo', [e('div', { key: 'a', style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' } }, j.wo),
         e('div', { key: 'b', style: { font: MONO, color: C.muted, whiteSpace: 'nowrap' } }, (j.uid || '—') + ' · CID ' + j.cid)]),
@@ -2175,7 +2389,7 @@ class Dispatch {
     // H+1 sits first and stays in view while the board scrolls, so a deferred job can be dragged into any team.
     const q = String(this.ui.nextQ || '').trim().toLowerCase();
     const hit = k => { if (!q) return true; const j = J.by.get(k); return !!j && [j.wo, j.cid, j.uid, j.name, j.area, j.prob, j.cat, j.tier].some(v => String(v || '').toLowerCase().includes(q)); };
-    const found = P.next.filter(hit), shown = this.ui.nextAll || q ? found : found.slice(0, 60);
+    const found = P.next.filter(hit), shown = this.ui.nextAll || q || (this.ui.hl && P.next.indexOf(this.ui.hl) >= 60) ? found : found.slice(0, 60);
     const search = e('input', { key: 'nq', type: 'search', value: this.ui.nextQ || '', placeholder: 'Find WO, CID, UID, name…', 'aria-label': 'Find a deferred job',
       onChange: ev => { this.ui.nextQ = ev.target.value; this.onChange(); },
       style: { width: '100%', boxSizing: 'border-box', padding: '5px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.white, color: C.ink, font: SANS, outline: 'none' } });
@@ -2321,7 +2535,7 @@ class Dispatch {
     if (P.manual[j.key]) chips.push(pill('Manual', null, 'm'));
     const fd = t => t ? new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'no date';
     const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }); };
-    return e('div', { key: j.key, style: { display: 'flex', flexDirection: 'column' } },
+    return e('div', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, style: { display: 'flex', flexDirection: 'column', borderRadius: 4, outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: 2, marginBottom: this.ui.hl === j.key ? 4 : 0 } },
       line ? e('div', { style: { height: 3, background: C.acc, borderRadius: 2, margin: '2px 0 4px' } }) : null,
       e('div', {
         draggable: !lk && !this.readOnly,

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-10-30 (customer search, arrivals board)
+
+### Added
+
+- **Find a customer** on the Dispatch board (WWR and WCM): type a CID, user ID, WO number, name or area (2 characters or more). Up to 12 matches, exact CID / user ID / WO first, each with:
+  - where it is today: team, stop number and ETA, or "Deferred to H+1" with the reason, or not in today's plan;
+  - job type, tier, urgency and customer confirmation;
+  - technician status in words: On site (checked in hh:mm, done about hh:mm), On the way, Scheduled (ETA in …), Scheduled · late (ETA passed, no check-in), Waiting · team break / mass outage, Checked out (in … · out …), plus the WO note;
+  - **Show on board** scrolls the board or list to the job and outlines it for a few seconds (also in H+1); **Locate** shows it on the map. Enter opens the first match; Esc clears.
+  - A customer with no open WO of this type gets a clear "no open … work order" line (it may be on the other IDS board).
+- **Arrivals board** for each IDS: new menu items **WWR · arrivals board** and **WCM · arrivals board** under IDS dispatch. Like an airport arrivals board, for a TV or for anyone who follows the field work:
+  - one row per WO in today's shared plan: user ID / CID, WO and job, team (colour) and stop, **ETA** (arrival time once checked in), **technician track** (status + time), priority colour, area. The next arrival is marked **NEXT**.
+  - KPIs: on site now, on the way, next arrival, done today, waiting (with how many are past their ETA and deferred to H+1).
+  - Sort (ETA earliest / status then ETA / team route order) and filters for team, status and area.
+  - **Pages turn by themselves**, every 15 seconds by default; the time (5–300 s) and the rows per page (fit screen, 10, 15, 20, 25) are set on the board, with pause / resume and page buttons. These settings are kept on that screen only.
+  - **TV mode** puts the board full screen. Header with branch, live clock and LIVE marker.
+  - Read only: the board never changes the shared plan. It follows the dispatchers' changes within about 10 seconds and reloads the work-order data when the plan holds newer work orders (and every 15 minutes).
+  - Comes with the IDS menu itself: whoever may open IDS · WWR (or WCM) also sees its arrivals board, viewers included. No change in Role management or the Apps Script proxy.
+- `index.html`: IDS module version bumped so browsers load the new planner.
+
+
 ## 2026-10-30 (mass outage location, map, automatic arrival and leaving)
 
 ### Added
