@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-04 (Executive overview PDF)
+
+### Added
+
+- **Download PDF** on the Executive overview (button beside the period and branch filters). Builds an A4 portrait report from the figures already on screen, for the selected period and branch; nothing is re-queried.
+  - Cover block: period, branch, data sync time, generated time and user, and the six headline KPIs.
+  - Sections in dashboard order: Customer Service demand (ticket flow, CTSO, work orders, inquiry vs complaint, top 5 lists, entry channel), week / month / year comparison, repeat work orders (top 25 CIDs), customer voice (CSAT, rating distribution, 10 positive and 10 complaint comments), retail growth and churn (KPIs, churn-risk line, MoM / YoY table, by area), retail products and revenue (packages, billing pattern, priority, ARPU chart and table, blocked vs collected), and the AI consultant notes when they have been generated.
+  - Vector text and charts, running header and "Page x of y" footer, marked internal and confidential. File name: `GX-CX-Executive-Overview_<period>_<branch>_<yyyymmdd-hhmm>.pdf`.
+  - If retail figures are still loading, the button says so and asks before downloading without them.
+- `gxreport.js`: the report layout. jsPDF 4.2.1 and jsPDF-AutoTable 5.0.9 load from jsDelivr (unpkg as fallback) only when the button is pressed.
+- `fonts/`: renamed subsets of IBM Plex Sans and Mono (SIL OFL) embedded in the PDF. Without them the report falls back to Helvetica.
+
+### Fixed
+
+- Executive overview: the "Week, month and year comparison" card stayed on *loading* unless Trouble tickets or CSAT had been opened first. The overview now loads its own trend data.
+
 ## 2026-10-30 (customer search, arrivals board)
 
 ### Added

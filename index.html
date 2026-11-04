@@ -118,6 +118,17 @@
             </sc-for>
           </select>
         </div>
+        <sc-if value="{{ pdfShow }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+            <sc-if value="{{ pdfErr }}" hint-placeholder-val="{{ false }}">
+              <span style="font:500 11.5px 'IBM Plex Sans',system-ui,sans-serif;color:#9B2C1F">{{ pdfErr }}</span>
+            </sc-if>
+            <button type="button" onClick="{{ onPdf }}" title="{{ pdfTitle }}" style="display:flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid #1F1F1D;border-radius:3px;background:#FFFFFF;color:#1F1F1D;font:500 12px 'IBM Plex Mono',ui-monospace,monospace;cursor:pointer;white-space:nowrap">
+              <span style="display:inline-block;width:9px;height:11px;border:1.5px solid #1F1F1D;border-top-width:3px;box-sizing:border-box;border-radius:1px;background:#E8B400"></span>
+              {{ pdfLabel }}
+            </button>
+          </div>
+        </sc-if>
       </section>
 
       <p style="margin:-4px 0 0;max-width:84ch;font:400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif;color:#4A4A46;text-wrap:pretty">{{ viewSub }}</p>
@@ -361,7 +372,7 @@ class Component extends DCLogic {
     return out;
   }
   ensureTrends(view) {
-    if (!['tickets', 'csat'].includes(view)) return;
+    if (!['overview', 'tickets', 'csat'].includes(view)) return;
     const k = 'trends|' + this.state.branch;
     if ((this.state.data[k] && !this.isStale(k)) || this.trendsLoading === k) return;
     this.trendsLoading = k; if (this.stale) this.stale.delete(k);
@@ -2200,6 +2211,7 @@ class Component extends DCLogic {
     const woC = { WCM: '#B08A1E', WWR: '#9B2C1F', WCA: '#2E6B34' };
     const woT = ['WCM', 'WWR', 'WCA'].map(c => es.woTypes.find(w => w.code === c) || { code: c, name: c, value: 0 });
     const woSum = woT.reduce((a, w) => a + w.value, 0);
+    const woNote = (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.' + (es.woSrc === 'wo' && woT.some(w => w.code !== 'WCA' && !w.value) ? ' No ' + woT.filter(w => w.code !== 'WCA' && !w.value).map(w => w.code).join(' / ') + ' work orders dated in this period: upload that month\'s file to Drive.' : '');
     const woParts = woT.map(w => ({ label: w.code + ' · ' + w.name, value: w.value, color: woC[w.code], sub: fP(w.value, woSum) + ' of these work orders' }));
     const typeData = t.type.map(x => ({ key: x.key === 'Complaint' ? 'Complaint' : 'Inquiry', value: x.value }))
       .reduce((acc, x) => { const hit = acc.find(y => y.key === x.key); if (hit) hit.value += x.value; else acc.push({ ...x }); return acc; }, []);
@@ -2296,7 +2308,7 @@ class Component extends DCLogic {
       }),
       this.card('Work orders by type', { span: 4, meta: fI(woSum) + ' work orders',
         body: col3(bar(woParts, woSum), tiles(woParts, 120)),
-        note: (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.' + (es.woSrc === 'wo' && woT.some(w => w.code !== 'WCA' && !w.value) ? ' No ' + woT.filter(w => w.code !== 'WCA' && !w.value).map(w => w.code).join(' / ') + ' work orders dated in this period: upload that month\'s file to Drive.' : ''),
+        note: woNote,
       }),
       this.card('Inquiry vs complaint', { span: 4, meta: fI(t.total) + ' tickets',
         body: e(Donut, { data: typeData, centerValue: fP(cmpN, cmpN + inqN), centerLabel: 'complaints', colors: ['#9B2C1F', '#3E5C76'] }),
@@ -2376,8 +2388,41 @@ class Component extends DCLogic {
       }),
       this.aiCard(ready, sig),
     ];
+    // Plain snapshot of these figures for the PDF report (gxreport.js lays it out; nothing is re-queried).
+    const aiNow = this.state.ai && this.state.ai.sig === sig && this.state.ai.status === 'done' ? this.state.ai : null;
+    const chM = this.state.data.churnRisk, retailErr = (bkR && bkR.error) || (blR && blR.error) || (swR && swR.error) || null;
+    this._ovReport = {
+      ready, retailError: retailErr, period: this.periodLabel(), branch: this.branchLabel(), branchFiltered: this.state.branch !== 'all',
+      by: this.state.me ? this.state.me.name : '', synced: D.stats && D.stats.lastSync ? D.stats.lastSync : null,
+      sub: 'Customer Service demand, field work, customer voice and the retail book. Ticket, work-order and CSAT panels follow the period and branch filters; retail panels show the current customer base.',
+      kpis, flow: f, tickets: { total: t.total, channel: t.channel }, woTypes: woT, woSum, woNote, cmpN, inqN,
+      complaints: q, inquiry: iq, rep30: r30, csat: s, pos, neg, collected: col,
+      trends: this.state.data['trends|' + this.state.branch] || null,
+      growth: g || null, cohort: ct || null, cohortWindow: co ? co.windowLabel : '', blocked: bl, swap: swR && !swR.error ? swR : null,
+      lifetime: lifeAll || null, areaRows, book: bk, packages: pkgs, grpCols, arpuSeries: arS,
+      churnRisk: chM && !chM.empty && chM.meta && chM.meta.scored ? chM.meta : null,
+      ai: aiNow ? { at: aiNow.at, notes: aiNow.notes } : null,
+    };
     return { kpis, cards };
   }
+
+  branchLabel() {
+    const S = this.state, idx = S.index;
+    if (S.branch === 'all') return 'All branches';
+    return ((idx && idx.branches.find(b => b.key === S.branch) || {}).label || S.branch).replace(/^GlobalXtreme\s*/, '');
+  }
+  // Executive overview → PDF. Loads gxreport.js (and its PDF library) only when the button is pressed.
+  downloadPdf = async () => {
+    const m = this._ovReport;
+    if (this.state.pdfBusy || this.state.view !== 'overview' || !m) return;
+    if (!m.ready && !m.retailError && !window.confirm('Retail figures (growth, churn, products, ARPU) are still loading. Download the report now without them?')) return;
+    this.setState({ pdfBusy: true, pdfMsg: null });
+    try {
+      const R = await import('./gxreport.js?v=2026-11-04a');
+      await R.downloadOverviewPdf({ ...m, now: new Date() });
+      this.setState({ pdfBusy: false });
+    } catch (e) { this.setState({ pdfBusy: false, pdfMsg: 'PDF failed: ' + e.message }); }
+  };
 
   /* ---------- AI consultant notes ---------- */
 
@@ -3168,6 +3213,10 @@ class Component extends DCLogic {
       viewTitle: view.title, viewSub: view.sub,
       viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),
       period: S.period, branch: S.branch,
+      pdfShow: S.view === 'overview' && !!payload && !payload.error && !!this._ovReport,
+      pdfLabel: S.pdfBusy ? 'Preparing PDF…' : this._ovReport && !this._ovReport.ready && !this._ovReport.retailError ? 'Download PDF · retail loading' : 'Download PDF',
+      pdfTitle: S.pdfMsg || 'Executive overview as an A4 PDF report for the selected period and branch',
+      pdfErr: S.pdfMsg || '', onPdf: this.downloadPdf,
       periodOptions: idx ? idx.periods.map(p => ({ key: p.key, label: p.label })) : [],
       branchOptions: idx ? idx.branches.map(b => ({ key: b.key, label: b.label })) : [],
       onPeriod: this.setPeriod, onBranch: this.setBranch, onRefresh: this.refresh,
