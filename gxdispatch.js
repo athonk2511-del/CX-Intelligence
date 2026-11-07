@@ -51,7 +51,7 @@ const TYPES = {
   WWR: { name: 'wiredown', st: 'wd', info: 'wdInfo' },
   WCM: { name: 'maintenance', st: 'cm', info: 'cmInfo' },
 };
-const CONF = { none: 'Not contacted', ok: 'Confirmed', noresp: 'No answer', resched: 'Asks to reschedule' };
+const CONF = { none: 'Not contacted', ok: 'Confirmed', noresp: 'No answer', resched: 'Asks to reschedule', cancel: 'Cancelled' };
 // Card colour by urgency (SLA left and urgent VIP). Red = do now; blue = safe, can be negotiated with the customer.
 const URG = {
   red: { c: '#C92A2A', bg: '#FFF5F5', label: 'Act now', tip: 'SLA breached, will miss its SLA on this route, or urgent VIP (Wiredown / Power)' },
@@ -618,11 +618,14 @@ class Dispatch {
   // Latest work order of this type per CID (by timestamp); kept only while that latest order is still open or in progress.
   jobs(m, bi) {
     const cfg = this.st.cfg, ST = m[this.TY.st], INFO = m[this.TY.info];
-    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm, JSON.stringify(cfg.jobTypes || null)].join('|');
+    // Cancelled WO (meta.cx) are left out of every list: no team, no H+1, no map pin, no ETA. They stay aside in J.cx so
+    // a dispatcher can restore one, until the WO is closed in the source data.
+    const cxKeys = Object.keys(this.st.meta).filter(k => this.st.meta[k] && this.st.meta[k].cx).sort().join(',');
+    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm, JSON.stringify(cfg.jobTypes || null), cxKeys].join('|');
     if (this._jobs && this._jobs.m === m && this._jobs.sig === sig) return this._jobs.v;
     if (this._zm !== m || this._zbi !== bi || this._zg !== cfg.gridKm) { this._zm = m; this._zbi = bi; this._zg = cfg.gridKm; this._zone = null; }
     const now = Date.now(), maxMs = (+cfg.maxAge || 0) * 86400e3;
-    const list = [], skipped = { old: 0, status: 0, noPrio: 0, unknown: 0 };
+    const list = [], cx = [], skipped = { old: 0, status: 0, noPrio: 0, unknown: 0 };
     if (ST && INFO) for (let i = 0; i < m.count; i++) {
       if (m.branch[i] !== bi) continue;
       const state = ST[i], w = INFO[i];
@@ -636,9 +639,10 @@ class Dispatch {
         lat: m.lat[i], lng: m.lng[i], t: w.t || 0, raw: w.raw || '', prog: state === 1, cat, prob: w.prob || w.cat || '', prio: w.prio || '', noPrio: !tier, tier: tier || 'Normal' };
       const c = this.M.cellOf(j.lat, j.lng, cfg.gridKm * 1000);
       j.cell = { c: c[0], r: c[1], key: c[0] + ',' + c[1] };
+      if ((this.st.meta[j.key] || {}).cx) { cx.push(j); continue; }
       list.push(j);
     }
-    const v = { list, by: new Map(list.map(j => [j.key, j])), skipped };
+    const v = { list, by: new Map(list.map(j => [j.key, j])), skipped, cx, cxBy: new Map(cx.map(j => [j.key, j])) };
     this._jobs = { m, sig, v }; this._need = null;
     return v;
   }
@@ -1045,13 +1049,15 @@ class Dispatch {
     // last built from newer data than this screen holds, this screen reloads its data first instead of changing the plan,
     // so an older screen never removes new work orders or brings back closed ones.
     const gone = P.gone || (P.gone = {});
-    const unknown = [...known].filter(k => !J.by.has(k));
+    const isCx = k => !!(this.st.meta[k] || {}).cx;
+    const unknown = [...known].filter(k => !J.by.has(k) && !isCx(k));
     const fresh = J.list.filter(j => !known.has(j.key) && !gone[j.key]);
     this.behind = (unknown.length > 0 || fresh.length > 0) && (P.dataAt || 0) > (this.dataAt || 0) + 60000 && !this.skewOK;
     if (this.behind) return P;
-    let drop = unknown.length > 0;
+    let drop = unknown.length > 0 || [...known].some(isCx);
     const now = Date.now();
     unknown.forEach(k => { gone[k] = now; });
+    [...known].filter(isCx).forEach(k => { delete P.manual[k]; delete P.why[k]; });
     Object.keys(gone).forEach(k => { if (now - gone[k] > 3 * 864e5) delete gone[k]; });
     P.teams = P.teams.map(t => t.filter(k => J.by.has(k)));
     P.next = P.next.filter(k => J.by.has(k));
@@ -1071,8 +1077,8 @@ class Dispatch {
     P.teams.flat().forEach(k => { const j = J.by.get(k); if (j && !j.prog && (this.st.meta[k] || {}).stat !== 'checkout') age(k); });
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
-      if (!J.by.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
-      mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
+      if (!J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
+      if (!mt.cx) mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
   }
@@ -1134,7 +1140,7 @@ class Dispatch {
     const inPlan = new Set([...P.teams.flat(), ...P.next]);
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
-      if (!J.by.has(k) && !inPlan.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
+      if (!J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && !inPlan.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
       mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
     });
     const gone = P.gone || (P.gone = {}), now = Date.now();
@@ -1834,7 +1840,44 @@ class Dispatch {
     if (i < 0 || n < 0 || n >= list.length) return;
     this.move(P, key, colId, n);
   }
+  // Cancelled: the WO is taken out of the plan as if it did not exist (e.g. the customer's internet came back on by
+  // itself). Allowed while the job is not contacted yet or the team is only on the way; not once checked in/out or In
+  // Progress in the data. The plan is recalculated at once: later ETAs move up and teams with time left take more work.
+  // The WO stays out on every screen and on later days until it is closed in the source data, or restored by hand.
+  cancelable(j) { const s = (this.st.meta[j.key] || {}).stat; return !j.prog && s !== 'checkin' && s !== 'checkout'; }
+  cancel(P, j) {
+    if (this.readOnly) return;
+    if (!this.cancelable(j)) { this.note(j.wo + ': cannot be cancelled once checked in, checked out or In Progress.'); this.ver++; return this.onChange(); }
+    const ask = j.wo + ' (' + (j.uid || j.cid) + (j.name ? ' · ' + j.name : '') + ')\n\nCancel this WO? It is removed from the plan and every ETA is recalculated. It can be restored from the Cancelled WO list.';
+    if (typeof window !== 'undefined' && window.confirm && !window.confirm(ask)) { this.ver++; return this.onChange(); }
+    const mt = this.meta(j.key), pz = mt.pz || (mt.pz = []);
+    if (pz.length && pz[pz.length - 1].b == null) pz[pz.length - 1].b = Date.now();
+    const from = P.next.includes(j.key) ? 'H+1' : (i => i >= 0 ? this.tn(i) : '')(P.teams.findIndex(t => t.includes(j.key)));
+    mt.cx = { at: Date.now(), by: this.user || '', from, stat: mt.stat || 'none' };
+    mt.conf = 'cancel'; mt.stat = 'none';
+    P.teams = P.teams.map(t => t.filter(k => k !== j.key));
+    P.next = P.next.filter(k => k !== j.key);
+    P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; if (P.role) P.role[i] = null; } });
+    delete P.manual[j.key]; delete P.why[j.key];
+    this._jobs = null; this._J = this.jobs(this._ctx.m, this._ctx.bi);
+    this.reflow(P, j.wo + ' (' + (j.uid || j.cid) + ') cancelled' + (from ? ' (was in ' + from + ')' : '') + ': removed from the plan.');
+  }
+  restore(P, j) {
+    if (this.readOnly) return;
+    const mt = this.st.meta[j.key];
+    if (!mt || !mt.cx) return;
+    delete mt.cx; mt.conf = 'none';
+    this._jobs = null; this._J = this.jobs(this._ctx.m, this._ctx.bi);
+    const B = this._ctx.B, k = j.key;
+    if (!P.teams.some(t => t.includes(k)) && !P.next.includes(k)) {
+      const jj = this._J.by.get(k);
+      if (jj && !this.place(P, jj, B)) { P.next.push(k); P.why[k] = 'internal'; }
+    }
+    const where = P.next.includes(k) ? 'H+1' : this.tn(P.teams.findIndex(t => t.includes(k)));
+    this.reflow(P, j.wo + ' (' + (j.uid || j.cid) + ') restored after cancel, placed in ' + where + '.');
+  }
   setConf(P, j, v) {
+    if (v === 'cancel') return this.cancel(P, j);
     const mt = this.meta(j.key), pz = mt.pz || (mt.pz = []), open = pz.length && pz[pz.length - 1].b == null;
     if (v === 'resched' && !open) pz.push({ a: Date.now() }); else if (v !== 'resched' && open) pz[pz.length - 1].b = Date.now();
     mt.conf = v;
@@ -1846,6 +1889,28 @@ class Dispatch {
       if (v === 'ok') { const idx = P.teams[ti].indexOf(j.key), nr = t.findIndex(k => (this.st.meta[k] || {}).conf === 'noresp'); t.splice(nr >= 0 && nr < idx ? nr : idx, 0, j.key); P.teams[ti] = t; }
     }
     this.changed(j.wo + ': confirmation ' + CONF[v] + '.');
+  }
+  // Cancelled WO still open in the source data: collapsed list under the board, with Restore for a mistaken cancel.
+  cxList(e, P) {
+    const J = this._J, list = (J && J.cx || []).slice().sort((a, b) => ((this.st.meta[b.key] || {}).cx || {}).at - ((this.st.meta[a.key] || {}).cx || {}).at);
+    if (!list.length) return null;
+    const open = !!this.ui.cxOpen, ro = this.readOnly, small = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
+    const when = t => { if (!t) return ''; const d = new Date(t); return (ymd(d) === this.today() ? '' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ') + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+    return e('div', { key: 'cx', style: { border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
+      e('button', { type: 'button', onClick: () => { this.ui.cxOpen = !open; this.onChange(); }, 'aria-expanded': open,
+        style: { display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', border: 0, background: 'transparent', color: C.ink, font: SANS, fontWeight: 600, cursor: 'pointer', textAlign: 'left' } },
+        e('span', null, 'Cancelled WO (' + list.length + ')'), e('span', { style: { font: small, color: C.muted } }, open ? 'Hide' : 'Show')),
+      open ? e('div', { style: { display: 'flex', flexDirection: 'column', borderTop: '1px solid ' + C.line } },
+        ...list.map(j => {
+          const cx = (this.st.meta[j.key] || {}).cx || {};
+          return e('div', { key: j.key, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 10px', borderBottom: '1px solid ' + C.line } },
+            e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
+              e('span', { style: { font: SANS, color: C.ink, textDecoration: 'line-through' } }, (j.uid || '—') + ' · ' + j.cid + (j.name ? ' · ' + j.name : '')),
+              e('span', { style: { font: small, color: C.muted } }, j.wo + ' · ' + j.cat + ' · cancelled ' + when(cx.at) + (cx.by ? ' by ' + cx.by : '') + (cx.from ? ' · was in ' + cx.from : ''))),
+            ro ? null : e('button', { type: 'button', onClick: () => this.restore(P, j), title: 'Put this WO back into the plan',
+              style: { padding: '3px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, cursor: 'pointer' } }, 'Restore'));
+        }),
+        e('p', { style: { margin: 0, padding: '6px 10px', font: small, color: C.muted } }, 'Cancelled WO have no team, ETA or map pin, on every screen and on later days. They leave this list once the WO is closed in the source data.')) : null);
   }
   locate(j) { if (this.onLocate) this.onLocate(j.i); }
   hasJobs(m, i) {
@@ -2049,8 +2114,9 @@ class Dispatch {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
-          this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col)),
-        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
+          this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
+          this.cxList(e, P)),
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];

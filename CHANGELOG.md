@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-07 (IDS: Cancelled WO)
+
+### Added
+
+- IDS customer status **Cancelled**, beside Not contacted, Confirmed, No answer and Asks to reschedule. For WO that no longer need a visit, for example when the customer's internet comes back on by itself.
+  - A cancelled WO is removed from the plan as if it did not exist: no team, no H+1, no map pin, no ETA, not on the arrivals board.
+  - The plan is recalculated at once (same as after a check-out): later ETAs of that team move up, and teams with time left take more work from H+1.
+  - Allowed while the job is Not contacted / planned or the team is On the way. Not allowed once Checked in, Checked out or In Progress in the data.
+  - The dispatcher confirms before cancelling. The change log records who cancelled which WO and from which team.
+  - Shared: every screen sees the cancel. It stays cancelled on later days and through Prepare plan / Re-plan / Rebalance, until the WO is closed in the source data (then it disappears for good).
+- **Cancelled WO** list under the dispatch board (collapsed): UID, CID, name, WO, who cancelled and when, with **Restore** to put a WO cancelled by mistake back into the plan.
+
 ## 2026-11-04 (Executive overview PDF)
 
 ### Added
