@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-10 (IDS: the schedule only changes on Re-plan)
+
+### Changed
+
+- **Save in Settings / Teams & crew never re-plans.** Team names, trackers, hubs, shifts, the number of teams and planning settings are saved and the schedule stays exactly as arranged. The two-click "save and re-plan" is gone. New settings apply to work orders added from now on, and to the whole board only when someone presses Re-plan.
+- More available teams adds empty team columns that take new work orders. Fewer teams is refused while a removed team still has work (move its WO first).
+- **Check-out, cancel and restore keep every job in its team and order.** Jobs that run past the shift end are no longer moved to another team or H+1 by themselves (the board shows the overtime). Time freed by an early check-out is used for extra work from H+1, added at the end of a route.
+- **New work orders are always added at the end of a route**, urgent VIP (Wiredown / Power) included; a dispatcher drags an urgent one forward when needed.
+
+## 2026-11-10 (DotAI ETA API)
+
+### Added
+
+- **ETA API for DotAI** (`apps-script/roles.gs`, `GET ?action=eta&key=<GX_DOTAI_KEY>&cid=|uid=|wo=`). Answers today's WO status, a 2-hour arrival window, the technician status as a sentence, a suggested reply, and `handoff` when DotAI should pass the chat to a dispatcher (ETA passed, reschedule requested, or data older than 30 minutes). Never answers technician name, phone or position. See `DOTAI_ETA_API.md`.
+- IDS board and arrivals TV send an ETA snapshot of today's plan to the proxy (`action: 'eta'`) when it changes and every 5 minutes.
+- New Script Property `GX_DOTAI_KEY` (set by hand).
+
 ## 2026-11-07 (IDS: Cancelled WO)
 
 ### Added

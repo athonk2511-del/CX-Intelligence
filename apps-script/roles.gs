@@ -8,6 +8,8 @@
  *   GX_USERS     JSON list of users, written by the dashboard's Role management page. Do not edit by hand.
  *   GX_TRACK     Live tracking (Traccar) settings saved by an admin on the Tracking setup page.
  *   GX_IDS_*     The shared IDS plan (WWR and WCM), written by the dashboard. Do not edit by hand.
+ *   GX_ETA_*     ETA snapshot of today's IDS plan, sent by every open IDS screen. Do not edit by hand.
+ *   GX_DOTAI_KEY Secret key DotAI uses to read the ETA API (GET ?action=eta&key=...&cid=...). Set it by hand.
  *   GX_DATA_KEY  One of your existing (owner) access keys. After the role check, requests made with a
  *                user's key are passed to doGetData_ / doPostData_ with this key, so your original key
  *                check keeps working unchanged.
@@ -88,6 +90,7 @@ function gxDataKey_() { return gxProps_().getProperty(GX_PROP_DATA_KEY) || ''; }
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
+  if (p.action === 'eta') return gxEtaApi_(p);
   const user = gxUser_(p.key);
   if (p.action === 'whoami') {
     if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
@@ -117,6 +120,7 @@ function doPost(e) {
   // Viewers read the IDS board and tracking; they change nothing.
   if (user.role === 'viewer' && (req.action === 'ids' || req.action === 'track' || req.action === 'ai')) return gxJson_({ error: 'View only: this account cannot change the plan.' });
   if (req.action === 'ids') return gxIdsPost_(user, req);
+  if (req.action === 'eta') return gxEtaPost_(user, req);
   if (req.action === 'track') return gxTrackPost_(user, req);
   if (req.action === 'ai' && user.role !== 'admin') return gxJson_({ error: 'AI notes are available to admins only.' });
   if (typeof doPostData_ !== 'function') return gxJson_({ error: 'Unknown action' });
@@ -357,4 +361,145 @@ function gxCsvGet_(user, p) {
   }
   if (!gxCsvAllowed_(kinds, kind)) return gxCsvErr_('File not allowed');
   return ContentService.createTextOutput(f.getBlob().getDataAsString()).setMimeType(ContentService.MimeType.TEXT);
+}
+
+
+/* ---------- ETA API for DotAI ----------
+ * Every open IDS screen (board or arrivals TV) sends a snapshot of today's plan: per WO its status, ETA instant, jobs
+ * before it and what the team is doing now. No technician name, phone or position is stored or answered.
+ *
+ * DotAI reads:  GET <web app URL>?action=eta&key=<GX_DOTAI_KEY>&cid=<CID>     (or &uid=<user ID>, or &wo=<WO number>)
+ * An admin access key of the dashboard also works, for testing in a browser.
+ * The answer gives the ETA as a 2-hour window, the technician status as a sentence, and handoff=true when DotAI should
+ * pass the chat to a dispatcher instead of answering (ETA passed, customer asked to reschedule, or no fresh data).
+ */
+const GX_ETA_FRESH_MIN = 30;          // a snapshot older than this is not used for an ETA
+const GX_ETA_MAX_ROWS = 3000;
+const GX_ETA_TYPES = { WWR: 'Wiredown', WCM: 'Maintenance' };
+
+function gxEtaLoad_(type) {
+  const cache = CacheService.getScriptCache(), hit = cache.get('gxeta_' + type);
+  if (hit) { try { return JSON.parse(hit); } catch (e) {} }
+  const P = gxProps_(), n = +(P.getProperty('GX_ETA_' + type + '_N') || 0);
+  let s = '';
+  for (let i = 0; i < n; i++) s += P.getProperty('GX_ETA_' + type + '_' + i) || '';
+  let st = { branches: {} };
+  if (s) { try { st = JSON.parse(s); } catch (e) {} }
+  return st;
+}
+function gxEtaSave_(type, st, durable) {
+  const s = JSON.stringify(st);
+  try { CacheService.getScriptCache().put('gxeta_' + type, s, 21600); } catch (e) { durable = true; }
+  if (!durable) return;
+  const P = gxProps_(), n = Math.ceil(s.length / GX_IDS_CHUNK), old = +(P.getProperty('GX_ETA_' + type + '_N') || 0), m = {};
+  for (let i = 0; i < n; i++) m['GX_ETA_' + type + '_' + i] = s.slice(i * GX_IDS_CHUNK, (i + 1) * GX_IDS_CHUNK);
+  m['GX_ETA_' + type + '_N'] = String(n);
+  P.setProperties(m);
+  for (let i = n; i < old; i++) P.deleteProperty('GX_ETA_' + type + '_' + i);
+}
+
+// POST { action: 'eta', type, branch, date, rows: [[wo, cid, uid, status, etaMs, ahead, team, conf], ...] }
+function gxEtaPost_(user, req) {
+  const type = gxIdsType_(req.type);
+  if (!gxIdsCanUse_(user, type)) return gxJson_({ error: 'UNAUTHORIZED' });
+  const branch = String(req.branch || '').slice(0, 80), date = String(req.date || '').slice(0, 10);
+  if (!branch || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Array.isArray(req.rows)) return gxJson_({ error: 'Bad ETA snapshot' });
+  const str = v => v == null ? '' : String(v).slice(0, 60);
+  const rows = req.rows.slice(0, GX_ETA_MAX_ROWS).filter(Array.isArray).map(r => [str(r[0]), str(r[1]), str(r[2]), str(r[3]).slice(0, 12),
+    r[4] == null || !isFinite(+r[4]) ? null : Math.round(+r[4]), r[5] == null || !isFinite(+r[5]) ? null : Math.round(+r[5]), str(r[6]).slice(0, 16), str(r[7]).slice(0, 12)]);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const st = gxEtaLoad_(type), old = st.branches[branch];
+    const changed = !old || old.date !== date || JSON.stringify(old.rows) !== JSON.stringify(rows);
+    st.branches[branch] = { date: date, at: Date.now(), by: user.name, rows: changed ? rows : old.rows };
+    gxEtaSave_(type, st, changed);
+    return gxJson_({ eta: { ok: true, changed: changed, rows: rows.length } });
+  } finally { lock.releaseLock(); }
+}
+
+function gxEtaTz_(branch) { return /malang|jakarta|jkt|surabaya/i.test(branch) ? ['Asia/Jakarta', 'WIB'] : ['Asia/Makassar', 'WITA']; }
+
+const GX_ETA_STATUS = {
+  scheduled: 'Terjadwal hari ini',
+  late: 'Terjadwal hari ini, kedatangan terlambat dari perkiraan',
+  onway: 'Teknisi dalam perjalanan ke lokasi pelanggan',
+  onsite: 'Teknisi sudah di lokasi pelanggan',
+  done: 'Kunjungan hari ini sudah selesai',
+  mass: 'Jadwal bergeser karena teknisi menangani gangguan massal',
+  break: 'Terjadwal hari ini, teknisi sedang istirahat',
+  resched: 'Pelanggan meminta jadwal ulang',
+  next: 'Dijadwalkan pada hari kerja berikutnya',
+  cancel: 'Work order dibatalkan',
+};
+const GX_ETA_TECH = {
+  onway: 'Teknisi sedang dalam perjalanan menuju lokasi Anda.',
+  onsite: 'Teknisi sudah berada di lokasi Anda.',
+  done: 'Kunjungan teknisi untuk work order ini sudah selesai.',
+  mass: 'Teknisi sedang menangani gangguan jaringan di area lain, sehingga jadwal kunjungan sedikit bergeser.',
+  break: 'Teknisi sedang istirahat sebentar dan setelah itu melanjutkan jadwal kunjungan.',
+  prev_onsite: 'Teknisi sedang menyelesaikan pekerjaan di lokasi pelanggan sebelumnya.',
+  prev_onway: 'Teknisi sedang dalam perjalanan ke lokasi pelanggan sebelumnya.',
+  between_jobs: 'Teknisi sedang menjalankan jadwal kunjungan hari ini.',
+  not_started: 'Teknisi belum mulai bertugas hari ini.',
+};
+
+function gxEtaItem_(type, branch, b, r, now) {
+  const tz = gxEtaTz_(branch), fresh = now - (b.at || 0) <= GX_ETA_FRESH_MIN * 60000;
+  const code = r[3], etaMs = r[4], ahead = r[5], team = r[6];
+  const fmt = ms => Utilities.formatDate(new Date(ms), tz[0], 'HH:mm');
+  const it = {
+    wo: r[0], cid: r[1], uid: r[2], type: type, typeName: GX_ETA_TYPES[type], branch: branch,
+    status: code, statusText: GX_ETA_STATUS[code] || code,
+    etaWindow: null, jobsAhead: ahead, technicianStatus: null,
+    updatedAt: Utilities.formatDate(new Date(b.at || 0), tz[0], "yyyy-MM-dd'T'HH:mm:ssXXX"), fresh: fresh,
+    handoff: false, handoffReason: null, reply: '',
+  };
+  const tech = GX_ETA_TECH[code] || GX_ETA_TECH[team] || null;
+  if (['scheduled', 'late', 'onway', 'onsite', 'done', 'mass', 'break', 'resched'].indexOf(code) !== -1) it.technicianStatus = tech;
+  const step = 30 * 60000;
+  if (fresh && etaMs != null && ['scheduled', 'onway', 'mass', 'break'].indexOf(code) !== -1) {
+    const from = Math.max(Math.floor((etaMs - 60 * 60000) / step) * step, Math.ceil(now / step) * step), to = from + 120 * 60000;
+    it.etaWindow = { from: fmt(from), to: fmt(to), tz: tz[1] };
+  }
+  if (!fresh && ['done', 'next', 'cancel'].indexOf(code) === -1) { it.handoff = true; it.handoffReason = 'stale'; it.technicianStatus = null; }
+  else if (code === 'late') { it.handoff = true; it.handoffReason = 'late'; }
+  else if (code === 'resched') { it.handoff = true; it.handoffReason = 'reschedule'; }
+  const w = it.etaWindow;
+  it.reply = it.handoff ? (it.handoffReason === 'stale'
+      ? 'Work order ' + it.wo + ' sudah terjadwal. Untuk perkiraan waktu kedatangan terbaru, kami bantu konfirmasikan ke tim dispatcher terlebih dahulu.'
+      : it.handoffReason === 'late'
+        ? 'Mohon maaf, kunjungan teknisi untuk work order ' + it.wo + ' mengalami keterlambatan. Kami teruskan ke tim dispatcher untuk konfirmasi waktu kedatangan.'
+        : 'Permintaan jadwal ulang untuk work order ' + it.wo + ' sedang diproses. Kami teruskan ke tim dispatcher untuk konfirmasi jadwal baru.')
+    : code === 'done' ? 'Kunjungan teknisi untuk work order ' + it.wo + ' hari ini sudah selesai.'
+    : code === 'next' ? 'Work order ' + it.wo + ' dijadwalkan untuk kunjungan pada hari kerja berikutnya. Tim kami akan menghubungi Anda untuk konfirmasi.'
+    : code === 'cancel' ? 'Work order ' + it.wo + ' sudah dibatalkan. Jika gangguan masih terjadi, kami bantu buatkan jadwal kunjungan baru.'
+    : code === 'onsite' ? 'Teknisi sudah berada di lokasi Anda untuk work order ' + it.wo + '.'
+    : (w ? 'Perkiraan teknisi tiba antara pukul ' + w.from + '–' + w.to + ' ' + w.tz + ' untuk work order ' + it.wo + '. ' : 'Work order ' + it.wo + ' terjadwal hari ini. ') + (tech || '') + ' Perkiraan ini dapat berubah mengikuti kondisi di lapangan.';
+  return it;
+}
+
+function gxEtaApi_(p) {
+  const key = String(p.key || ''), dk = gxProps_().getProperty('GX_DOTAI_KEY') || '';
+  let ok = !!dk && key === dk;
+  if (!ok) { const u = gxUser_(key); ok = !!u && u.role === 'admin'; }
+  if (!ok) return gxJson_({ ok: false, error: 'UNAUTHORIZED' });
+  const norm = v => String(v == null ? '' : v).trim().toLowerCase();
+  const q = { cid: norm(p.cid), uid: norm(p.uid), wo: norm(p.wo) };
+  if (!q.cid && !q.uid && !q.wo) return gxJson_({ ok: false, error: 'Give cid, uid or wo.' });
+  const now = Date.now(), out = [];
+  Object.keys(GX_ETA_TYPES).forEach(type => {
+    const st = gxEtaLoad_(type);
+    Object.keys(st.branches || {}).forEach(branch => {
+      const b = st.branches[branch];
+      if (!b || b.date !== Utilities.formatDate(new Date(now), gxEtaTz_(branch)[0], 'yyyy-MM-dd')) return;
+      (b.rows || []).forEach(r => {
+        if ((q.cid && norm(r[1]) === q.cid) || (q.uid && norm(r[2]) === q.uid) || (q.wo && norm(r[0]) === q.wo)) out.push(gxEtaItem_(type, branch, b, r, now));
+      });
+    });
+  });
+  const order = { onsite: 0, onway: 1, late: 2, mass: 3, break: 4, scheduled: 5, resched: 6, next: 7, done: 8, cancel: 9 };
+  out.sort((a, b) => (a.status in order ? order[a.status] : 9) - (b.status in order ? order[b.status] : 9));
+  return gxJson_({ ok: true, query: { cid: p.cid || null, uid: p.uid || null, wo: p.wo || null }, found: out.length, workOrders: out,
+    reply: out.length ? out[0].reply : 'Work order untuk pelanggan ini belum masuk jadwal kunjungan teknisi hari ini.' });
 }

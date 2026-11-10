@@ -1041,6 +1041,7 @@ class Dispatch {
     if (!P) return this.makePlan(name, day, J, B, []);
     if (!Array.isArray(P.tb)) P.tb = P.teams.map(() => 0);
     if (!Array.isArray(P.role)) P.role = P.teams.map((t, i) => P.home[i] ? 'anchor' : null);
+    this.syncTeams(P);
     // One-time repair (2026-10-25): screens that read work orders from the old sheet marked CSV work orders as
     // closed. Forget those marks so the missing work orders are added back.
     if (P.goneV !== 2) { P.gone = {}; P.goneV = 2; }
@@ -1272,8 +1273,8 @@ class Dispatch {
     return { keep: s.ids, drop };
   }
   // A work order that appears during the day joins the anchor team of its own cell, then one in a neighbouring cell (ring),
-  // then a floater, then a free team. Urgent VIP (Wiredown / Power) goes to the front after started jobs; every other job,
-  // non-urgent VIP included, joins the end of the route so work already under way is not disturbed.
+  // then a floater, then a free team. It always joins the end of the route (urgent VIP too), so the schedule already
+  // given to the field is not disturbed.
   place(P, j, B) {
     const cfg = this.st.cfg, J = this._J;
     let best = null;
@@ -1286,14 +1287,9 @@ class Dispatch {
       const r = (fl ? (+cfg.ring || 0) + 1 : ring) * 1e4 + f.hop;
       if (!best || r < best.r) best = { ids, r };
     });
-    if (best) {
-      if (j.tier === 'VIP' && this.urgent(j)) {
-        let n = 0;
-        while (n < best.ids.length && (y => this.locked(y) || (y.tier === 'VIP' && this.urgent(y)))(J.by.get(best.ids[n]))) n++;
-        best.ids.splice(n, 0, j.key);
-      } else best.ids.push(j.key);
-      return true;
-    }
+    // 2026-11-10: every new work order, urgent VIP included, is an addition at the end of a route; the dispatcher moves
+    // an urgent one forward by hand when needed.
+    if (best) { best.ids.push(j.key); return true; }
     const i = P.teams.findIndex((ids, n) => !P.home[n] && !ids.length);
     if (i >= 0 && this.ok(this.fit(this.fresh(i, P, this.tbase(P, i)), j))) {
       P.teams[i].push(j.key); P.home[i] = j.cell.key; P.tb[i] = this.hubOf(i); if (P.role) P.role[i] = 'floater'; return true;
@@ -1769,10 +1765,8 @@ class Dispatch {
       e('span', { style: { font: "500 11.5px/1.4 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, txt),
       mt.noteBy || when ? e('span', { style: { font: small, color: C.accDeep } }, [mt.noteBy, when].filter(Boolean).join(' · ')) : null);
   }
-  // Recalculate the plan after a check-out (or other real progress): every team's route is checked again against its
-  // working day. Plans without manual changes are re-run in full, like the midday rebalance (started and checked-out jobs
-  // stay). Plans with manual changes keep each team's order: jobs that no longer fit go to another team or H+1, and teams
-  // that finish earlier take more work from H+1 (internal reason) on their own cell, neighbouring cells or as floater.
+  // Recalculate after a check-out (or other real progress): ETAs move, every job stays in its team at its place, and
+  // teams with time left take extra work from H+1 (internal reason) at the end of their route.
   reflow(P, msg) {
     const J = this._J, B = this._ctx && this._ctx.B;
     if (!J || !B) return this.changed(msg);
@@ -1780,16 +1774,17 @@ class Dispatch {
     const before = where();
     let how;
     {
-      const drop = [];
-      P.teams = P.teams.map((ids, i) => { if (!ids.length) return ids; const r = this.fitRoute(P, i, this.lockFirst(ids)); drop.push(...r.drop); return r.keep; });
+      // 2026-11-10: a job already in a team stays in that team at its place, even when the day runs long (the board flags
+      // it); only the dispatcher moves it. Time freed by a check-out or a cancel is used for extra work from H+1, added
+      // at the end of a route.
       const back = P.next.filter(k => (P.why[k] || 'internal') === 'internal' && !P.manual[k] && J.by.has(k));
-      const pool = drop.concat(back.filter(k => !drop.includes(k))).map(k => J.by.get(k)).filter(Boolean).sort(this.cmp);
+      const pool = back.map(k => J.by.get(k)).filter(Boolean).sort(this.cmp);
       const inPool = new Set(pool.map(j => j.key)), left = [];
       P.next = P.next.filter(k => !inPool.has(k));
       pool.forEach(j => { if (!this.place(P, j, B)) left.push(j.key); });
       left.forEach(k => { P.next.push(k); if (!P.why[k]) P.why[k] = 'internal'; });
       P.teams.forEach((t, i) => { if (!t.length) { P.home[i] = null; if (P.role) P.role[i] = null; } });
-      how = 'order kept';
+      how = 'teams and order kept';
     }
     const after = where(), diff = {};
     const bump = (i, d) => { const n = i === 'next' ? 'H+1' : this.tn(i); diff[n] = (diff[n] || 0) + d; };
@@ -1966,6 +1961,7 @@ class Dispatch {
     const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
     if (this.active) { this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); }
     const T = this.calc(P, B);
+    this.etaPublish(P, T);
     this.ensureRoutes(P, B);
     const G = this._cells = this.cellStats(P, B);
     const pal = this.pal, col = n => pal[n % pal.length];
@@ -2031,7 +2027,7 @@ class Dispatch {
         this.readOnly ? null : btn('td', 'Tidy all routes', () => { P.near = {}; P.nearSave = {}; P.teams = P.teams.map((ids, i) => ids.length ? this.nearPass(P, i, this.tidy(ids, this.tbase(P, i), P.ret)) : ids); this.changed('All routes put in order: started jobs, urgent VIP, then highest score first (ties: nearest stop), non-urgent VIP after the existing work.'); }),
         this.readOnly ? null : btn('st', this.ui.settings ? (this.limited ? 'Hide teams & crew ▴' : 'Hide settings ▴') : (this.limited ? 'Teams & crew ▾' : 'Settings ▾'), () => { if (this.ui.settings) this.ui.settings = false; else this.openSettings(); this.onChange(); }, false, this.ui.settings ? { borderColor: C.ink, background: C.bg } : null),
         !this.readOnly && this.draftDirty() && !this.ui.settings ? e('span', { key: 'dd', style: { display: 'inline-flex', alignItems: 'center', gap: 6, font: SANS, color: C.warn } }, 'Unsaved settings changes',
-          btn('dsv', this.ui.saveArmed ? 'Click again: save and re-plan (replaces manual changes)' : 'Save', () => this.saveSettings(), true, this.ui.saveArmed ? { background: C.bad, borderColor: C.bad } : null), btn('ddc', 'Discard', () => this.discardSettings())) : null,
+          btn('dsv', 'Save', () => this.saveSettings(), true, null), btn('ddc', 'Discard', () => this.discardSettings())) : null,
         this.saveState() ? e('span', { key: 'ss', style: { font: SANS, color: { good: C.good, warn: C.warn, bad: C.bad, muted: C.muted }[this.saveState()[0]] } }, this.saveState()[1]) : null,
       ]),
       ...(() => {
@@ -2116,7 +2112,7 @@ class Dispatch {
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
           this.cxList(e, P)),
-        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (jobs that no longer fit move to another team or H+1; a team that finishes early takes more work). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];
@@ -2194,6 +2190,49 @@ class Dispatch {
     return e('div', { key: 'find', style: { flex: '1 1 420px', maxWidth: 820, display: 'flex', flexDirection: 'column' } }, input, res);
   }
 
+
+  /* ---------- ETA snapshot for DotAI (Apps Script action 'eta') ----------
+     Every screen that computes today's plan (board or arrivals TV) sends a small snapshot of where each customer's WO
+     stands: status, ETA as a time instant, how many jobs come before it, and what the team is doing now. No technician
+     name, phone or position leaves this screen. Sent when the content changes, and every 5 minutes as a heartbeat so
+     the API can tell a fresh snapshot from an old one. */
+  etaRows(P, T) {
+    const now = this.nowMin(), mid = new Date(); mid.setHours(0, 0, 0, 0);
+    const at = m => Math.round(mid.getTime() + m * 60000), rows = [], J = this._J;
+    const team = (t, n) => {
+      for (let q = n - 1; q >= 0; q--) {
+        const o = t.rows[q], mo = this.st.meta[o.j.key] || {};
+        if (this.coOf(o.j) != null) break;
+        if (mo.stat === 'checkin' || this.ciOf(o.j) != null) return 'prev_onsite';
+        if (mo.stat === 'start') return 'prev_onway';
+      }
+      const anyDone = t.rows.slice(0, n).some(o => this.coOf(o.j) != null);
+      return anyDone ? 'between_jobs' : now < this.st.cfg.start ? 'not_started' : 'between_jobs';
+    };
+    T.forEach((t, i) => t.rows.forEach((r, n) => {
+      const j = r.j, mt = this.st.meta[j.key] || {}, st = this.woState(P, j, r, T);
+      let code = st.rank === 3 ? 'done' : st.label === 'On site' ? 'onsite' : st.label === 'On the way' ? 'onway'
+        : st.label === 'Waiting · mass outage' ? 'mass' : st.label === 'Waiting · team break' ? 'break' : st.label === 'Scheduled · late' ? 'late' : 'scheduled';
+      if (mt.conf === 'resched' && (code === 'scheduled' || code === 'late')) code = 'resched';
+      const ahead = t.rows.slice(0, n).filter(o => this.coOf(o.j) == null).length;
+      rows.push([j.wo, j.cid, j.uid || '', code, code === 'done' || code === 'onsite' ? null : at(r.arr), ahead, code === 'scheduled' || code === 'late' || code === 'resched' ? team(t, n) : '', mt.conf || 'none']);
+    }));
+    P.next.forEach(k => { const j = J.by.get(k); if (j) rows.push([j.wo, j.cid, j.uid || '', 'next', null, null, '', (this.st.meta[k] || {}).conf || 'none']); });
+    (J.cx || []).forEach(j => rows.push([j.wo, j.cid, j.uid || '', 'cancel', null, null, '', 'cancel']));
+    return rows;
+  }
+  etaPublish(P, T) {
+    if (!this.api || !this.api.eta || !this.sh || !this.sh.on || !P || P.date !== this.today() || !this._ctx) return;
+    let rows; try { rows = this.etaRows(P, T); } catch (e) { return; }
+    const branch = this._ctx.name, sig = JSON.stringify(rows), k = this.type + '|' + branch, E = this._eta || (this._eta = {});
+    const last = E[k];
+    if (last && (last.busy || (last.sig === sig && Date.now() - last.at < 5 * 60000))) return;
+    E[k] = { sig, at: Date.now(), busy: true };
+    this.api.eta({ type: this.type, branch, date: P.date, rows })
+      .catch(() => { E[k].at = 0; })
+      .finally(() => { E[k].busy = false; });
+  }
+
   /* ---------- arrivals board (airport style, read only) ---------- */
   // Board settings of this screen (sort, filters, page time, rows): kept in this browser only.
   arrPrefs() {
@@ -2233,6 +2272,7 @@ class Dispatch {
     const P = { ...P0, teams: P0.teams.map(t => t.filter(k => J.by.has(k))), next: P0.next.filter(k => J.by.has(k)) };
     this._ctx = { m, bi, B, name, P };
     const T = this.calc(P, B), now = this.nowMin(), pr = this.arrPrefs();
+    this.etaPublish(P, T);
     this.arrTimer();
     const rows = [];
     T.forEach((t, i) => t.rows.forEach((r, n) => { const st = this.woState(P, r.j, r, T); rows.push({ r, i, n, st, j: r.j }); }));
@@ -2709,16 +2749,15 @@ class Dispatch {
       });
     this.keepDraft();
     const dirty = this.draftDirty();
-    const sa = this.ui.saveArmed, nMan = this._ctx && this._ctx.P ? Object.keys(this._ctx.P.manual || {}).length : 0;
-    const saveLbl = sa ? 'Click again: save and re-plan' : 'Save', saveSt = sa ? { background: C.bad, borderColor: C.bad } : null;
-    const warnSave = sa ? e('span', { key: 'sw', style: { font: SANS, color: C.bad } }, 'These settings re-plan the board and replace ' + nMan + ' manual change' + (nMan > 1 ? 's' : '') + ' (started jobs and customer reschedules stay).') : null;
+    const sa = false, saveLbl = 'Save', saveSt = null;
+    const warnSave = this.ui.saveMsg ? e('span', { key: 'sw', style: { font: SANS, color: C.bad } }, this.ui.saveMsg) : null;
     const actions = row('', [btn('ap', saveLbl, () => this.saveSettings(), true, saveSt), warnSave,
       btn('cx', dirty ? 'Discard changes' : 'Close', () => this.discardSettings()),
-      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers). Planning settings re-plan the board; team names and app IDs do not.' : 'No unsaved changes.'),
+      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers). Save never changes the schedule; only Re-plan rebuilds it.' : 'No unsaved changes.'),
       this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act');
     const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
     const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
-      btn('ap0', saveLbl, () => this.saveSettings(), true, saveSt), warnSave ? e('span', { key: 'sw0', style: { font: SANS, color: C.bad } }, 'Re-plans the board') : null, dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
+      btn('ap0', saveLbl, () => this.saveSettings(), true, saveSt), warnSave ? e('span', { key: 'sw0', style: { font: SANS, color: C.bad } }, 'Not saved, see below') : null, dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
     // Dispatchers: the number of available teams and the crew (names, hub, shift, app ID) only.
     if (this.limited) return e('div', box, top,
       row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('teams today. Name each team, its hub and shift below.', 'l3b')]),
@@ -2847,18 +2886,33 @@ class Dispatch {
     }
     return keys;
   }
+  // Save never re-plans (2026-11-10): names, trackers, hubs, shifts, the number of teams and every planning setting are
+  // stored as they are and the schedule stays exactly as the dispatchers arranged it. New settings are used for work
+  // orders that join the plan from now on, and for the whole board only when someone presses Re-plan.
   saveSettings() {
     const d = this.ui.draft; if (!d) return;
     const base = JSON.parse(this.ui.base || '{}'), out = JSON.parse(JSON.stringify(this.st.cfg));
     Object.keys(d).forEach(k => { if (JSON.stringify(d[k]) !== JSON.stringify(base[k])) out[k] = d[k]; });
-    const replan = this.replanKeys(base, d).length > 0, P = this._ctx && this._ctx.P, nMan = P ? Object.keys(P.manual || {}).length : 0;
-    // Re-planning replaces hand-made changes: ask once more before doing it.
-    if (replan && nMan && !this.ui.saveArmed) { this.ui.saveArmed = true; clearTimeout(this._sarm); this._sarm = setTimeout(() => { this.ui.saveArmed = false; this.onChange(); }, 8000); this.onChange(); return; }
-    clearTimeout(this._sarm); this.ui.saveArmed = false;
+    const nNew = Math.max(1, Math.min(60, Math.round(+d.teams || 1))), today = this.today();
+    const busy = [];
+    Object.keys(this.st.plans).forEach(name => {
+      const P = this.st.plans[name];
+      if (!P || !Array.isArray(P.teams) || P.date < today) return;
+      P.teams.forEach((t, i) => { if (i >= nNew && t.length) busy.push((name !== (this._ctx && this._ctx.name) ? name + ' ' : '') + this.tn(i) + ' (' + t.length + ' WO)'); });
+    });
+    if (busy.length) { this.ui.saveMsg = 'Not saved: ' + busy.join(', ') + ' still ' + (busy.length > 1 ? 'have' : 'has') + ' work. Move those WO to another team or H+1 first, then lower the number of teams.'; return this.onChange(); }
+    this.ui.saveMsg = null;
     this.ui.draft = out;
     store.save(this.draftKey(), null);
     this.ui.saveAt = Date.now(); this.ui.base = null;
-    this.apply(replan);
+    this.apply(false);
+  }
+  // A plan has one column per available team: more teams adds empty columns (they take new work orders), never moving
+  // the work already planned.
+  syncTeams(P) {
+    const n = Math.max(1, Math.round(+this.st.cfg.teams || 1));
+    if (!P || !Array.isArray(P.teams)) return;
+    while (P.teams.length < n) { P.teams.push([]); (P.home || (P.home = [])).push(null); (P.tb || (P.tb = [])).push(this.hubOf(P.teams.length - 1)); (P.role || (P.role = [])).push(null); }
   }
   // Status of the last save: saving, saved for everyone, or why it was not shared.
   saveState() {
@@ -2896,7 +2950,8 @@ class Dispatch {
       const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0], P = this.st.plans[m.branches[bi]];
       this.ensureRoad(J, B);
       if (P && replan) { this.autoPlan(P, J, B, true); P.prov = c.roadOn && this.road.busy(); }
-      this.changed(replan ? 'Settings saved and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, busy cell >' + c.gridMin + ' WO, ' + c.floatPct + '% floaters).' : 'Settings saved (team names / app IDs only); the board was not re-planned.');
+      else Object.values(this.st.plans).forEach(p => this.syncTeams(p));
+      this.changed(replan ? 'Settings saved and the plan was re-run (cell ' + c.gridKm + ' km, ' + c.teams + ' teams, busy cell >' + c.gridMin + ' WO, ' + c.floatPct + '% floaters).' : 'Settings saved. The schedule was not changed: teams and order stay as arranged. Press Re-plan only to rebuild the whole schedule with these settings.');
     } catch (err) {
       console.error('IDS re-plan failed', err);
       this.changed('Settings saved, but the re-plan failed: ' + (err && err.message || err) + '. Press Re-plan automatically or reload.');

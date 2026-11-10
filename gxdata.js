@@ -1633,6 +1633,15 @@ export async function idsPost(body) {
   return out;
 }
 
+// ETA snapshot of today's plan for the DotAI ETA API (roles.gs, action 'eta'). An older proxy answers an error: ignored.
+export async function etaPost(body) {
+  const k = readKey(); if (!k || !useProxy()) return null;
+  const res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'eta', key: k, ...body }) });
+  let out = null; try { out = JSON.parse(await res.text()); } catch (e) { out = null; }
+  if (!out || out.error) throw new Error((out && out.error) || 'The proxy did not answer the ETA snapshot.');
+  return out;
+}
+
 /* ---------- shared live-tracking settings (Apps Script proxy) ----------
    trackGet: the Traccar settings an admin saved for everyone, null when none (or an older proxy). trackPut: admins only. */
 export async function trackGet() {
