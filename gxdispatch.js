@@ -93,6 +93,7 @@ const DEF = {
   teams: 10, gridKm: 3, speed: 35, road: 1.3, roadOn: true, osrm: 'https://router.project-osrm.org',
   zTour: 2.0, zDense: 1.7, zMid: 1.4, zOpen: 1.2, tR: 2.5,
   maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
+  dispPlan: false,   // dispatchers may change the planning setup (team count, hub, shift); off = admin only
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30, massH: 6, massM: 300,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
   sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, coBack: 60, jobTypes: null,
@@ -675,6 +676,8 @@ class Dispatch {
   }
   // Latest time a job may start for a team: lastBefore minutes before its shift end. The job may finish after the shift.
   tlast(i) { return (i != null ? this.tend(i) : this.st.cfg.end) - Math.max(0, +this.st.cfg.lastBefore || 0); }
+  // Planning setup (number of teams, hubs, shifts) is admin-only unless the admin lets dispatchers change it.
+  canPlan() { return !this.readOnly && (!this.limited || !!this.st.cfg.dispPlan); }
   setCrew(i, patch) { const a = (this.st.cfg.crew || []).slice(); a[i] = { ...(a[i] || {}), ...patch }; this.st.cfg.crew = a; }
   nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; }
   // Planned lunch, taken out of every team's day. Replaced by the real break once the technician app reports one.
@@ -1794,7 +1797,8 @@ class Dispatch {
   }
   move(P, key, dest, idx, label) {
     const J = this._J, j = J.by.get(key);
-    if (!j || this.locked(j)) return;
+    // A started job stays where it is, except one waiting in H+1: a dispatcher may hand it to any team (2026-11-11).
+    if (!j || (this.locked(j) && !P.next.includes(key))) return;
     // Remembered until the server has it, so it can be re-applied on top of someone else's simultaneous change.
     if (this.sh && this.sh.on) (this.sh.ops = this.sh.ops || []).push({ plan: this._ctx && this._ctx.name, key, dest, idx, before: this.neighbour(P, key, dest, idx) });
     const from = P.next.includes(key) ? 'H+1' : this.tn(P.teams.findIndex(t => t.includes(key)));
@@ -1824,7 +1828,7 @@ class Dispatch {
   }
   replan() {
     if (this.behind) return;
-    if (!this.ui.armed) { this.ui.armed = true; clearTimeout(this._arm); this._arm = setTimeout(() => { this.ui.armed = false; this.onChange(); }, 4000); this.onChange(); return; }
+    if (!this.ui.armed) { this.ui.armed = true; clearTimeout(this._arm); this._arm = setTimeout(() => { this.ui.armed = false; this.onChange(); }, 6000); this.onChange(); return; }
     clearTimeout(this._arm); this.ui.armed = false;
     const { P, B } = this._ctx;
     this.autoPlan(P, this._J, B, true);
@@ -2013,7 +2017,7 @@ class Dispatch {
         this.future(P) ? pill('Prepared ahead · kept as it is until Re-plan', 'acc', 'pf') : null,
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
         this.readOnly ? e('span', { key: 'ro', style: { padding: '2px 8px', borderRadius: 3, background: C.soft, color: C.ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, 'View only') : null,
-        this.readOnly ? null : btn('rp', armed ? 'Click again to replace manual changes' : 'Re-plan automatically', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
+        this.readOnly ? null : btn('rp', armed ? 'Click again: rebuild the whole schedule (teams and order change)' : 'Re-plan (rebuild schedule)', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
         !this.readOnly && P.date === this.today() && this.nowMin() >= Math.max(...P.teams.map((t, i) => this.tend(i)), cfg.end) - 30
           ? e('span', { key: 'eve', style: { padding: '2px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.warnBg, color: C.warn, font: SANS } }, 'Planning tomorrow? Press Prepare plan first: this board is today\u2019s plan.') : null,
         !this.readOnly && P.date === this.today() ? (() => {
@@ -2429,7 +2433,7 @@ class Dispatch {
   }
   // One job as a table row: the same information and actions as a board card.
   rowEl(e, P, j, r, colId, idx, pill) {
-    const mt = this.st.meta[j.key] || { conf: 'none', stat: 'none' }, lk = this.locked(j), ro = this.readOnly, ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
+    const mt = this.st.meta[j.key] || { conf: 'none', stat: 'none' }, lk = this.locked(j) && !P.next.includes(j.key), ro = this.readOnly, ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
     const td = (k, kids, st) => e('td', { key: k, style: { padding: '7px 6px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'top', font: SANS, color: C.text, ...(st || {}) } }, kids);
     const sel = (key, val, opts, onChange, label) => e('select', { key, value: val, onChange, 'aria-label': label, style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 122 } },
       ...Object.entries(opts).map(([k, v]) => e('option', { key: k, value: k }, v)));
@@ -2518,7 +2522,7 @@ class Dispatch {
     const BS = this._BS || [], cur = this.crew(n).base || 0;
     return e('div', { key: 'hb', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: MONO, color: C.muted } },
       home ? e('span', { style: { color: (P.role || [])[n] === 'floater' ? C.warn : C.ink } }, ((P.role || [])[n] === 'floater' ? 'Floater · from ' : 'Anchor · ') + home) : null,
-      BS.length > 1 && !this.readOnly ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
+      BS.length > 1 && this.canPlan() ? e('select', { value: cur, 'aria-label': 'Start base', onChange: ev => { this.setCrew(n, { base: +ev.target.value }); this.changed(this.tn(n) + ' now departs from and returns to ' + BS[+ev.target.value].name + '. Press Re-plan to reassign its work.'); },
         style: { padding: '2px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: 150 } },
         ...BS.map((b, i) => e('option', { key: i, value: i }, 'From ' + b.name + (i === 0 ? ' (default)' : ''))))
         : e('span', null, 'From ' + ((BS[this.readOnly ? cur : 0] || BS[0] || {}).name || 'base')),
@@ -2619,7 +2623,7 @@ class Dispatch {
   cardEl(e, P, j, r, colId, idx, pill) {
     if (!j) return null;
     const mt = this.st.meta[j.key] || { conf: 'none', stat: 'none', aging: [] };
-    const lk = this.locked(j), sc = this.score(j), ag = mt.aging ? mt.aging.length : 0;
+    const lk = this.locked(j) && !P.next.includes(j.key), sc = this.score(j), ag = mt.aging ? mt.aging.length : 0; // a deferred WO can always be moved by hand
     const drop = this.ui.drop, line = drop && drop.col === colId && drop.idx === idx && this.ui.drag !== j.key;
     const sel = (key, val, opts, onChange, label) => e('select', { key, value: val, onChange, 'aria-label': label, onMouseDown: ev => ev.stopPropagation(),
       style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, maxWidth: '100%', cursor: 'pointer' } },
@@ -2729,40 +2733,68 @@ class Dispatch {
     const name = m.branches[bi];
     const bl = this.draftBases(d, name), setB = () => { d.bases = { ...d.bases, [name]: bl }; this.onChange(); };
     const tx = { padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO };
-    const crewRows = Array.from({ length: Math.max(1, Math.round(+d.teams || 1)) }, (_, n) => {
+    const canPlan = this.canPlan(), dis = canPlan ? {} : { disabled: true };
+    const nTeams = Math.max(1, Math.round(+d.teams || 1));
+    const tLab = n => e('span', { key: 'tl', style: { ...tx, width: 170, display: 'inline-block', border: 0, background: 'transparent', font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (d.names || [])[n] || 'Team ' + (n + 1));
+    // 1. Team details: name and tracker. Never changes an ETA or the schedule.
+    const detailRows = Array.from({ length: nTeams }, (_, n) => {
         const cr = (d.crew || [])[n] || {}, upd = p => { const a = (d.crew || []).slice(); a[n] = { ...(a[n] || {}), ...p }; d.crew = a; this.onChange(); };
-        const st = isFinite(cr.start) && cr.start !== '' ? +cr.start : d.start;
         const nm = (d.names || [])[n] || '';
-        return row(n ? '' : 'Crew', [
+        return row(n ? '' : 'Team', [
           e('input', { key: 'cn', type: 'text', value: nm, placeholder: 'Team ' + (n + 1), 'aria-label': 'Team ' + (n + 1) + ' name', maxLength: 40,
             onChange: ev => { const a = (d.names || []).slice(); a[n] = ev.target.value; d.names = a; this.onChange(); },
             style: { ...tx, width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif" } }),
-          e('select', { key: 'cb', value: cr.base || 0, onChange: ev => upd({ base: +ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, maxWidth: 260 } },
-            ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Hub ' + (k + 1)) + (k === 0 ? ' (default)' : '')))),
-          lab('Shift start', 'cs' + n),
-          e('input', { key: 'ct', type: 'time', value: hm(st), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ start: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
-          lab('end', 'ce' + n),
-          e('input', { key: 'cte', type: 'time', value: hm(isFinite(cr.end) && cr.end !== '' && cr.end !== null ? +cr.end : st + (d.end - d.start)), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ end: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO } }),
           lab('Tracker', 'ca' + n),
           ...this.trackerField(e, cr, upd, d, n, tx),
+        ], 'det' + n);
+      });
+    // 2. Planning setup per team: hub and shift. Changes ETAs and the next Re-plan, never the order of the schedule.
+    const crewRows = Array.from({ length: nTeams }, (_, n) => {
+        const cr = (d.crew || [])[n] || {}, upd = p => { const a = (d.crew || []).slice(); a[n] = { ...(a[n] || {}), ...p }; d.crew = a; this.onChange(); };
+        const st = isFinite(cr.start) && cr.start !== '' ? +cr.start : d.start;
+        return row(n ? '' : 'Hub & shift', [
+          tLab(n),
+          e('select', { key: 'cb', ...dis, value: cr.base || 0, onChange: ev => upd({ base: +ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: canPlan ? C.white : C.soft, color: C.ink, font: SANS, maxWidth: 260 } },
+            ...bl.map((b, k) => e('option', { key: k, value: k }, 'From ' + (b.name || 'Hub ' + (k + 1)) + (k === 0 ? ' (default)' : '')))),
+          lab('Shift start', 'cs' + n),
+          e('input', { key: 'ct', ...dis, type: 'time', value: hm(st), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ start: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: canPlan ? C.white : C.soft, color: C.ink, font: MONO } }),
+          lab('end', 'ce' + n),
+          e('input', { key: 'cte', ...dis, type: 'time', value: hm(isFinite(cr.end) && cr.end !== '' && cr.end !== null ? +cr.end : st + (d.end - d.start)), onChange: ev => { const [a, b] = String(ev.target.value).split(':').map(Number); if (isFinite(a) && isFinite(b)) upd({ end: a * 60 + b }); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: canPlan ? C.white : C.soft, color: C.ink, font: MONO } }),
         ], 'crew' + n);
       });
     this.keepDraft();
     const dirty = this.draftDirty();
-    const sa = false, saveLbl = 'Save', saveSt = null;
     const warnSave = this.ui.saveMsg ? e('span', { key: 'sw', style: { font: SANS, color: C.bad } }, this.ui.saveMsg) : null;
-    const actions = row('', [btn('ap', saveLbl, () => this.saveSettings(), true, saveSt), warnSave,
-      btn('cx', dirty ? 'Discard changes' : 'Close', () => this.discardSettings()),
-      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Save shares them with every screen (admin and dispatchers). Save never changes the schedule; only Re-plan rebuilds it.' : 'No unsaved changes.'),
-      this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act');
+    const dDirty = this.detailsDirty();
+    const head = (k, title, note, color) => e('div', { key: k, style: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 6, borderTop: '1px solid ' + C.line } },
+      e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, title),
+      e('span', { style: { font: SANS, color: color || C.muted } }, note));
+    const detBlock = [
+      head('h1', '1 · Team details (name and tracker)', 'Safe to change at any time. Saving does not change any ETA, team or order of the schedule.', C.good),
+      ...detailRows,
+      row('', [btn('sd', 'Save team details', () => this.saveDetails(), true, dDirty ? null : { opacity: 0.6 }),
+        e('span', { key: 'sdn', style: { font: SANS, color: dDirty ? C.warn : C.muted } }, dDirty ? 'Unsaved team details.' : 'No unsaved team details.')], 'sdr'),
+    ];
+    const planNote = canPlan
+      ? 'Affects ETA times now and how teams are built at the next Re-plan. Saving never moves a WO to another team and never changes the order. Only the Re-plan button on the board rebuilds the schedule.'
+      : 'Locked: only an admin can change the number of teams, hubs and shifts. Ask an admin if a team works another shift or from another hub today.';
+    const planBtn = canPlan ? row('', [btn('ap', 'Save planning setup', () => this.saveSettings(), true, null), warnSave,
+      e('span', { key: 'sn', style: { font: SANS, color: dirty ? C.warn : C.muted } }, dirty ? 'Unsaved changes. Shared with every screen (admin and dispatchers) once saved.' : 'No unsaved changes.'),
+      this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew, dispPlan: d.dispPlan }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act') : null;
+    const close = row('', [btn('cx', dirty ? 'Discard all unsaved changes' : 'Close', () => this.discardSettings())], 'cls');
     const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
     const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
-      btn('ap0', saveLbl, () => this.saveSettings(), true, saveSt), warnSave ? e('span', { key: 'sw0', style: { font: SANS, color: C.bad } }, 'Not saved, see below') : null, dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
-    // Dispatchers: the number of available teams and the crew (names, hub, shift, app ID) only.
-    if (this.limited) return e('div', box, top,
-      row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('teams today. Name each team, its hub and shift below.', 'l3b')]),
-      ...crewRows, actions);
-    return e('div', box, top,
+      dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
+    const actions = planBtn;
+    // Dispatchers: team details always; the planning setup only when the admin allows it (else shown read-only).
+    if (this.limited) return e('div', box, top, ...detBlock,
+      head('h2', '2 · Planning setup (number of teams, hub, shift)', planNote, canPlan ? C.warn : C.muted),
+      row('Teams', [lab('Available', 'l3'), e('input', { key: 'nteams', type: 'number', ...dis, step: 1, value: d.teams, 'aria-label': 'teams', onChange: ev => { d.teams = ev.target.value === '' ? '' : +ev.target.value; this.onChange(); }, style: { width: 56, padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: canPlan ? C.white : C.soft, color: C.ink, font: MONO, outline: 'none' } }), lab('teams today', 'l3b')]),
+      ...crewRows, actions, close);
+    return e('div', box, top, ...detBlock,
+      head('h2', '2 · Planning setup', planNote, C.warn),
+      row('Access', [chip('dp', !!d.dispPlan, 'Dispatchers may change the planning setup (number of teams, hub, shift)', null, null, () => set('dispPlan', !d.dispPlan)),
+        lab('Off: dispatchers can only change team names and trackers.', 'dp2')]),
       row('Scope', [lab('Open orders from the last', 'l1'), num('maxAge', 60), lab('days', 'l2'),
         chip('sb', d.blocked, 'Include Blocked accounts', null, null, () => set('blocked', !d.blocked)),
         chip('sp', d.prog, 'Include In Progress orders', null, null, () => set('prog', !d.prog))]),
@@ -2811,7 +2843,7 @@ class Dispatch {
       ], 'base' + n)),
       row('', [btn('ab', '+ Add hub', () => { const l = bl[bl.length - 1] || { lat: -8.67, lng: 115.17 }; bl.push({ name: 'Hub ' + (bl.length + 1), lat: l.lat, lng: l.lng }); setB(); }),
         lab('Every team departs from and returns to the first (default) hub unless another hub is assigned to it under Crew or on the board. Way-back pick-ups head to the team\u2019s own hub. Removing a hub moves its teams back to the default hub. Paste coordinates from Google Maps as "lat, lng".', 'bh')], 'addb'),
-      actions);
+      actions, close);
   }
   /* ---------- saving settings ----------
      The panel edits a draft. The draft is kept in this browser until it is saved or discarded, so closing the panel or the
@@ -2886,11 +2918,34 @@ class Dispatch {
     }
     return keys;
   }
+  // Team details = names and trackers. Saved on their own, straight into the shared settings; the planning draft stays.
+  detailPick(c, n) { return { names: Array.from({ length: n }, (_, i) => String(((c.names || [])[i]) == null ? '' : c.names[i]).trim()), apps: Array.from({ length: n }, (_, i) => String((((c.crew || [])[i]) || {}).app || '')) }; }
+  detailsDirty() {
+    const d = this.ui.draft; if (!d) return false;
+    const n = Math.max(1, Math.round(+d.teams || 1), Math.round(+this.st.cfg.teams || 1));
+    return JSON.stringify(this.detailPick(d, n)) !== JSON.stringify(this.detailPick(JSON.parse(this.ui.base || '{}'), n));
+  }
+  saveDetails() {
+    const d = this.ui.draft; if (!d || this.readOnly) return;
+    const c = this.st.cfg, n = Math.max(1, Math.round(+d.teams || 1), Math.round(+c.teams || 1)), pick = this.detailPick(d, n);
+    const names = (c.names || []).slice(), crew = (c.crew || []).slice();
+    const base = JSON.parse(this.ui.base || '{}'), bNames = (base.names || []).slice(), bCrew = (base.crew || []).slice();
+    for (let i = 0; i < n; i++) {
+      names[i] = pick.names[i].slice(0, 40); bNames[i] = (d.names || [])[i];
+      crew[i] = { ...(crew[i] || {}), app: pick.apps[i] };
+      bCrew[i] = { ...(bCrew[i] || {}), app: ((d.crew || [])[i] || {}).app };
+    }
+    c.names = names; c.crew = crew;
+    base.names = bNames; base.crew = bCrew; this.ui.base = JSON.stringify(base);
+    this.keepDraft(); this.ui.saveAt = Date.now();
+    this.changed('Team details saved (names and trackers). ETA times, teams and the order of the schedule were not changed.');
+  }
   // Save never re-plans (2026-11-10): names, trackers, hubs, shifts, the number of teams and every planning setting are
   // stored as they are and the schedule stays exactly as the dispatchers arranged it. New settings are used for work
   // orders that join the plan from now on, and for the whole board only when someone presses Re-plan.
   saveSettings() {
     const d = this.ui.draft; if (!d) return;
+    if (!this.canPlan()) { this.ui.saveMsg = 'Only an admin can change the planning setup.'; return this.onChange(); }
     const base = JSON.parse(this.ui.base || '{}'), out = JSON.parse(JSON.stringify(this.st.cfg));
     Object.keys(d).forEach(k => { if (JSON.stringify(d[k]) !== JSON.stringify(base[k])) out[k] = d[k]; });
     const nNew = Math.max(1, Math.min(60, Math.round(+d.teams || 1))), today = this.today();
@@ -2940,7 +2995,7 @@ class Dispatch {
       gridMin: Math.round(clean(d.gridMin, 0, 50, DEF.gridMin)), floatPct: clean(d.floatPct, 0, 50, DEF.floatPct),
       lunchAt: clean(d.lunchAt, 0, 1439, DEF.lunchAt), lunchMin: clean(d.lunchMin, 0, 180, DEF.lunchMin), slaB0: clean(d.slaB0, 0, 5000, DEF.slaB0), slaBd: clean(d.slaBd, 0, 5000, DEF.slaBd),
       sla: clean(d.sla, 1, 240, DEF.sla), slaVip: clean(d.slaVip, 1, 240, DEF.slaVip), nearH: clean(d.nearH, 0.5, 24, DEF.nearH),
-      rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt),
+      rebOn: !!d.rebOn, rebAt: clean(d.rebAt, 0, 1439, DEF.rebAt), dispPlan: this.limited ? !!c.dispPlan : !!d.dispPlan,
       dur: Object.fromEntries(Object.keys(CATS).map(k => [k, clean((d.dur || {})[k], 10, 720, CATS[k].d)])),
       jobTypes: Array.isArray(d.jobTypes) ? this.cleanTypes(d.jobTypes) : c.jobTypes || null,
     });

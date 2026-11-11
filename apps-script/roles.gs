@@ -247,7 +247,15 @@ function gxIdsPost_(user, req) {
         if (!v) return;
         if (user.role !== 'admin' && st.cfg) {           // dispatchers change team setup only
           const c = Object.assign({}, st.cfg);
-          GX_IDS_TEAM_KEYS.forEach(k => { if (k in v) c[k] = v[k]; });
+          if (st.cfg.dispPlan) GX_IDS_TEAM_KEYS.forEach(k => { if (k in v) c[k] = v[k]; });
+          else {                                         // planning setup locked by the admin: names and trackers only
+            if (Array.isArray(v.names)) c.names = v.names;
+            if (Array.isArray(v.crew)) c.crew = Array.from({ length: Math.max(v.crew.length, (st.cfg.crew || []).length) }, (_, i) => v.crew[i]).map((x, i) => {
+              const old = (st.cfg.crew || [])[i] || null;
+              const app = x && x.app != null ? String(x.app) : old && old.app;
+              return old ? Object.assign({}, old, { app: app }) : (app ? { app: app } : null);
+            });
+          }
           v = c;
         }
         st.cfg = v;

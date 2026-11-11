@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-11 (IDS: team details and planning setup saved apart)
+
+### Changed
+
+- **Teams & crew / Settings is split in two, each with its own Save.**
+  - **1 · Team details** (name, tracker): Save team details. Never changes an ETA, a team or the order of the schedule.
+  - **2 · Planning setup** (number of teams, hub, shift; for admins also every planning setting): Save planning setup. Changes ETA times and how the next Re-plan builds teams, never moves or reorders a WO.
+- **Planning setup is admin-only by default.** New admin switch under Settings > Access: "Dispatchers may change the planning setup". Off: dispatchers see it read-only, cannot change a team's hub on the board, and the proxy keeps only names and trackers from a dispatcher's save (`apps-script/roles.gs`, needs a new Apps Script deployment).
+- **Re-plan is the only button that rebuilds the schedule** and always asks twice: "Re-plan (rebuild schedule)" then "Click again: rebuild the whole schedule (teams and order change)".
+- **A WO waiting in H+1 can always be moved by hand**, also when it is In Progress in the data or the team had started it (Move to, arrows, drag). Once in a team, a started job stays fixed as before.
+
 ## 2026-11-10 (IDS: the schedule only changes on Re-plan)
 
 ### Changed
