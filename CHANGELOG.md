@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-12 (IDS: started cards move to the top again)
+
+### Fixed
+
+- A card set to On the way, Checked in or Checked out (by hand, or automatically from the tracker) moves to the top of its team again, in the order the work really happened: checked out by time, then checked in / In Progress, then on the way. Only those cards move; every other card keeps the dispatcher's order and its team. This had stopped on 2026-11-10, when check-out stopped moving work between teams.
+
 ## 2026-11-11 (IDS: team details and planning setup saved apart)
 
 ### Changed

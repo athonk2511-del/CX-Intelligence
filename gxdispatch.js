@@ -416,7 +416,7 @@ class Dispatch {
       delete seen[dv.id];
       done.push(best.j.wo + ' (' + this.tn(i) + ', tracker ' + dv.name + ' ' + Math.round(best.m) + ' m away at ' + hm(min) + ')');
     });
-    if (done.length) this.changed('Checked in automatically: ' + done.join('; ') + '.');
+    if (done.length) { this.liftStarted(P); this.changed('Checked in automatically: ' + done.join('; ') + '.'); }
   }
 
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
@@ -830,6 +830,9 @@ class Dispatch {
   // Started jobs first, in the order they really happened: checked out (by check-out time), then the job the team is
   // working on (checked in / In Progress), then the one it is driving to. The other jobs keep their order after them.
   lockRank(j) { const co = this.coOf(j), s = (this.st.meta[j.key] || {}).stat; return co != null ? co : s === 'start' ? 3000 : 2000; }
+  // Started work moves to the top of its team in the order it really happened (checked out by time, then checked in /
+  // In Progress, then on the way). Only those cards move; the rest keep the dispatcher's order and stay in their team.
+  liftStarted(P) { P.teams = P.teams.map(t => t.length ? this.lockFirst(t) : t); }
   lockFirst(ids) {
     const by = k => this._J.by.get(k), lk = ids.filter(k => by(k) && this.locked(by(k)));
     if (!lk.length) return ids;
@@ -1690,6 +1693,7 @@ class Dispatch {
     if (v === 'checkout') { if (mt.co == null || mt.coDay !== this.today()) { mt.co = Math.floor(this.nowMin()); mt.coDay = this.today(); } delete mt.coAuto; }
     else { delete mt.co; delete mt.coDay; delete mt.coAuto; }
     const msg = j.wo + ': technician status ' + STAT[v] + (v === 'checkout' ? ' at ' + hm(mt.co) : '') + (v !== 'none' ? ' (locked)' : '') + '.';
+    this.liftStarted(P);
     if (v === 'checkout' || was != null) return this.reflow(P, msg);
     this.changed(msg);
   }
@@ -1774,6 +1778,7 @@ class Dispatch {
     const J = this._J, B = this._ctx && this._ctx.B;
     if (!J || !B) return this.changed(msg);
     const where = () => { const m = new Map(); P.teams.forEach((t, i) => t.forEach(k => m.set(k, i))); P.next.forEach(k => m.set(k, 'next')); return m; };
+    this.liftStarted(P);
     const before = where();
     let how;
     {
