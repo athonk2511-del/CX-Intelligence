@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-12 (IDS: In Progress orders movable, mass outage title)
+
+### Changed
+
+- **"In Progress" in the source data no longer locks a card.** Only the technician status (On the way, Checked in, Checked out, by hand or from the tracker) locks a card and moves it to the top. A WO that is In Progress in the data but Not started on the board can be moved (Move to, arrows, drag), cancelled, auto checked in, and its ETA is planned like any other job. The "In progress" chip stays on the card as information.
+- **Mass outage form:** the first box is now the **Gamas title** (as in the WO / ticket, up to 100 characters), the second the optional location. Text typed in the wrong box is put in the right one (a title in the location box becomes the title; coordinates in the title box become the location).
+
 ## 2026-11-12 (IDS: started cards move to the top again)
 
 ### Fixed

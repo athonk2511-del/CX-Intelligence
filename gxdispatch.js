@@ -402,7 +402,7 @@ class Dispatch {
       let best = null;
       ids.forEach(k => {
         const j = J.by.get(k), mt = this.st.meta[k] || {};
-        if (!j || j.prog || !(mt.stat == null || mt.stat === 'none' || mt.stat === 'start') || mt.noAuto === day) return;
+        if (!j || !(mt.stat == null || mt.stat === 'none' || mt.stat === 'start') || mt.noAuto === day) return;
         const m = this.metres(dv, j);
         if (m <= R && (!best || m < best.m)) best = { k, j, m };
       });
@@ -748,7 +748,7 @@ class Dispatch {
       // called while the team worked here starts after this job, so it stays for the next job.
       let n = 0; while (n < E.length && E[n].at < co && !(E[n].type === 'mass' && E[n].at >= sp.arr)) n++;
       k.i = n;
-    } else if (st === 'checkin' || (j.prog && st !== 'start')) {
+    } else if (st === 'checkin') {
       const ci = this.ciOf(j);
       if (ci != null) {
         let n = from(ci), end = ci + this.dur(j), dl = 0; const hit = [];
@@ -826,7 +826,9 @@ class Dispatch {
   }
   urgent(j) { return this.cat(j.cat).s >= 400; }
   vipLate(j) { return j.tier === 'VIP' && !this.urgent(j); }
-  locked(j) { const s = (this.st.meta[j.key] || {}).stat; return j.prog || s === 'start' || s === 'checkin' || s === 'checkout'; }
+  // Locked = the team has started it (dispatcher's technician status or the tracker). "In Progress" in the source data
+  // is shown as information only: there it can mean assigned, not on site (2026-11-12).
+  locked(j) { const s = (this.st.meta[j.key] || {}).stat; return s === 'start' || s === 'checkin' || s === 'checkout'; }
   // Started jobs first, in the order they really happened: checked out (by check-out time), then the job the team is
   // working on (checked in / In Progress), then the one it is driving to. The other jobs keep their order after them.
   lockRank(j) { const co = this.coOf(j), s = (this.st.meta[j.key] || {}).stat; return co != null ? co : s === 'start' ? 3000 : 2000; }
@@ -1531,15 +1533,18 @@ class Dispatch {
     const at = +m[1] * 60 + +m[2], h = +String(hoursText || '').replace(',', '.');
     if (!isFinite(h) || h < 0.5 || h > 12) { err[i] = 'Handling time: 0.5 to 12 hours.'; return this.onChange(); }
     if (at < this.tstart(i)) { err[i] = 'The start cannot be before the shift start (' + hm(this.tstart(i)) + ').'; return this.onChange(); }
+    // Typed in the wrong box: coordinates in the title box become the location, a title in the location box the title.
+    if (!String(llText || '').trim() && parseLL(note)) { llText = note; note = ''; }
+    else if (parseLL(llText) === false && !String(note || '').trim()) { note = llText; llText = ''; }
     const ll = parseLL(llText);
-    if (ll === false) { err[i] = 'Location: paste latitude, longitude, for example -8.6638, 115.1673.'; return this.onChange(); }
+    if (ll === false) { err[i] = 'Location: paste latitude, longitude, for example -8.6638, 115.1673. The gamas title goes in the first box.'; return this.onChange(); }
     delete err[i]; this.ui.massFor = null;
     const J = this._J, ids = P.teams[i] || [];
     const on = ids.find(k => { const j = J.by.get(k); return j && this.ciOf(j) != null && this.coOf(j) == null; });
     const back = ids.filter(k => (this.st.meta[k] || {}).stat === 'start');
     back.forEach(k => { const mt = this.meta(k); mt.stat = 'none'; });
     if (!P.ev) P.ev = {};
-    const ev = { type: 'mass', at, dur: Math.round(h * 60), fixed: true, src: 'dispatcher', by: this.user || '', note: String(note || '').replace(/\s+/g, ' ').trim().slice(0, 60), after: on || null, ...(ll || {}) };
+    const ev = { type: 'mass', at, dur: Math.round(h * 60), fixed: true, src: 'dispatcher', by: this.user || '', note: String(note || '').replace(/\s+/g, ' ').trim().slice(0, 100), after: on || null, ...(ll || {}) };
     (P.ev[i] || (P.ev[i] = [])).push(ev);
     P.ev[i].sort((a, b) => a.at - b.at);
     const eff = this.massAt(P, i, ev), jw = on ? J.by.get(on) : null;
@@ -1848,10 +1853,10 @@ class Dispatch {
   // itself). Allowed while the job is not contacted yet or the team is only on the way; not once checked in/out or In
   // Progress in the data. The plan is recalculated at once: later ETAs move up and teams with time left take more work.
   // The WO stays out on every screen and on later days until it is closed in the source data, or restored by hand.
-  cancelable(j) { const s = (this.st.meta[j.key] || {}).stat; return !j.prog && s !== 'checkin' && s !== 'checkout'; }
+  cancelable(j) { const s = (this.st.meta[j.key] || {}).stat; return s !== 'checkin' && s !== 'checkout'; }
   cancel(P, j) {
     if (this.readOnly) return;
-    if (!this.cancelable(j)) { this.note(j.wo + ': cannot be cancelled once checked in, checked out or In Progress.'); this.ver++; return this.onChange(); }
+    if (!this.cancelable(j)) { this.note(j.wo + ': cannot be cancelled once checked in or checked out.'); this.ver++; return this.onChange(); }
     const ask = j.wo + ' (' + (j.uid || j.cid) + (j.name ? ' · ' + j.name : '') + ')\n\nCancel this WO? It is removed from the plan and every ETA is recalculated. It can be restored from the Cancelled WO list.';
     if (typeof window !== 'undefined' && window.confirm && !window.confirm(ask)) { this.ver++; return this.onChange(); }
     const mt = this.meta(j.key), pz = mt.pz || (mt.pz = []);
@@ -2584,11 +2589,14 @@ class Dispatch {
       e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: C.ink } }, 'Called at',
         e('input', { name: 'ms', type: 'text', inputMode: 'numeric', defaultValue: def, maxLength: 5, placeholder: 'hh:mm', 'aria-label': 'Mass outage start', style: { ...tx, width: 52 } }),
         'for', e('input', { name: 'mh', type: 'number', step: 0.5, min: 0.5, max: 12, defaultValue: hrs, 'aria-label': 'Handling time in hours', style: { ...tx, width: 52 } }), 'h'),
-      e('input', { name: 'ml', type: 'text', maxLength: 80, placeholder: 'Location: lat, lng (from Google Maps)', 'aria-label': 'Mass outage location (latitude, longitude)',
-        style: { ...tx, font: "500 12px 'IBM Plex Mono',ui-monospace,monospace", width: '100%', boxSizing: 'border-box' } }),
-      e('input', { name: 'mn', type: 'text', maxLength: 60, placeholder: 'Area / ODP / ticket (optional)', 'aria-label': 'Mass outage place or note',
-        onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
-        style: { ...tx, font: "400 12px 'IBM Plex Sans',system-ui,sans-serif", width: '100%', boxSizing: 'border-box' } }),
+      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'Gamas title (as in the WO / ticket)',
+        e('input', { name: 'mn', type: 'text', maxLength: 100, placeholder: 'e.g. Gamas Cemagi / GX-DPS-44692', 'aria-label': 'Mass outage title',
+          onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
+          style: { ...tx, font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", width: '100%', boxSizing: 'border-box' } })),
+      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'Location (optional): latitude, longitude from Google Maps',
+        e('input', { name: 'ml', type: 'text', maxLength: 80, placeholder: 'e.g. -8.626317, 115.11262', 'aria-label': 'Mass outage location (latitude, longitude)',
+          onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
+          style: { ...tx, font: "500 12px 'IBM Plex Mono',ui-monospace,monospace", width: '100%', boxSizing: 'border-box' } })),
       on ? e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'On site at ' + on.wo + ': the team finishes it first, then goes (about ' + hm(this.massEff({ at: now, dur: 60, after: on.key }, this.baseEv(P, n)).at) + ').') : null,
       e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Every ETA after it moves. Jobs this team was driving to go back to Not started. With a location, the outage shows on the map, drives to and from it are counted, and the tracker checks the team in and out.'),
       e('span', { style: { display: 'flex', gap: 6 } },
