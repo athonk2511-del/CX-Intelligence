@@ -395,7 +395,7 @@ class Dispatch {
   autoCheckin(P) {
     const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J;
     if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
-    const seen = this._ciSeen || (this._ciSeen = {}), day = this.today(), done = [];
+    const seen = this._ciSeen || (this._ciSeen = {}), day = this.today(), done = [], made = [];
     P.teams.forEach((ids, i) => {
       const dv = this.trackerOf(i);
       if (!dv || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) return;
@@ -415,8 +415,131 @@ class Dispatch {
       mt.stat = 'checkin'; mt.ci = min; mt.ciDay = day; mt.ciAuto = { m: Math.round(best.m), dev: dv.name };
       delete seen[dv.id];
       done.push(best.j.wo + ' (' + this.tn(i) + ', tracker ' + dv.name + ' ' + Math.round(best.m) + ' m away at ' + hm(min) + ')');
+      made.push([i, best.k, min]);
     });
-    if (done.length) { this.liftStarted(P); this.changed('Checked in automatically: ' + done.join('; ') + '.'); }
+    if (done.length) {
+      this.liftStarted(P);
+      if (made.length && this._ctx && this._ctx.B) { const T = this.calc(P, this._ctx.B); made.forEach(([i, k, min]) => this.fuMake(P, T, i, k, min)); }
+      this.changed('Checked in automatically: ' + done.join('; ') + '.');
+    }
+  }
+
+
+  /* ---------- follow-up alert after an automatic check-in (2026-11-13) ----------
+     When a team's tracker checks it in at WO A, every dispatcher screen of that branch gets a flashing pop-up with a
+     ring: follow up the team's next customer (WO B) with an arrival window of ETA to ETA + 2 h. It closes on every
+     screen once one dispatcher types the agent who takes the follow-up. Stored on WO A's shared record (meta.fu), so
+     all screens see the same alert; the agent is also kept on WO B (meta.fuBy) and in the change log.
+     WO B = the next job of the same team that is not started and whose customer is not Confirmed yet. If there is none,
+     the pop-up only informs and closes with OK. Manual check-ins do not raise it. */
+  fuNext(P, T, i, keyA) {
+    const t = T[i]; if (!t) return null;
+    const n = t.rows.findIndex(r => r.j.key === keyA);
+    for (let q = n + 1; q < t.rows.length; q++) {
+      const r = t.rows[q], mt = this.st.meta[r.j.key] || {};
+      if (this.locked(r.j) || mt.cx || mt.conf === 'ok' || mt.conf === 'cancel') continue;
+      return r;
+    }
+    return null;
+  }
+  fuMake(P, T, i, keyA, ciMin) {
+    const r = this.fuNext(P, T, i, keyA), now = this.nowMin();
+    const from = r ? Math.ceil(Math.max(r.arr, now) / 5) * 5 : null;
+    this.meta(keyA).fu = { day: this.today(), at: Date.now(), ci: ciMin, team: i, tn: this.tn(i), branch: this._ctx.name,
+      next: r ? r.j.key : null, from, to: from == null ? null : from + 120, agent: null, by: null, ackAt: null };
+  }
+  fuOpen() {
+    if (this.readOnly || !this._ctx || !this._J) return [];
+    const day = this.today(), name = this._ctx.name, J = this._J, out = [];
+    Object.keys(this.st.meta).forEach(k => {
+      const f = (this.st.meta[k] || {}).fu;
+      if (!f || f.ackAt || f.day !== day || f.branch !== name) return;
+      const a = J.by.get(k); if (!a) return;
+      const b = f.next ? J.by.get(f.next) : null, mb = f.next ? this.st.meta[f.next] || {} : {};
+      if (f.next && (!b || this.locked(b) || mb.cx || mb.conf === 'ok')) return;   // already handled another way
+      out.push({ k, f, a, b });
+    });
+    return out.sort((x, y) => x.f.at - y.f.at);
+  }
+  fuAck(keyA, agent) {
+    const mt = this.st.meta[keyA], f = mt && mt.fu; if (!f || f.ackAt) return;
+    const J = this._J, a = J.by.get(keyA), b = f.next ? J.by.get(f.next) : null, who = String(agent || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (b && !who) return;
+    f.agent = who || null; f.by = this.user || ''; f.ackAt = Date.now();
+    if (b) {
+      this.meta(f.next).fuBy = { agent: who, at: Math.floor(this.nowMin()), day: f.day, after: a ? a.wo : '' };
+      let L = []; try { L = store.load('gx.ids.agents') || []; } catch (e) {}
+      store.save('gx.ids.agents', [who, ...L.filter(x => x !== who)].slice(0, 12));
+    }
+    this.ui.fuName = '';
+    this.changed(b ? 'Follow-up ' + b.wo + ' (' + (b.uid || b.cid) + ', ETA ' + hm(f.from) + '–' + hm(f.to) + ') taken by ' + who + ', after ' + f.tn + ' checked in at ' + (a ? a.wo : keyA) + '.'
+      : f.tn + ' checked in at ' + (a ? a.wo : keyA) + ': no next customer to follow up (noted).');
+  }
+  // "Kriiiing": an old-bell ring made with Web Audio (no sound file). Browsers allow sound only after the page was
+  // clicked once, so the first click on the dashboard unlocks it.
+  ring() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      const ac = this._ac || (this._ac = new AC());
+      if (ac.state === 'suspended') ac.resume();
+      const t0 = ac.currentTime + 0.05, len = 1.8, out = ac.createGain();
+      out.gain.setValueAtTime(0.0001, t0); out.gain.exponentialRampToValueAtTime(0.35, t0 + 0.03);
+      out.gain.setValueAtTime(0.35, t0 + len - 0.15); out.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+      const am = ac.createGain(), lfo = ac.createOscillator(), depth = ac.createGain();
+      lfo.frequency.value = 22; depth.gain.value = 0.5; am.gain.value = 0.5;
+      lfo.connect(depth); depth.connect(am.gain);
+      [1250, 1580, 2100].forEach((f, n) => { const o = ac.createOscillator(), g = ac.createGain(); o.type = n ? 'sine' : 'triangle'; o.frequency.value = f; g.gain.value = n === 2 ? 0.15 : 0.4; o.connect(g); g.connect(am); o.start(t0); o.stop(t0 + len); });
+      am.connect(out); out.connect(ac.destination); lfo.start(t0); lfo.stop(t0 + len);
+    } catch (e) {}
+  }
+  fuTick() {
+    const L = this.fuOpen(), seen = this._fuSeen || (this._fuSeen = new Set());
+    if (!L.length) { this._ringAt = 0; return; }
+    const fresh = L.some(x => !seen.has(x.k + '@' + x.f.at));
+    L.forEach(x => seen.add(x.k + '@' + x.f.at));
+    if (fresh || Date.now() - (this._ringAt || 0) >= 30000) { this._ringAt = Date.now(); this.ring(); }
+    if (fresh) { this.ver++; this.onChange(); }
+  }
+  fuPopup(e) {
+    if (this.readOnly) return null;
+    if (!this._fuT && typeof window !== 'undefined') {
+      this._fuT = setInterval(() => this.fuTick(), 5000);  // ring again every 30 s while an alert is open
+      const unlock = () => { try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) { this._ac = this._ac || new AC(); this._ac.resume(); } } catch (x) {} };
+      if (window.addEventListener) { window.addEventListener('pointerdown', unlock, { once: true }); window.addEventListener('keydown', unlock, { once: true }); }
+    }
+    const L = this.fuOpen(); if (!L.length) return null;
+    const x = L[0], { f, a, b } = x, J = this._J;
+    let names = []; try { names = store.load('gx.ids.agents') || []; } catch (er) {}
+    const who = this.ui.fuName || '', can = !b || who.trim().length > 0;
+    const ln = (t, st) => e('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
+    const cust = j => (j.uid || '—') + ' · CID ' + j.cid + (j.name ? ' · ' + j.name : '') + (j.area ? ' · ' + j.area : '');
+    const go = () => { if (can) this.fuAck(x.k, who); };
+    return e('div', { key: 'fu', role: 'alertdialog', 'aria-live': 'assertive', 'aria-label': 'Follow-up pelanggan berikutnya',
+        style: { position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', width: 'min(560px, calc(100vw - 32px))', zIndex: 9999,
+          background: C.white, border: '3px solid #B42318', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
+      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#B42318;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
+      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#B42318', color: C.white } },
+        e('span', { style: { font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, b ? 'SEGERA FOLLOW-UP PELANGGAN BERIKUTNYA' : 'TEKNISI SUDAH CHECK-IN'),
+        L.length > 1 ? e('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alert') : null),
+      e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px' } },
+        ln([e('b', { key: 't' }, f.tn), ' sudah check-in di ', e('b', { key: 'w' }, a.wo), ' pukul ' + hm(f.ci) + '.']),
+        ln(cust(a), { color: C.muted, fontSize: 12 }),
+        b ? e('div', { style: { padding: '8px 10px', border: '1px solid #FEC84B', borderRadius: 4, background: '#FFFAEB', display: 'flex', flexDirection: 'column', gap: 4 } },
+          ln(['Segera lakukan follow-up untuk pelanggan ', e('b', { key: 'b' }, b.wo), '.']),
+          ln(cust(b), { fontSize: 12 }),
+          ln(['Estimasi kedatangan teknisi: ', e('b', { key: 'e', style: { font: "700 15px 'IBM Plex Mono',ui-monospace,monospace" } }, hm(f.from) + ' – ' + hm(f.to))])) :
+          ln('Tidak ada pelanggan berikutnya yang perlu di-follow-up untuk team ini (semua sudah Confirmed, sudah berjalan, atau ini pekerjaan terakhir).', { color: C.muted }),
+        b ? e('label', { style: { display: 'flex', flexDirection: 'column', gap: 3, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, 'Nama agent yang melakukan follow-up',
+          e('input', { type: 'text', value: who, list: 'gx-fu-agents', maxLength: 40, autoFocus: true, placeholder: 'Ketik nama agent',
+            onChange: ev => { this.ui.fuName = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Enter') go(); },
+            style: { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }),
+          e('datalist', { id: 'gx-fu-agents' }, ...names.map(n => e('option', { key: n, value: n })))) : null,
+        e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' } },
+          e('button', { type: 'button', onClick: go, disabled: !can,
+            style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#B42318' : '#D0D5DD', color: C.white, font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } },
+            b ? 'Saya tangani · tutup alert' : 'OK, tutup'),
+          b ? e('button', { type: 'button', onClick: () => this.locate(b), style: { padding: '6px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, 'Lihat ' + b.wo) : null,
+          b && !can ? e('span', { style: { font: SANS, color: C.bad } }, 'Isi nama agent untuk menutup alert.') : null)));
   }
 
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
@@ -2125,7 +2248,7 @@ class Dispatch {
         body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
-          this.cxList(e, P)),
+          this.cxList(e, P), this.fuPopup(e)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
@@ -2655,6 +2778,7 @@ class Dispatch {
     if (j.tier === 'VIP') chips.push(pill('VIP first', 'vip', 'v'));
     if (j.noPrio) chips.push(pill('Priority missing', 'warn', 'np'));
     if (j.prog) chips.push(pill('In progress', 'good', 'p'));
+    if (mt.fuBy && mt.fuBy.day === this.today()) chips.push(pill('Follow-up: ' + mt.fuBy.agent + ' ' + hm(mt.fuBy.at), 'warn', 'fu'));
     if (P.manual[j.key]) chips.push(pill('Manual', null, 'm'));
     const fd = t => t ? new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'no date';
     const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }); };

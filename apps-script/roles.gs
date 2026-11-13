@@ -465,9 +465,11 @@ function gxEtaItem_(type, branch, b, r, now) {
   };
   const tech = GX_ETA_TECH[code] || GX_ETA_TECH[team] || null;
   if (['scheduled', 'late', 'onway', 'onsite', 'done', 'mass', 'break', 'resched'].indexOf(code) !== -1) it.technicianStatus = tech;
-  const step = 30 * 60000;
+  // Same window as the dispatcher follow-up alert (2026-11-13): from the ETA (never before now), rounded up to 5 minutes,
+  // to 2 hours later.
+  const step = 5 * 60000;
   if (fresh && etaMs != null && ['scheduled', 'onway', 'mass', 'break'].indexOf(code) !== -1) {
-    const from = Math.max(Math.floor((etaMs - 60 * 60000) / step) * step, Math.ceil(now / step) * step), to = from + 120 * 60000;
+    const from = Math.ceil(Math.max(etaMs, now) / step) * step, to = from + 120 * 60000;
     it.etaWindow = { from: fmt(from), to: fmt(to), tz: tz[1] };
   }
   if (!fresh && ['done', 'next', 'cancel'].indexOf(code) === -1) { it.handoff = true; it.handoffReason = 'stale'; it.technicianStatus = null; }

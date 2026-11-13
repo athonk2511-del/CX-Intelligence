@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-13 (IDS: follow-up alert after an automatic check-in)
+
+### Added
+
+- **Follow-up alert.** When a team's tracker checks it in automatically at WO A, every dispatcher and admin screen of that branch shows a flashing pop-up with a bell ring: the team checked in at WO A, follow up the customer of WO B with an arrival window of ETA to ETA + 2 h. The ring repeats every 30 seconds while the alert is open.
+  - WO B is the team's next job that is not started and whose customer is not Confirmed yet. Without one, the pop-up only informs and closes with OK.
+  - The alert closes only after typing the agent who takes the follow-up (names are remembered per browser), and then closes on every screen. The agent shows on WO B as "Follow-up: <agent> hh:mm" and in the change log.
+  - Manual check-ins do not raise the alert. Viewer screens (TV) never show it. If WO B is confirmed, started or cancelled before anyone answers, the alert disappears by itself.
+  - Browsers play sound only after the page was clicked once: click anywhere on the dashboard after opening it.
+- **DotAI ETA API uses the same window** as the alert: ETA to ETA + 2 h, rounded up to 5 minutes, never starting before now (was ETA − 1 h to ETA + 1 h). Needs a new Apps Script deployment.
+
 ## 2026-11-12 (IDS: In Progress orders movable, mass outage title)
 
 ### Changed

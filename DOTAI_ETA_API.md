@@ -96,4 +96,4 @@ Error: `{ "ok": false, "error": "UNAUTHORIZED" }` (key salah) atau `{ "ok": fals
 
 - Snapshot hanya terisi selama ada layar IDS yang terbuka. Arrivals TV yang menyala sepanjang jam kerja menjaga data tetap segar.
 - ETA dihitung dari jam di komputer dispatcher. Zona waktu jawaban: Malang dan Jakarta WIB, cabang lain WITA.
-- Rentang 2 jam dihitung dari ETA dikurangi 1 jam, dibulatkan ke 30 menit, dan tidak pernah dimulai sebelum jam sekarang.
+- Rentang 2 jam dihitung dari jam ETA sampai ETA + 2 jam, dibulatkan ke atas per 5 menit, dan tidak pernah dimulai sebelum jam sekarang. Rentang ini sama dengan yang ditampilkan ke dispatcher di alert follow-up, jadi DotAI dan dispatcher menyampaikan jam yang sama ke pelanggan.
