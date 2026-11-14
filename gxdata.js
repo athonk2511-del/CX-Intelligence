@@ -167,6 +167,7 @@ function csvSet(name, full) {
     const all = (async () => {
       const sets = await driveSets(), files = sets[name];
       if (!files.length) { first(null); return null; }
+      (csvInfo.updated || (csvInfo.updated = {}))[name] = Math.max(0, ...files.map(f => f.updated || 0));  // newest upload of this dataset
       csvInfo.sets[name] = { files: 0, total: files.length, rows: 0, done: false };
       csvSummary();
       csvEmit({ name, done: 0, total: files.length, rows: 0, complete: false });
@@ -1320,14 +1321,15 @@ export async function loadMap() {
     start: start.subarray(0, j), blockAt: blockAt.subarray(0, j), endAt: endAt.subarray(0, j), mrc: mrc.subarray(0, j), wo,
     count: j, lat: lat.subarray(0, j), lng: lng.subarray(0, j), status: st.subarray(0, j), product: pr.subarray(0, j), branch: br.subarray(0, j), cid: cid.slice(0, j), uid: uid.slice(0, j), name: name.slice(0, j), area: area.slice(0, j), variant: variant.slice(0, j),
     wd, wdInfo, wdStatuses: WD_STATUS, wdTotal: wdBy.size, wdMatched, cm, cmInfo, cmTotal: cmBy.size, cmMatched,
+    woBy: { WWR: wdBy, WCM: cmBy }, woUpdated: woAll.src === 'wo' && csvInfo.updated ? csvInfo.updated.wo || 0 : 0,
     noCoord, products, branches: [...brMap.keys()], statuses: MAP_STATUS,
   };
 }
 
 export async function loadCustomerDetail(cid) {
-  const r = await gviz(TABS.customers, `select A, H, N, J, L, G, C where F = ${Number(cid)} limit 1`);
+  const r = await gviz(TABS.customers, `select A, H, N, J, L, G, C, I, E, M where F = ${Number(cid)} limit 1`);
   const x = r.rows[0];
-  return x ? { name: x[0], area: x[1], variant: x[2], start: x[3], expiry: x[4], status: x[5], branch: x[6] } : null;
+  return x ? { name: x[0], area: x[1], variant: x[2], start: x[3], expiry: x[4], status: x[5], branch: x[6], coord: x[7] || '', uid: x[8] || '', product: x[9] || '' } : null;
 }
 
 /* Look up one account by CID or UID, for accounts the map could not plot. */
@@ -1346,19 +1348,20 @@ export const WD_STATUS = [
 ];
 async function loadWiredown() {
   if (await woTable()) return loadWiredownCsv();
-  const r = await gviz(TABS.tickets, "select F, AC, AD, D, G, P, Q where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
+  const r = await gviz(TABS.tickets, "select F, AC, AD, D, G, P, Q, C where (AC starts with 'WWR' or AC starts with 'WCM') and AD <> 'Canceled' and F is not null limit 240000");
   const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress/.test(v) ? 1 : 0; };
   const out = { WWR: new Map(), WCM: new Map(), events: [] };
-  r.rows.forEach(([f, wo, st, dt, pr, ca, pb]) => {
+  r.rows.forEach(([f, wo, st, dt, pr, ca, pb, brn]) => {
     const k = String(f).replace(/\D/g, ''); if (!k) return;
     const ty = String(wo || '').slice(0, 3).toUpperCase(), by = out[ty]; if (!by) return;
-    const t = (parseDMY(dt) || new Date(0)).getTime(), s = state(st);
+    const t = (parseDMY(dt) || new Date(0)).getTime(), s = state(st), pend = /pending/i.test(String(st || ''));
     out.events.push([k, ty === 'WWR' ? 0 : 1, t]);
     const e = by.get(k);
     // prio / cat / prob: ticket priority (G), category (P) and problem (Q) of that work order, for the dispatch planner.
-    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: ca || '', prob: pb || '' }); return; }
+    // pend: status Pending = rescheduled by dispatch; br: branch of the work order (C), for orders whose customer is not on the map.
+    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: ca || '', prob: pb || '', pend, br: brn || '' }); return; }
     e.n++;
-    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: ca || '', prob: pb || '' });
+    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: ca || '', prob: pb || '', pend, br: brn || '' });
   });
   return out;
 }
@@ -1366,18 +1369,18 @@ async function loadWiredown() {
 // Same shape as loadWiredown, from the work-order CSV files. t = WO Created (H) for
 // aging; events use Date of Work (Y), falling back to WO Created.
 async function loadWiredownCsv() {
-  const r = await woQuery("select L, B, F, H, T, R, S, Y where (B starts with 'WWR' or B starts with 'WCM') and " + WO_LIVE + " and L is not null");
+  const r = await woQuery("select L, B, F, H, T, R, S, Y, C where (B starts with 'WWR' or B starts with 'WCM') and " + WO_LIVE + " and L is not null");
   const state = s => { const v = String(s || '').toLowerCase(); return /closed/.test(v) ? 2 : /progress|started|checked|pending/.test(v) ? 1 : 0; };
   const out = { WWR: new Map(), WCM: new Map(), events: [], src: 'wo' };
-  r.rows.forEach(([l, wo, st, cr, pr, an, so, dw]) => {
+  r.rows.forEach(([l, wo, st, cr, pr, an, so, dw, brn]) => {
     const k = String(l).replace(/\D/g, ''); if (!k) return;
     const ty = String(wo || '').slice(0, 3).toUpperCase(), by = out[ty]; if (!by) return;
-    const t = (parseDMY(cr) || new Date(0)).getTime(), s = state(st);
+    const t = (parseDMY(cr) || new Date(0)).getTime(), s = state(st), pend = /pending/i.test(String(st || ''));
     const ev = parseDMY(dw); out.events.push([k, ty === 'WWR' ? 0 : 1, ev ? ev.getTime() : t]);
     const e = by.get(k);
-    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: an || '', prob: so || '' }); return; }
+    if (!e) { by.set(k, { state: s, wo, raw: st, t, n: 1, prio: pr || '', cat: an || '', prob: so || '', pend, br: brn || '' }); return; }
     e.n++;
-    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: an || '', prob: so || '' });
+    if (t > e.t || (t === e.t && s < e.state)) Object.assign(e, { state: s, wo, raw: st, t, prio: pr || '', cat: an || '', prob: so || '', pend, br: brn || '' });
   });
   return out;
 }

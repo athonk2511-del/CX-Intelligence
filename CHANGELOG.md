@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-14 (IDS: work-order rules from the dispatch team, why a WO is missing)
+
+### Changed
+
+- **Work-order rules agreed with the dispatch team** (applied once, automatically, by the first admin screen that opens IDS):
+  - **Pending** orders (rescheduled by dispatch) are always included and always start in **H+1** with the reason "Pending · rescheduled". Re-plan keeps them in H+1; a dispatcher moves them into a team by hand.
+  - **Blocked accounts: Intracity only.** The setting now has three values: none, Intracity only (default), all.
+  - **Max age 14 days** (was 7).
+  - **In Progress** orders included and not locked (as before).
+
+### Added
+
+- **Why is this WO not in IDS?** Searching a CID, User ID or WO number that is not on the board explains why, from the same rules the board uses: not in the last WO file (with its upload time), closed, cancelled in IDS, other branch, Termination, Blocked non-Intracity, too old, In Progress setting off, or the customer is not on the map (status the map does not load, or no or invalid coordinates, looked up in the customer data).
+- **Masukkan ke IDS:** adds such a WO by hand. It skips the filters until it is closed in the data, is shared with every screen, logged, and can be taken out again ("Keluarkan" in the search result). A customer off the map with coordinates is planned normally; without coordinates it joins H+1 with no location ("No location", a fixed 30-minute drive is used for its ETA, no map pin).
+- **WO data age** under the search box: when the last WO file was uploaded, in amber after 2 hours.
+- Cards show "Pending · rescheduled", "No location" and "Added by hand".
+
 ## 2026-11-13 (IDS: follow-up alert after an automatic check-in)
 
 ### Added

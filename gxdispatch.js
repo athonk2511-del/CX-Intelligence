@@ -92,7 +92,7 @@ const TOURIST = [
 const DEF = {
   teams: 10, gridKm: 3, speed: 35, road: 1.3, roadOn: true, osrm: 'https://router.project-osrm.org',
   zTour: 2.0, zDense: 1.7, zMid: 1.4, zOpen: 1.2, tR: 2.5,
-  maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 7, blocked: false, prog: true,
+  maxHop: 30, ring: 1, ring2: 1, hop2: 45, homeDetour: 30, start: 540, end: 1020, lastBefore: 60, maxAge: 14, blocked: 'intracity', prog: true,   // blocked: false = none, 'intracity' = Intracity only, true = all
   dispPlan: false,   // dispatchers may change the planning setup (team count, hub, shift); off = admin only
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30, massH: 6, massM: 300,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
@@ -745,27 +745,50 @@ class Dispatch {
     // Cancelled WO (meta.cx) are left out of every list: no team, no H+1, no map pin, no ETA. They stay aside in J.cx so
     // a dispatcher can restore one, until the WO is closed in the source data.
     const cxKeys = Object.keys(this.st.meta).filter(k => this.st.meta[k] && this.st.meta[k].cx).sort().join(',');
-    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm, JSON.stringify(cfg.jobTypes || null), cxKeys].join('|');
+    const fKeys = Object.keys(this.st.meta).filter(k => this.st.meta[k] && this.st.meta[k].force).sort().join(',');
+    const sig = [bi, cfg.maxAge, cfg.blocked, cfg.prog, cfg.gridKm, JSON.stringify(cfg.jobTypes || null), cxKeys, fKeys].join('|');
     if (this._jobs && this._jobs.m === m && this._jobs.sig === sig) return this._jobs.v;
     if (this._zm !== m || this._zbi !== bi || this._zg !== cfg.gridKm) { this._zm = m; this._zbi = bi; this._zg = cfg.gridKm; this._zone = null; }
     const now = Date.now(), maxMs = (+cfg.maxAge || 0) * 86400e3;
     const list = [], cx = [], skipped = { old: 0, status: 0, noPrio: 0, unknown: 0 };
+    // 2026-11-14 rules (from the dispatch team): Pending orders (rescheduled by dispatch) always join, and always in H+1;
+    // Blocked accounts join only for Intracity (setting); max age 14 days. A WO added by hand ("Masukkan ke IDS",
+    // meta.force) skips these filters until it is closed in the data.
+    const prods = m.products || [], intra = i => /intracity/i.test(((prods[m.product ? m.product[i] : -1]) || {}).key || '');
+    const blockOk = i => cfg.blocked === true || (cfg.blocked === 'intracity' && intra(i));
     if (ST && INFO) for (let i = 0; i < m.count; i++) {
       if (m.branch[i] !== bi) continue;
       const state = ST[i], w = INFO[i];
-      if (!w || state < 0 || state > 1 || (state === 1 && !cfg.prog)) continue;
-      if (m.status[i] === 2 || (m.status[i] === 1 && !cfg.blocked)) { skipped.status++; continue; }
-      if (maxMs && w.t > 0 && now - w.t > maxMs) { skipped.old++; continue; }
+      if (!w || state < 0 || state > 1) continue;
+      const fz = (this.st.meta[String(w.wo || (this.type + '-' + m.cid[i]))] || {}).force, pend = !!w.pend || /pending/i.test(String(w.raw || ''));
+      if (state === 1 && !cfg.prog && !pend && !fz) continue;
+      if (!fz && (m.status[i] === 2 || (m.status[i] === 1 && !blockOk(i)))) { skipped.status++; continue; }
+      if (!fz && maxMs && w.t > 0 && now - w.t > maxMs) { skipped.old++; continue; }
       const tier = tierOf(w.prio), cat = this.catOf(w.cat, w.prob);
       if (!tier) skipped.noPrio++;
       if (cat === OTHER) skipped.unknown++;
       const j = { key: String(w.wo || (this.type + '-' + m.cid[i])), i, type: this.type, wo: w.wo || '—', cid: String(m.cid[i]), uid: m.uid[i] || '', name: m.name[i] || '', area: m.area ? m.area[i] || '' : '',
-        lat: m.lat[i], lng: m.lng[i], t: w.t || 0, raw: w.raw || '', prog: state === 1, cat, prob: w.prob || w.cat || '', prio: w.prio || '', noPrio: !tier, tier: tier || 'Normal' };
+        lat: m.lat[i], lng: m.lng[i], t: w.t || 0, raw: w.raw || '', prog: state === 1, cat, prob: w.prob || w.cat || '', prio: w.prio || '', noPrio: !tier, tier: tier || 'Normal',
+        pend, forced: !!fz };
       const c = this.M.cellOf(j.lat, j.lng, cfg.gridKm * 1000);
       j.cell = { c: c[0], r: c[1], key: c[0] + ',' + c[1] };
       if ((this.st.meta[j.key] || {}).cx) { cx.push(j); continue; }
       list.push(j);
     }
+    // Added by hand although the customer has no point on the map (no coordinates, or a status the map does not load):
+    // no location, no ETA travel from the map (a fixed drive time is used), always starts in H+1.
+    const woBy = m.woBy && m.woBy[this.type], bname = m.branches[bi] || '', have = new Set(list.concat(cx).map(j => j.key));
+    Object.keys(this.st.meta).forEach(k => {
+      const f = (this.st.meta[k] || {}).force;
+      if (!f || !f.offMap || f.type !== this.type || f.branch !== bname || have.has(k)) return;
+      const w = woBy && woBy.get(String(f.cid)); if (!w || String(w.wo) !== k || w.state > 1) return;
+      const tier = tierOf(w.prio), cat = this.catOf(w.cat, w.prob), ll = isFinite(f.lat) && isFinite(f.lng);
+      const j = { key: k, i: -1, type: this.type, wo: w.wo, cid: String(f.cid), uid: f.uid || '', name: f.name || '', area: f.area || '', lat: ll ? +f.lat : NaN, lng: ll ? +f.lng : NaN, t: w.t || 0, raw: w.raw || '',
+        prog: w.state === 1, cat, prob: w.prob || w.cat || '', prio: w.prio || '', noPrio: !tier, tier: tier || 'Normal', pend: !!w.pend || /pending/i.test(String(w.raw || '')), forced: true, offMap: true, noLoc: !ll,
+        cell: { c: null, r: null, key: 'noloc' } };
+      if (ll) { const c = this.M.cellOf(j.lat, j.lng, cfg.gridKm * 1000); j.cell = { c: c[0], r: c[1], key: c[0] + ',' + c[1] }; }
+      if ((this.st.meta[k] || {}).cx) cx.push(j); else list.push(j);
+    });
     const v = { list, by: new Map(list.map(j => [j.key, j])), skipped, cx, cxBy: new Map(cx.map(j => [j.key, j])) };
     this._jobs = { m, sig, v }; this._need = null;
     return v;
@@ -777,8 +800,8 @@ class Dispatch {
     if (list.length) return list.map((b, n) => ({ ...b, name: b.name || name + ' base ' + (n + 1), guess: false }));
     const hit = BASES.find(([re]) => re.test(name));
     if (hit) return hit[1].map(b => ({ ...b, guess: false }));
-    const n = J.list.length || 1;
-    return [{ name: name + ' centre of jobs', lat: J.list.reduce((a, j) => a + j.lat, 0) / n || -8.67, lng: J.list.reduce((a, j) => a + j.lng, 0) / n || 115.17, guess: true }];
+    const L = J.list.filter(j => !j.noLoc), n = L.length || 1;
+    return [{ name: name + ' centre of jobs', lat: L.reduce((a, j) => a + j.lat, 0) / n || -8.67, lng: L.reduce((a, j) => a + j.lng, 0) / n || 115.17, guess: true }];
   }
   base(m, bi, J) { return this.bases(m, bi, J)[0]; }
   // Per-team setup: start base, shift start and the technician app ID that sends break / problem events.
@@ -799,6 +822,17 @@ class Dispatch {
   }
   // Latest time a job may start for a team: lastBefore minutes before its shift end. The job may finish after the shift.
   tlast(i) { return (i != null ? this.tend(i) : this.st.cfg.end) - Math.max(0, +this.st.cfg.lastBefore || 0); }
+  // One-time switch to the 2026-11-14 rules agreed with the dispatch team, done by the first admin screen that opens IDS
+  // after the shared plan is loaded: max age at least 14 days, Blocked accounts = Intracity only, In Progress orders on.
+  migrateRules() {
+    const c = this.st.cfg;
+    if (c.rulesV === 2 || this.limited || this.readOnly || (this.api && !(this.sh && this.sh.ready))) return;
+    c.rulesV = 2;
+    if (+c.maxAge > 0 && +c.maxAge < 14) c.maxAge = 14;
+    if (c.blocked !== true) c.blocked = 'intracity';
+    c.prog = true; this._jobs = null;
+    setTimeout(() => this.changed('Work-order rules updated for the dispatch team: max age 14 days, Blocked accounts = Intracity only, In Progress and Pending orders included (Pending always in H+1).'), 0);
+  }
   // Planning setup (number of teams, hubs, shifts) is admin-only unless the admin lets dispatchers change it.
   canPlan() { return !this.readOnly && (!this.limited || !!this.st.cfg.dispPlan); }
   setCrew(i, patch) { const a = (this.st.cfg.crew || []).slice(); a[i] = { ...(a[i] || {}), ...patch }; this.st.cfg.crew = a; }
@@ -993,6 +1027,7 @@ class Dispatch {
   roadHit(a, b) { return this.st.cfg.roadOn ? this.road.get(a, b) : null; }
   // Car drive time, free-flow (OSRM or straight line ÷ speed), times the average traffic factor of the two end zones.
   travel(a, b) {
+    if (!a || !b || !isFinite(a.lat) || !isFinite(b.lat)) return Math.max(5, +this.st.cfg.noLocMin || 30);   // a WO without location
     const cfg = this.st.cfg, r = this.roadHit(a, b), f = (this.zoneF(a) + this.zoneF(b)) / 2;
     if (r) return Math.max(r.min < 0.5 ? 0 : 1, Math.round(r.min * f));
     const d = hav(a, b) * cfg.road;
@@ -1027,14 +1062,14 @@ class Dispatch {
     this._zone = { n, hi: q(0.75), mid: q(0.42), f: new Map() };
     return this._zone;
   }
-  km(a, b) { const r = this.roadHit(a, b); return r && r.km != null ? r.km : hav(a, b) * this.st.cfg.road; }
-  isRoad(a, b) { return !!this.roadHit(a, b) || hav(a, b) < 0.05; }
+  km(a, b) { if (!a || !b || !isFinite(a.lat) || !isFinite(b.lat)) return 0; const r = this.roadHit(a, b); return r && r.km != null ? r.km : hav(a, b) * this.st.cfg.road; }
+  isRoad(a, b) { if (!a || !b || !isFinite(a.lat) || !isFinite(b.lat)) return false; return !!this.roadHit(a, b) || hav(a, b) < 0.05; }
   // Road-time matrices, one per compact block of neighbouring cells (≤ 90 points incl. the base). Pairs across blocks fall back to the estimate.
   ensureRoad(J, B) {
     const cfg = this.st.cfg;
     if (!cfg.roadOn || !J.list.length) return;
     const byCell = new Map();
-    J.list.forEach(j => { if (!byCell.has(j.cell.key)) byCell.set(j.cell.key, { c: j.cell, pts: new Map() }); byCell.get(j.cell.key).pts.set(pk(j), j); });
+    J.list.forEach(j => { if (j.noLoc || j.cell.c == null) return; if (!byCell.has(j.cell.key)) byCell.set(j.cell.key, { c: j.cell, pts: new Map() }); byCell.get(j.cell.key).pts.set(pk(j), j); });
     const left = [...byCell.values()].sort((a, b) => b.pts.size - a.pts.size), MAX = Math.max(20, 90 - (this._BS || [B]).length);
     while (left.length) {
       const seed = left[0].c;
@@ -1061,7 +1096,7 @@ class Dispatch {
       const B = this.tbase(P, ti), key = this.routeKey(ids, B);
       if (this.road.geo.has(key) || this._rq.has(key)) return;
       this._rq.add(key);
-      const pts = [B].concat(ids.map(k => this._J.by.get(k)).filter(Boolean));
+      const pts = [B].concat(ids.map(k => this._J.by.get(k)).filter(j => j && !j.noLoc));
       this.road.push(() => this.road.route(cfg.osrm, key, pts));
     });
   }
@@ -1085,7 +1120,7 @@ class Dispatch {
 
   /* ---------- grid cells ---------- */
   ringK(a, b) { const p = String(a).split(','), q = String(b).split(','); return Math.max(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])); }
-  cellName(j) { return this.M.cellLabel(j.cell.key); }
+  cellName(j) { return j.cell.c == null ? 'No location' : this.M.cellLabel(j.cell.key); }
   group(list) {
     const g = new Map();
     list.forEach(j => {
@@ -1196,7 +1231,7 @@ class Dispatch {
     P.teams.forEach((t, i) => { if (!t.length) P.home[i] = null; });
     if (drop || fresh.length) P.dataAt = Math.max(P.dataAt || 0, this.dataAt || 0);
     if (fresh.length) {
-      fresh.sort(this.cmp).forEach(j => { if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
+      fresh.sort(this.cmp).forEach(j => { if (j.pend || j.noLoc) { P.next.push(j.key); P.why[j.key] = j.pend ? 'pending' : 'manual'; return; } if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
       this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan.');
     }
     if (fresh.length || drop) this.save();
@@ -1209,7 +1244,7 @@ class Dispatch {
     P.teams.flat().forEach(k => { const j = J.by.get(k); if (j && !j.prog && (this.st.meta[k] || {}).stat !== 'checkout') age(k); });
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
-      if (!J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
+      if (!this.otherBranchForce(k) && !J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
       if (!mt.cx) mt.conf = 'none'; mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
     });
     if (n) this.note(n + ' job' + (n > 1 ? 's' : '') + ' from ' + P.date + ' carried over with aging +' + AGING + ' (internal reason).');
@@ -1272,7 +1307,7 @@ class Dispatch {
     const inPlan = new Set([...P.teams.flat(), ...P.next]);
     Object.keys(this.st.meta).forEach(k => {
       const mt = this.st.meta[k];
-      if (!J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && !inPlan.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
+      if (!this.otherBranchForce(k) && !J.by.has(k) && !(J.cxBy && J.cxBy.has(k)) && !inPlan.has(k) && Object.values(this.st.plans).every(p => p === P || ![...p.teams.flat(), ...p.next].includes(k))) { delete this.st.meta[k]; return; }
       mt.stat = 'none'; delete mt.co; delete mt.coDay; delete mt.ci; delete mt.ciDay; delete mt.ciAuto; delete mt.noAuto; delete mt.coAuto; delete mt.noAutoCo; delete mt.coUndo; delete mt.reopen;
     });
     const gone = P.gone || (P.gone = {}), now = Date.now();
@@ -1301,10 +1336,12 @@ class Dispatch {
       placed.add(k);
       if (i >= nT) { orphan.push(k); return; } // its team was removed: never pile these onto another team
       P.teams[i].push(k);
-      if (!P.home[i]) { P.home[i] = oldHome[i] || j.cell.key; P.tb[i] = this.hubOf(i); P.role[i] = oldRole[i] || 'anchor'; }
+      if (!P.home[i] && (oldHome[i] || j.cell.c != null)) { P.home[i] = oldHome[i] || j.cell.key; P.tb[i] = this.hubOf(i); P.role[i] = oldRole[i] || 'anchor'; }
     }));
     const hold = (keepLocked ? P.next || [] : []).filter(k => oldWhy[k] === 'customer' && J.by.has(k) && !placed.has(k));
     hold.forEach(k => placed.add(k));
+    const side = J.list.filter(j => (j.pend || j.noLoc) && !placed.has(j.key)).map(j => j.key);   // Pending / no location: H+1
+    side.forEach(k => placed.add(k));
     const CX = this.clusters(J.list.filter(j => !placed.has(j.key)), B);
     const reserve = CX.list.length ? Math.min(nT - 1, Math.round(nT * (+cfg.floatPct || 0) / 100)) : 0;
     let gridLeft = nT - reserve - P.home.filter(Boolean).length;
@@ -1393,7 +1430,8 @@ class Dispatch {
     const left = new Set(pool.map(j => j.key)), rest3k = rest3.map(j => j.key).filter(k => left.has(k)), overk = over.filter(k => left.has(k));
     rest3k.concat(overk, orphan).forEach(k => { P.why[k] = 'internal'; });
     hold.forEach(k => { P.why[k] = 'customer'; });
-    P.next = rest3k.concat(overk, orphan, hold);
+    side.forEach(k => { P.why[k] = (J.by.get(k) || {}).pend ? 'pending' : 'manual'; });
+    P.next = rest3k.concat(overk, orphan, hold, side);
     P.dataAt = Math.max(P.dataAt || 0, this.dataAt || 0);
     if (orphan.length) this.note(orphan.length + ' started job' + (orphan.length > 1 ? 's' : '') + ' belonged to a removed team; moved to H+1 for the dispatcher to reassign.');
   }
@@ -1589,7 +1627,7 @@ class Dispatch {
   }
   cellStats(P, B) {
     const CX = this.clusterInfo(B), inNext = new Set(P.next), st = this.st.cfg.start;
-    return this.group(this._J.list).map((g, n) => {
+    return this.group(this._J.list.filter(j => !j.noLoc)).map((g, n) => {
       const cl = CX.of.get(g.key) || null, ctr = !!cl && cl.key === g.key;
       const keys = new Set(g.jobs.map(j => j.key));
       const tms = P.teams.map((ids, i) => P.home[i] === g.key || ids.some(k => keys.has(k)) ? i : -1).filter(i => i >= 0);
@@ -1939,7 +1977,7 @@ class Dispatch {
     P.next = P.next.filter(k => k !== key);
     const list = dest === 'next' ? P.next : P.teams[dest];
     list.splice(Math.max(0, Math.min(idx == null ? list.length : idx, list.length)), 0, key);
-    if (dest !== 'next' && !P.home[dest]) { P.home[dest] = j.cell.key; P.tb[dest] = this.hubOf(dest); }
+    if (dest !== 'next' && !P.home[dest] && j.cell.c != null) { P.home[dest] = j.cell.key; P.tb[dest] = this.hubOf(dest); }
     P.teams.forEach((t, i) => { if (!t.length) P.home[i] = null; });
     if (dest === 'next') { if (!P.why[key]) P.why[key] = (this.meta(key).conf === 'resched') ? 'customer' : 'internal'; }
     else delete P.why[key];
@@ -2003,7 +2041,8 @@ class Dispatch {
     const B = this._ctx.B, k = j.key;
     if (!P.teams.some(t => t.includes(k)) && !P.next.includes(k)) {
       const jj = this._J.by.get(k);
-      if (jj && !this.place(P, jj, B)) { P.next.push(k); P.why[k] = 'internal'; }
+      if (jj && (jj.pend || jj.noLoc)) { P.next.push(k); P.why[k] = jj.pend ? 'pending' : 'manual'; }
+      else if (jj && !this.place(P, jj, B)) { P.next.push(k); P.why[k] = 'internal'; }
     }
     const where = P.next.includes(k) ? 'H+1' : this.tn(P.teams.findIndex(t => t.includes(k)));
     this.reflow(P, j.wo + ' (' + (j.uid || j.cid) + ') restored after cancel, placed in ' + where + '.');
@@ -2044,7 +2083,7 @@ class Dispatch {
         }),
         e('p', { style: { margin: 0, padding: '6px 10px', font: small, color: C.muted } }, 'Cancelled WO have no team, ETA or map pin, on every screen and on later days. They leave this list once the WO is closed in the source data.')) : null);
   }
-  locate(j) { if (this.onLocate) this.onLocate(j.i); }
+  locate(j) { if (j.noLoc) return; if (j.i < 0) { if (this.onPan) this.onPan(j.lat, j.lng); return; } if (this.onLocate) this.onLocate(j.i); }
   hasJobs(m, i) {
     this._has = this._has && this._has.m === m ? this._has : { m, v: {} };
     if (i in this._has.v) return this._has.v[i];
@@ -2058,6 +2097,7 @@ class Dispatch {
   view(m, ctx) {
     const R = this.R, e = R.createElement, host = ctx.host, cfg = this.st.cfg;
     const bi = this.branchIdx(m, ctx.hostBi);
+    this.migrateRules();
     const J = this._J = this.jobs(m, bi);
     const BS = this._BS = this.bases(m, bi, J), B = BS[0];
     this.ensureRoad(J, B);
@@ -2249,7 +2289,7 @@ class Dispatch {
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
           this.cxList(e, P), this.fuPopup(e)),
-        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in, checked out or In Progress in the data are locked. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
+        note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in or checked out are locked (In Progress in the data is shown but not locked). Pending orders (rescheduled by dispatch) always start in H+1. Search a CID, User ID or WO number that is not on the board to see why it was left out, and add it by hand when needed. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
     ];
@@ -2290,6 +2330,119 @@ class Dispatch {
     });
     return out.sort((a, b) => (b.exact - a.exact) || ((a.at ? a.at.r.arr : 1e9) - (b.at ? b.at.r.arr : 1e9))).slice(0, 12);
   }
+
+  /* ---------- why is a WO not in IDS, and add it by hand (2026-11-14) ----------
+     When the search finds no open WO in today's plan, the box explains why, from the same rules jobs() applies, and
+     offers "Masukkan ke IDS". A WO added by hand skips the filters (status, age, Blocked, In Progress) until it is
+     closed in the data; it is shared, logged, and can be taken out again. A customer missing from the map (no
+     coordinates, or a status the map does not load) is looked up in the customer data: with coordinates it is planned
+     normally, without them it joins H+1 with no location (a fixed drive time is used for its ETA). */
+  otherBranchForce(k) { const f = (this.st.meta[k] || {}).force; return !!f && !!this._ctx && f.branch !== this._ctx.name; }
+  cidIndex(m) {
+    if (m._cidIx) return m._cidIx;
+    const ix = new Map(); for (let i = 0; i < m.count; i++) ix.set(String(m.cid[i]).replace(/\D/g, ''), i);
+    return (m._cidIx = ix);
+  }
+  fetchDetail(cid) {
+    const D = this._dx || (this._dx = new Map());
+    if (D.has(cid)) return;
+    if (!this.detail) { D.set(cid, { st: 'err' }); return; }
+    D.set(cid, { st: 'loading' });
+    this.detail(cid).then(d => D.set(cid, { st: 'ok', d })).catch(() => D.set(cid, { st: 'err' })).finally(() => { this.ver++; this.onChange(); });
+  }
+  whyNot(q) {
+    const x = this._ctx; if (!x || !x.m) return [];
+    const m = x.m, qq = String(q || '').trim().toLowerCase(), qd = qq.replace(/\D/g, ''); if (qq.length < 3) return [];
+    const woBy = (m.woBy && m.woBy[this.type]) || new Map(), ix = this.cidIndex(m), cids = [];
+    const add = c => { if (c && !cids.includes(c)) cids.push(c); };
+    woBy.forEach((w, cid) => { if (String(w.wo || '').toLowerCase() === qq || (qd.length >= 5 && cid === qd)) add(cid); });
+    if (qd.length >= 5 && ix.has(qd)) add(qd);
+    for (let i = 0; i < m.count && cids.length < 6; i++) {
+      if (String(m.uid[i] || '').toLowerCase() === qq || (qq.length >= 4 && !/^\d+$/.test(qq) && String(m.name[i] || '').toLowerCase().includes(qq))) add(String(m.cid[i]).replace(/\D/g, ''));
+    }
+    return cids.slice(0, 6).map(c => this.diag(c));
+  }
+  diag(cid) {
+    const x = this._ctx, m = x.m, cfg = this.st.cfg, J = this._J, ix = this.cidIndex(m);
+    const woBy = (m.woBy && m.woBy[this.type]) || new Map(), w = woBy.get(cid), i = ix.has(cid) ? ix.get(cid) : null;
+    const out = { cid, w, i, uid: i != null ? m.uid[i] || '' : '', name: i != null ? m.name[i] || '' : '', reasons: [], can: false };
+    const when = t => { const d = new Date(t); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+    if (!w) { out.reasons.push('Tidak ada WO ' + this.type + ' yang masih open untuk CID ini di data WO' + (m.woUpdated ? ' (file WO terakhir di-upload ' + when(m.woUpdated) + ')' : '') + '. WO yang dibuat setelah upload terakhir belum terbaca: upload ulang file WO. Bisa juga WO-nya sudah Cancelled atau tipenya bukan ' + this.type + '.'); return out; }
+    if (w.state === 2) { out.reasons.push('WO ' + w.wo + ' sudah Closed di data (status "' + (w.raw || 'Closed') + '").'); return out; }
+    const key = String(w.wo);
+    if (J.by.has(key)) { out.inIds = true; return out; }
+    if (J.cxBy && J.cxBy.has(key)) { out.reasons.push('WO ' + key + ' sudah di-Cancel di IDS. Pulihkan dari daftar Cancelled WO di bawah board.'); return out; }
+    if (i != null) {
+      if (m.branch[i] !== x.bi) { out.reasons.push('WO ini milik cabang ' + (m.branches[m.branch[i]] || '?') + '. Buka IDS cabang itu.'); return out; }
+      const prod = ((m.products || [])[m.product ? m.product[i] : -1] || {}).key || 'tidak diketahui', maxMs = (+cfg.maxAge || 0) * 86400e3;
+      if (m.status[i] === 2) out.reasons.push('Status akun pelanggan Termination.');
+      if (m.status[i] === 1 && !(cfg.blocked === true || (cfg.blocked === 'intracity' && /intracity/i.test(prod)))) out.reasons.push('Status akun Blocked dengan produk ' + prod + '. Hanya akun Blocked Intracity yang otomatis masuk.');
+      if (w.state === 1 && !cfg.prog && !w.pend) out.reasons.push('Status WO "' + (w.raw || 'In Progress') + '", sedangkan setting "Include In Progress orders" mati.');
+      if (maxMs && w.t > 0 && Date.now() - w.t > maxMs) out.reasons.push('Umur WO ' + Math.floor((Date.now() - w.t) / 86400e3) + ' hari, melewati batas ' + cfg.maxAge + ' hari.');
+      if (!out.reasons.length) out.reasons.push('Tidak ada aturan yang menyaring WO ini. Coba muat ulang halaman.');
+      out.can = true; return out;
+    }
+    const D = this._dx || (this._dx = new Map()), d = D.get(cid);
+    out.offMap = true; out.can = true;
+    if (!d) { this.fetchDetail(cid); out.loading = true; out.reasons.push('Pelanggan tidak tampil di peta. Mengecek data pelanggan…'); return out; }
+    if (d.st === 'loading') { out.loading = true; out.reasons.push('Pelanggan tidak tampil di peta. Mengecek data pelanggan…'); return out; }
+    if (d.st !== 'ok' || !d.d) { out.reasons.push('Pelanggan tidak tampil di peta, dan CID ini tidak ditemukan di data pelanggan.'); return out; }
+    const c = d.d, mm = String(c.coord || '').match(/(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)/);
+    let a = mm ? parseFloat(mm[1]) : NaN, o = mm ? parseFloat(mm[2]) : NaN;
+    if (Math.abs(a) > 20 && Math.abs(o) <= 20) { const t = a; a = o; o = t; }
+    const ok = a > -12 && a < 7 && o > 94 && o < 142;
+    out.uid = c.uid || ''; out.name = c.name || ''; out.area = c.area || ''; out.ll = ok ? { lat: a, lng: o } : null;
+    if (!/^(active|blocked|termination|termination in progress)$/i.test(String(c.status || '').trim())) out.reasons.push('Status akun "' + (c.status || 'kosong') + '": peta hanya memuat akun Active, Blocked dan Termination.');
+    if (!ok) out.reasons.push(String(c.coord || '').trim() ? 'Koordinat pelanggan tidak valid ("' + c.coord + '").' : 'Koordinat pelanggan kosong di data pelanggan.');
+    if (!out.reasons.length) out.reasons.push('Pelanggan tidak tampil di peta (status ' + c.status + ', koordinat ' + c.coord + ').');
+    return out;
+  }
+  forceIn(dg) {
+    if (this.readOnly || !dg || !dg.w || !dg.can) return;
+    const x = this._ctx, P = this.st.plans[x.name], key = String(dg.w.wo);
+    const f = { by: this.user || '', at: Date.now(), type: this.type, branch: x.name, cid: dg.cid, uid: dg.uid || '', name: dg.name || '', area: dg.area || '', reason: dg.reasons.join(' ') };
+    if (dg.offMap) { f.offMap = true; if (dg.ll) { f.lat = dg.ll.lat; f.lng = dg.ll.lng; } }
+    this.meta(key).force = f; this._jobs = null;
+    const J = this._J = this.jobs(x.m, x.bi), j = J.by.get(key);
+    if (P && j && !P.teams.some(t => t.includes(key)) && !P.next.includes(key)) {
+      if (j.pend || j.noLoc) { P.next.push(key); P.why[key] = j.pend ? 'pending' : 'manual'; }
+      else if (!this.place(P, j, x.B)) { P.next.push(key); P.why[key] = 'internal'; }
+    }
+    const where = !P || !j ? '' : P.next.includes(key) ? 'H+1' : this.tn(P.teams.findIndex(t => t.includes(key)));
+    this.ui.findQ = key;
+    this.changed(key + ' (CID ' + dg.cid + ') added to IDS by hand' + (where ? ', placed in ' + where : '') + (j && j.noLoc ? ', no location' : '') + '. Reason it was left out: ' + dg.reasons.join(' '));
+  }
+  forceOut(P, j) {
+    if (this.readOnly) return;
+    const mt = this.st.meta[j.key]; if (!mt || !mt.force) return;
+    delete mt.force; this._jobs = null;
+    P.teams = P.teams.map(t => t.filter(k => k !== j.key)); P.next = P.next.filter(k => k !== j.key);
+    delete P.manual[j.key]; delete P.why[j.key];
+    this._J = this.jobs(this._ctx.m, this._ctx.bi);
+    this.changed(j.wo + ' (CID ' + j.cid + ') taken out of IDS again (was added by hand).');
+  }
+  diagBox(e) {
+    const tq = String(this.ui.findQ || '').trim(), L = this.whyNot(tq), ro = this.readOnly;
+    const head = 'Tidak ada WO ' + this.type + ' open untuk "' + tq + '" di jadwal ' + ((this._ctx && this._ctx.name) || 'cabang ini') + '.';
+    if (!L.length) return e('div', { key: 'nr', style: { padding: '8px 10px', border: '1px solid ' + C.line, borderTop: 'none', background: C.white, font: SANS, color: C.muted } },
+      head + ' CID, User ID, nomor WO, atau nama ini tidak ditemukan di data pelanggan yang tampil di peta maupun di data WO. Cari dengan CID atau nomor WO lengkap untuk pengecekan detail.');
+    return e('div', { key: 'dx', style: { border: '1px solid ' + C.line, borderTop: 'none', background: C.white, maxHeight: 380, overflowY: 'auto' } },
+      e('div', { style: { padding: '6px 10px', font: SANS, color: C.muted, borderBottom: '1px solid ' + C.line } }, head + ' Penjelasannya:'),
+      ...L.map(dg => e('div', { key: dg.cid, style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid ' + C.line } },
+        e('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 300px' } },
+          e('span', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, [dg.uid || '—', 'CID ' + dg.cid, dg.name, dg.w ? dg.w.wo : null].filter(Boolean).join(' · ')),
+          dg.inIds ? e('span', { style: { font: SANS, color: C.good } }, 'Sudah ada di IDS.') : null,
+          ...dg.reasons.map((r, n) => e('span', { key: n, style: { font: SANS, color: dg.loading ? C.muted : C.bad } }, '• ' + r))),
+        !ro && dg.can && !dg.loading ? e('button', { type: 'button', onClick: () => this.forceIn(dg), title: 'Masukkan WO ini ke IDS walaupun tidak memenuhi syarat. Berlaku sampai WO closed di data.',
+          style: { alignSelf: 'center', padding: '5px 12px', border: '1px solid ' + C.ink, borderRadius: 3, background: C.ink, color: C.white, font: SANS, cursor: 'pointer' } },
+          dg.offMap && !dg.ll ? 'Masukkan ke IDS (H+1, tanpa lokasi)' : 'Masukkan ke IDS') : null)));
+  }
+  woFresh(e) {
+    const x = this._ctx, t = x && x.m && x.m.woUpdated; if (!t) return null;
+    const d = new Date(t), age = (Date.now() - t) / 3600e3, old = age >= 2;
+    const txt = 'File WO terakhir di-upload ' + d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' (' + (age < 1 ? Math.max(1, Math.round(age * 60)) + ' menit' : Math.floor(age) + ' jam') + ' lalu)' + (old ? '. WO yang dibuat setelah itu belum masuk: upload ulang file WO.' : '.');
+    return e('div', { key: 'wf', style: { padding: '4px 2px 0', font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: old ? C.warn : C.muted } }, txt);
+  }
   // Scroll the board (or list) to a job and outline it for a few seconds.
   showOnBoard(j) {
     this.ui.hl = j.key; this.onChange();
@@ -2303,12 +2456,12 @@ class Dispatch {
       onChange: ev => { this.ui.findQ = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Escape') { this.ui.findQ = ''; this.onChange(); } if (ev.key === 'Enter' && hits[0] && hits[0].at) this.showOnBoard(hits[0].j); },
       style: { width: '100%', boxSizing: 'border-box', padding: '7px 10px', border: '1px solid ' + (tq ? C.ink : C.line), borderRadius: 3, background: C.white, color: C.ink, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } });
     const res = tq.length < 2 ? null : !hits.length
-      ? e('div', { key: 'nr', style: { padding: '8px 10px', border: '1px solid ' + C.line, borderTop: 'none', background: C.white, font: SANS, color: C.muted } }, 'No open ' + this.type + ' work order for "' + tq + '" in ' + ((this._ctx && this._ctx.name) || 'this branch') + '. The customer may have no open ' + this.type + ' WO, or it belongs to the other IDS board.')
+      ? this.diagBox(e)
       : e('div', { key: 'rs', style: { border: '1px solid ' + C.line, borderTop: 'none', background: C.white, maxHeight: 380, overflowY: 'auto' } },
         ...hits.map(h => {
           const j = h.j, mt = this.st.meta[j.key] || {}, r = h.at ? h.at.r : null, st = this.woState(P, j, r, T), ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
           const where = h.at ? this.tn(h.at.i) + ' · stop ' + (h.at.n + 1) + ' of ' + T[h.at.i].rows.length + ' · ETA ' + hm(r.arr)
-            : h.nx >= 0 ? 'Deferred to H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request' : 'internal reason') : 'Not in today\u2019s plan';
+            : h.nx >= 0 ? 'Deferred to H+1 · ' + ({ customer: 'customer request', pending: 'Pending (rescheduled)', manual: 'added by hand, no location' }[P.why[j.key]] || 'internal reason') : 'Not in today\u2019s plan';
           return e('div', { key: j.key, style: { display: 'grid', gridTemplateColumns: 'minmax(170px,1.1fr) minmax(190px,1.3fr) minmax(150px,1fr) auto', gap: '4px 12px', alignItems: 'center', padding: '8px 10px', borderTop: '1px solid ' + C.soft, borderLeft: '4px solid ' + ug.c } },
             e('div', { style: { minWidth: 0 } },
               e('div', { style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (j.uid || '—') + ' · CID ' + j.cid),
@@ -2322,9 +2475,10 @@ class Dispatch {
               mt.note ? e('div', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.accDeep, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: mt.note }, 'Note: ' + mt.note) : null),
             e('div', { style: { display: 'flex', gap: 4 } },
               h.at || h.nx >= 0 ? e('button', { type: 'button', onClick: () => this.showOnBoard(j), style: { padding: '3px 9px', border: '1px solid ' + C.ink, borderRadius: 3, background: C.ink, color: C.white, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap' } }, 'Show on board') : null,
+              j.forced && !this.readOnly ? e('button', { type: 'button', onClick: () => this.forceOut(P, j), title: 'Keluarkan lagi WO yang tadi dimasukkan manual', style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.bad, font: SANS, cursor: 'pointer' } }, 'Keluarkan') : null,
               e('button', { type: 'button', onClick: () => this.locate(j), style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, 'Locate')));
         }));
-    return e('div', { key: 'find', style: { flex: '1 1 420px', maxWidth: 820, display: 'flex', flexDirection: 'column' } }, input, res);
+    return e('div', { key: 'find', style: { flex: '1 1 420px', maxWidth: 820, display: 'flex', flexDirection: 'column' } }, input, res, this.woFresh(e));
   }
 
 
@@ -2598,7 +2752,7 @@ class Dispatch {
         e('span', { key: 's', style: { font: MONO, color: C.ink } }, fmtN(this.score(j))))),
       td('eta', r ? [e('div', { key: 'a', style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
         e('div', { key: 'b', style: { font: MONO, color: co != null ? C.good : C.muted } }, '→ ' + hm(r.end) + (co != null ? ' ✓' : ''))]
-        : (ro ? (P.why[j.key] === 'customer' ? 'Customer request' : 'Internal') : sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason')), { whiteSpace: 'nowrap' }),
+        : (ro ? (P.why[j.key] === 'customer' ? 'Customer request' : 'Internal') : sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request', pending: 'Pending · rescheduled', manual: 'Added by hand · no location' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason')), { whiteSpace: 'nowrap' }),
       td('dr', r ? e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, whiteSpace: 'nowrap' } }, (r.road ? '+' : '~') + r.hop + ' min', e('br'), nf1(r.d) + ' km') : '—'),
       td('cs', ro ? CONF[mt.conf || 'none'] : sel('conf', mt.conf || 'none', CONF, ev => this.setConf(P, j, ev.target.value), 'Customer confirmation')),
       td('ts', ro ? STAT[mt.stat || 'none'] : sel('stat', mt.stat || 'none', STAT, ev => this.setStat(P, j, ev.target.value), 'Technician status')),
@@ -2777,7 +2931,10 @@ class Dispatch {
     if (ag) chips.push(pill('Aging +' + AGING * ag, 'warn', 'a'));
     if (j.tier === 'VIP') chips.push(pill('VIP first', 'vip', 'v'));
     if (j.noPrio) chips.push(pill('Priority missing', 'warn', 'np'));
-    if (j.prog) chips.push(pill('In progress', 'good', 'p'));
+    if (j.prog && !j.pend) chips.push(pill('In progress', 'good', 'p'));
+    if (j.pend) chips.push(pill('Pending · rescheduled', 'warn', 'pd'));
+    if (j.noLoc) chips.push(pill('No location', 'bad', 'nl'));
+    if (j.forced) chips.push(pill('Added by hand', 'acc', 'fz'));
     if (mt.fuBy && mt.fuBy.day === this.today()) chips.push(pill('Follow-up: ' + mt.fuBy.agent + ' ' + hm(mt.fuBy.at), 'warn', 'fu'));
     if (P.manual[j.key]) chips.push(pill('Manual', null, 'm'));
     const fd = t => t ? new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'no date';
@@ -2807,7 +2964,7 @@ class Dispatch {
           e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, textAlign: 'right' }, title: r.road ? 'Road drive time' : 'Straight-line estimate' }, (r.road ? '+' : '~') + r.hop + ' min' + (r.road ? '' : ' est.'), e('br'), nf1(r.d) + ' km'))
           : this.readOnly ? e('div', { style: { font: "400 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, (P.why[j.key] === 'customer' ? 'Customer request · no aging' : 'Internal · aging +' + AGING) + ' · ' + day(1))
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
-            sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
+            sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging', pending: 'Pending · rescheduled', manual: 'Added by hand · no location' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
             e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
         r && r.hint && !this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: URG.blue.c } },
           (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away. Do this job right after it?' + (r.hint.delay ? ' ' + (this._J.by.get(r.hint.by) || {}).wo + ' (higher priority) would start ' + dh(r.hint.delay) + ' later.' : ''),
@@ -2933,7 +3090,7 @@ class Dispatch {
       row('Access', [chip('dp', !!d.dispPlan, 'Dispatchers may change the planning setup (number of teams, hub, shift)', null, null, () => set('dispPlan', !d.dispPlan)),
         lab('Off: dispatchers can only change team names and trackers.', 'dp2')]),
       row('Scope', [lab('Open orders from the last', 'l1'), num('maxAge', 60), lab('days', 'l2'),
-        chip('sb', d.blocked, 'Include Blocked accounts', null, null, () => set('blocked', !d.blocked)),
+        chip('sb', !!d.blocked, d.blocked === true ? 'Blocked accounts: all' : d.blocked === 'intracity' ? 'Blocked accounts: Intracity only' : 'Blocked accounts: none', null, null, () => set('blocked', d.blocked === 'intracity' ? true : d.blocked === true ? false : 'intracity')),
         chip('sp', d.prog, 'Include In Progress orders', null, null, () => set('prog', !d.prog))]),
       row('Teams', [lab('Available', 'l3'), num('teams', 56), lab('Cell size', 'l5'),
         ...[1, 2, 3, 5].map(v => chip('gk' + v, d.gridKm === v, v + ' km', null, null, () => set('gridKm', v)))]),
@@ -3126,7 +3283,7 @@ class Dispatch {
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
       maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin), coBack: clean(d.coBack, 0, 480, DEF.coBack),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
-      blocked: !!d.blocked, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
+      blocked: d.blocked === true || d.blocked === 'intracity' ? d.blocked : false, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),
       breakEst: clean(d.breakEst, 5, 240, DEF.breakEst), probEst: clean(d.probEst, 5, 480, DEF.probEst), massH: clean(d.massH, 0.5, 12, DEF.massH), massM: Math.round(clean(d.massM, 0, 2000, DEF.massM)),
       gridMin: Math.round(clean(d.gridMin, 0, 50, DEF.gridMin)), floatPct: clean(d.floatPct, 0, 50, DEF.floatPct),
@@ -3174,8 +3331,8 @@ class Dispatch {
           g.ctr ? 'Busy cell (>' + cfg.gridMin + ' WO) · ' + nf1(g.cl.load / 60) + ' h · ' + g.need + ' team' + (g.need === 1 ? '' : 's') + ' needed · ' + dh(g.finish - cfg.start) : 'Neighbouring anchor team or floater', g.tms.length ? 'Assigned: ' + g.tms.map(n => this.tn(n)).join(', ') : 'No team assigned today'] })),
       base: { lat: x.B.lat, lng: x.B.lng, title: x.B.name }, bases: (this._BS || [x.B]).map(b => ({ lat: b.lat, lng: b.lng, title: b.name })),
       teams: P.teams.map((ids, n) => this.ui.hidden.has(n) ? null : ({ color: this.pal[n % this.pal.length], label: this.tn(n), line: ids.length ? this.road.geo.get(this.routeKey(ids, this.tbase(P, n))) || null : null,
-        pts: ids.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), mark: this.markOf(j) })) })).filter(t => t && t.pts.length),
-      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(Boolean).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j) })),
+        pts: ids.map(k2 => J.by.get(k2)).filter(j => j && !j.noLoc).map(j => ({ lat: j.lat, lng: j.lng, title: this.tn(n) + ' · ' + tip(j), mark: this.markOf(j) })) })).filter(t => t && t.pts.length),
+      next: this.ui.hideNext ? [] : P.next.map(k2 => J.by.get(k2)).filter(j => j && !j.noLoc).map(j => ({ lat: j.lat, lng: j.lng, title: 'H+1 · ' + (P.why[j.key] === 'customer' ? 'customer request · ' : '') + tip(j) })),
       // Mass outages with a location: one marker per outage in the team colour, with its area radius.
       mass: P.teams.map((ids, n) => (((P.ev || {})[n]) || []).filter(x => x.type === 'mass' && x.lat != null).map(x => {
         const f = this.massAt(P, n, x), nowM = this.nowMin(), live = nowM < f.end;
