@@ -364,7 +364,7 @@ class Component extends DCLogic {
     sections.forEach(([title, sub, v], n) => {
       if (!n) { out.kpis = v.kpis || []; out.cards.push(...(v.cards || [])); return; }
       out.cards.push(this.card(title, {
-        span: 12, sub,
+        span: 12, sub, section: true,
         body: (v.kpis || []).length ? this.statRow(v.kpis) : null,
       }));
       out.cards.push(...(v.cards || []));
@@ -455,7 +455,7 @@ class Component extends DCLogic {
       { minWidth: 560 });
     return this.card(title, {
       span, meta: 'complete days up to ' + fd(T.ref) + ' ' + T.ref.getFullYear(),
-      body,
+      body, pdf: [{ t: 'trends', T, ids: keep, score: view !== 'overview', branchFiltered: this.state.branch !== 'all' }],
       note: 'Each period is compared with the same number of calendar days before it: last month and last year use days 1–' + T.ref.getDate() + ' only. Green means the change is favourable, red unfavourable, grey neutral.' + (keep.includes('c') ? ' CSAT is not split by branch.' : '') + ' Data starts ' + fd(T.first) + ' ' + T.first.getFullYear() + '; comparisons before that show "no data".',
     });
   }
@@ -487,6 +487,7 @@ class Component extends DCLogic {
     };
     const out = this.card(title, {
       span, meta: 'last complete month · ' + lab(L),
+      pdf: [{ t: 'mom', g, sw: s, bl, note: seg === 'intracity' ? 'Intracity plans only.' : 'Retail only; Intracity plans excluded.' }],
       body: this.table(['Metric', lab(L), 'vs ' + lab(L - 1), 'vs ' + lab(L - 12)],
         rows.map(m => [m.label, this.cmpCell(fv(m, m.get(L))), vsCell(m, L - 1, 'MoM'), vsCell(m, L - 12, 'YoY')]), { minWidth: 420 }),
       note: lab(L + 1) + ' is still running, so the latest complete month is compared. ' + (seg === 'intracity' ? 'Intracity plans only.' : 'Retail only; Intracity plans excluded.'),
@@ -1533,7 +1534,7 @@ class Component extends DCLogic {
   ensureDispatch() {
     if (this.DSPS || this.dspLoading) return;
     this.dspLoading = true;
-    Promise.all([import('./gxdispatch.js?v=2026-11-14a'), import('./gxmap.js?v=2026-10-30c')]).then(([X, M]) => {
+    Promise.all([import('./gxdispatch.js?v=2026-11-16a'), import('./gxmap.js?v=2026-10-30c')]).then(([X, M]) => {
       this.GM = this.GM || M;
       const mk = type => {
         const d = X.createDispatch({ React, map: M, type, palette: Component.TEAM_PAL, onChange: () => this.setState(s => ({ dspTick: s.dspTick + 1 })) });
@@ -2120,8 +2121,13 @@ class Component extends DCLogic {
 
   el(tag, style, children) { return React.createElement(tag, { style }, children); }
 
+  // Elements built by table/statRow/bullets remember their plain data so the PDF report can redraw them.
+  pdfTag(el, spec) { (this._pdfT || (this._pdfT = new WeakMap())).set(el, spec); return el; }
   table(headers, rows, opts) {
     const o = opts || {};
+    return this.pdfTag(this.tableEl(headers, rows, o), { t: 'table', head: headers, rows, numeric: o.numeric !== false });
+  }
+  tableEl(headers, rows, o) {
     const th = { textAlign: 'left', padding: '7px 12px', background: '#F4F4F2', borderBottom: '1px solid #DCDCD8', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B', whiteSpace: 'nowrap', position: o.maxHeight ? 'sticky' : 'static', top: 0 };
     const td = { padding: '8px 12px', font: "400 13px 'IBM Plex Sans',system-ui,sans-serif", color: '#1F1F1D', borderTop: '1px solid #EBEBE7', verticalAlign: 'top' };
     return React.createElement('div', { style: { overflowX: 'auto', maxHeight: o.maxHeight || 'none', overflowY: o.maxHeight ? 'auto' : 'visible', border: '1px solid #DCDCD8', borderRadius: 3 } },
@@ -2137,6 +2143,9 @@ class Component extends DCLogic {
   }
 
   statRow(items) {
+    return this.pdfTag(this.statRowEl(items), { t: 'kpis', items: items.map(it => ({ label: it.label, value: it.value, sub: it.sub, color: it.color })) });
+  }
+  statRowEl(items) {
     return React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 14 } },
       items.map((it, i) => React.createElement('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
         React.createElement('span', { style: { font: "500 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5F5F5B' } }, it.label),
@@ -2145,6 +2154,9 @@ class Component extends DCLogic {
   }
 
   bullets(items, color) {
+    return this.pdfTag(this.bulletsEl(items, color), { t: 'list', color, items: items.map(t => typeof t === 'string' ? { text: t } : { title: t.title, text: t.text }) });
+  }
+  bulletsEl(items, color) {
     return React.createElement('ul', { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 11 } },
       items.map((t, i) => React.createElement('li', { key: i, style: { display: 'grid', gridTemplateColumns: '18px minmax(0,1fr)', gap: 10, font: "500 13px/1.65 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)', textWrap: 'pretty' } },
         React.createElement('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: color || '#B08A1E', paddingTop: 3 } }, String(i + 1).padStart(2, '0')),
@@ -2162,7 +2174,7 @@ class Component extends DCLogic {
 
   card(title, opts) {
     const o = opts || {};
-    return { title, meta: o.meta || '', sub: o.sub || '', note: o.note || '', body: o.body, grid: { gridColumn: 'span ' + this.scaleSpan(o.span || 12) } };
+    return { title, meta: o.meta || '', sub: o.sub || '', note: o.note || '', body: o.body, span: o.span || 12, pdf: o.pdf || null, section: !!o.section, grid: { gridColumn: 'span ' + this.scaleSpan(o.span || 12) } };
   }
 
   /* ---------- views ---------- */
@@ -2419,11 +2431,88 @@ class Component extends DCLogic {
     if (!m.ready && !m.retailError && !window.confirm('Retail figures (growth, churn, products, ARPU) are still loading. Download the report now without them?')) return;
     this.setState({ pdfBusy: true, pdfMsg: null });
     try {
-      const R = await import('./gxreport.js?v=2026-11-04a');
+      const R = await import('./gxreport.js?v=2026-11-16b');
       await R.downloadOverviewPdf({ ...m, now: new Date() });
       this.setState({ pdfBusy: false });
     } catch (e) { this.setState({ pdfBusy: false, pdfMsg: 'PDF failed: ' + e.message }); }
   };
+
+  // Trouble tickets, Chat omnichannel, CSAT and Growth & churn (retail) → PDF, laid out like the executive report.
+  static PDF_PAGES = {
+    tickets: { label: 'Trouble tickets report', footer: 'Trouble tickets', file: 'Trouble-Tickets', first: 'Trouble tickets' },
+    chat: { label: 'Chat omnichannel report', footer: 'Chat omnichannel', file: 'Chat-Omnichannel', first: 'Chat omnichannel' },
+    csat: { label: 'CSAT report', footer: 'CSAT', file: 'CSAT', first: 'Customer satisfaction' },
+    growth: { label: 'Retail growth & churn report', footer: 'Growth & churn · retail', file: 'Growth-Churn-Retail', first: 'Retail growth and churn' },
+  };
+  pdfText(n) {
+    if (n == null || typeof n === 'boolean') return '';
+    if (typeof n === 'string' || typeof n === 'number') return String(n);
+    if (Array.isArray(n)) return n.map(x => this.pdfText(x)).filter(Boolean).join(' ');
+    if (!n.props || n.type === 'button') return '';
+    const st = n.props.style || {}, kids = [].concat(n.props.children == null ? [] : n.props.children);
+    const sep = st.flexDirection === 'column' || st.display === 'grid' ? '\n' : /^(div|p|li|tr|td)$/.test(n.type) ? ' ' : '';
+    return kids.map(x => this.pdfText(x)).filter(Boolean).join(sep).replace(/[ \t]+/g, ' ').trim();
+  }
+  // One dashboard card → plain blocks for gxreport.js (charts by their props, tables and stat rows by their tagged data).
+  pdfCard(c) {
+    const C = this.charts, T = this._pdfT || new WeakMap(), D = this.D, out = [];
+    const nf = v => (Math.round(v * 100) / 100).toLocaleString('en-US');
+    const day = d => d.getDate() + ' ' + D.MON3[d.getMonth()];
+    const walk = n => {
+      if (n == null || typeof n === 'boolean') return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      if (typeof n === 'string' || typeof n === 'number') { const t = String(n).trim(); if (t) out.push({ t: 'text', text: t }); return; }
+      if (!n.props || n.type === 'button') return;
+      const tag = T.get(n), p = n.props, ty = n.type;
+      if (tag) {
+        out.push(tag.t === 'table' ? { ...tag, head: tag.head.map(h => this.pdfText(h)), rows: tag.rows.map(r => r.map(x => this.pdfText(x))) }
+          : tag.t === 'kpis' ? { ...tag, items: tag.items.map(k => ({ ...k, label: this.pdfText(k.label), value: this.pdfText(k.value), sub: this.pdfText(k.sub) })) } : tag);
+        return;
+      }
+      if (ty === C.RankBars) {
+        out.push({ t: 'rank', total: p.showShare === false ? null : p.total, color: p.color || this.PAL[0], fmt: p.valueFormat || (v => nf(v) + (p.unit || '')),
+          data: (p.data || []).map((d, i) => ({ key: String(d.key != null ? d.key : d.label), value: d.value, color: p.colorBy ? p.colorBy(d, i) : null })) });
+        return;
+      }
+      if (ty === C.Donut) { out.push({ t: 'donut', data: (p.data || []).map(d => ({ key: String(d.key), value: d.value })), colors: p.colors || this.PAL, center: { value: p.centerValue, label: p.centerLabel } }); return; }
+      if (ty === C.LineChart) {
+        const vk = p.valueKey || 'value';
+        out.push({ t: 'line', label: p.label || 'Tickets', overlayLabel: p.overlayLabel || 'Mass-problem', color: p.color || this.PAL[0], overlayColor: p.overlayColor || '#C4561B',
+          pts: (p.series || []).map(x => ({ label: p.formatX ? String(p.formatX(x)) : x.date ? day(x.date) : String(x.label || ''), v: x[vk] || 0, o: p.overlayKey ? x[p.overlayKey] || 0 : 0 })) });
+        return;
+      }
+      if (ty === C.MultiLine) { out.push({ t: 'multi', data: p.data || [], lines: p.lines || [] }); return; }
+      if (ty === C.BarChart) { out.push({ t: 'bars', data: p.data || [], keys: p.keys }); return; }
+      if (ty === C.Scatter) { out.push({ t: 'scatter', points: p.points || [], medX: p.medX, medY: p.medY, xLabel: p.xLabel, yLabel: p.yLabel, yFmt: p.yFormat, xFmt: p.xFormat, quadrantLabels: p.quadrantLabels }); return; }
+      if (ty === C.SlaBars) {
+        const f = p.format || nf;
+        out.push({ t: 'sla', threshold: p.threshold, thText: p.threshold != null ? f(p.threshold) : '', data: (p.data || []).map(d => ({ label: d.name, value: d.value, text: f(d.value) })) });
+        return;
+      }
+      if (ty === 'ul') { out.push({ t: 'list', items: [].concat(p.children || []).flat().filter(Boolean).map(li => ({ text: this.pdfText(li) })) }); return; }
+      if (ty === 'p') { const t = this.pdfText(n); if (t) out.push({ t: 'text', text: t }); return; }
+      walk(p.children);
+    };
+    walk(c.body);
+    return out;
+  }
+  downloadPagePdf = async () => {
+    const P = this._pageReport, S = this.state, cfg = P && Component.PDF_PAGES[P.view];
+    if (S.pdfBusy || !P || !cfg || P.view !== S.view) return;
+    if (!P.ready && !window.confirm('Some panels on this page are still loading. Download the report now without them?')) return;
+    this.setState({ pdfBusy: true, pdfMsg: null });
+    try {
+      const txt = v => typeof v === 'string' ? v : this.pdfText(v);
+      const cards = P.built.cards.filter(c => c && !/consultant notes/i.test(c.title || ''))
+        .map(c => ({ title: txt(c.title), meta: txt(c.meta), sub: txt(c.sub), note: txt(c.note), span: c.span, section: c.section, blocks: c.pdf || this.pdfCard(c) }));
+      const D = this.D, R = await import('./gxreport.js?v=2026-11-16b');
+      await R.downloadPagePdf({ ...cfg, kicker: P.viewDef.kicker, title: P.viewDef.title, sub: P.viewDef.sub,
+        period: this.periodLabel(), branch: this.branchLabel(), by: S.me ? S.me.name : '', synced: D.stats && D.stats.lastSync ? D.stats.lastSync : null, now: new Date(),
+        kpis: (P.built.kpis || []).map(k => ({ label: txt(k.label), value: txt(k.value), sub: txt(k.sub) })), cards, ai: P.ai });
+      this.setState({ pdfBusy: false });
+    } catch (e) { this.setState({ pdfBusy: false, pdfMsg: 'PDF failed: ' + e.message }); }
+  };
+  onPdf = () => (this.state.view === 'overview' ? this.downloadPdf() : this.downloadPagePdf());
 
   /* ---------- AI consultant notes ---------- */
 
@@ -2838,7 +2927,7 @@ class Component extends DCLogic {
       }),
       ...c.quadrants.map(q => this.card(q.label, {
         span: 3, meta: q.members.length + ' agents',
-        sub: q.note,
+        sub: q.note, pdf: [{ t: 'people', items: q.members.map(m => ({ name: m.name, value: D.fmtDur(m.frt) })), empty: 'No agents in this quadrant' }],
         body: React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
           q.members.length ? q.members.map((m, i) => React.createElement('div', {
             key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 8, font: "500 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.86)' },
@@ -2896,6 +2985,7 @@ class Component extends DCLogic {
       }),
       this.card('Verbatim customer feedback', {
         span: 12, meta: s.comments.length + ' comments in period',
+        pdf: [{ t: 'feedback', items: s.comments.slice(0, 90).map(c => ({ rating: c.rating, text: c.text, date: c.date, who: c.who })), total: s.comments.length }],
         body: React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12, maxHeight: 480, overflowY: 'auto', paddingRight: 4 } },
           s.comments.slice(0, 90).map((c, i) => React.createElement('div', {
             key: i,
@@ -3175,6 +3265,10 @@ class Component extends DCLogic {
             if (facts) this.ensureAi(sig, facts, false, view);
             built.cards.push(this.aiCard(ready, sig, view));
           }
+          if (Component.PDF_PAGES[S.view] && !payload.error) {
+            const sigP = this.aiSig, aiP = S.ai && S.ai.sig === sigP && S.ai.status === 'done' && String(sigP || '').startsWith(S.view + '-') ? { at: S.ai.at, notes: S.ai.notes } : null;
+            this._pageReport = { view: S.view, viewDef: view, built, ready: !built.cards.some(c => c && /^loading/i.test(String(c.meta || ''))), ai: aiP };
+          } else this._pageReport = null;
         }
       } catch (e) { built = { kpis: [], cards: [this.card('Rendering issue', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: 'rgba(17,17,20,0.7)' } }, e.message) })] }; }
     }
@@ -3214,10 +3308,18 @@ class Component extends DCLogic {
       viewTitle: view.title, viewSub: view.sub,
       viewKicker: view.kicker + ' · ' + periodLabel + (S.branch === 'all' ? '' : ' · ' + S.branch.replace(/^GlobalXtreme\s*/, '')),
       period: S.period, branch: S.branch,
-      pdfShow: S.view === 'overview' && !!payload && !payload.error && !!this._ovReport,
-      pdfLabel: S.pdfBusy ? 'Preparing PDF…' : this._ovReport && !this._ovReport.ready && !this._ovReport.retailError ? 'Download PDF · retail loading' : 'Download PDF',
-      pdfTitle: S.pdfMsg || 'Executive overview as an A4 PDF report for the selected period and branch',
-      pdfErr: S.pdfMsg || '', onPdf: this.downloadPdf,
+      ...(() => {
+        const pg = Component.PDF_PAGES[S.view], pr = pg && this._pageReport && this._pageReport.view === S.view ? this._pageReport : null;
+        if (S.view === 'overview') return {
+          pdfShow: !!payload && !payload.error && !!this._ovReport,
+          pdfLabel: S.pdfBusy ? 'Preparing PDF…' : this._ovReport && !this._ovReport.ready && !this._ovReport.retailError ? 'Download PDF · retail loading' : 'Download PDF',
+          pdfTitle: S.pdfMsg || 'Executive overview as an A4 PDF report for the selected period and branch' };
+        return {
+          pdfShow: !!(pr && payload && !payload.error),
+          pdfLabel: S.pdfBusy ? 'Preparing PDF…' : pr && !pr.ready ? 'Download PDF · loading' : 'Download PDF',
+          pdfTitle: S.pdfMsg || (pg ? pg.footer + ' as an A4 PDF report for the selected period and branch' : '') };
+      })(),
+      pdfErr: S.pdfMsg || '', onPdf: this.onPdf,
       periodOptions: idx ? idx.periods.map(p => ({ key: p.key, label: p.label })) : [],
       branchOptions: idx ? idx.branches.map(b => ({ key: b.key, label: b.label })) : [],
       onPeriod: this.setPeriod, onBranch: this.setBranch, onRefresh: this.refresh,

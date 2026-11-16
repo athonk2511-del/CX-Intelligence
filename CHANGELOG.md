@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-16 (PDF download on Trouble tickets, Chat omnichannel, CSAT, Growth & churn retail)
+
+### Added
+
+- **Download PDF** button on Trouble tickets, Chat omnichannel, CSAT and Growth & churn (Retail), in the same A4 style as the Executive summary report: GX header, period, branch, data time and who generated it, KPI boxes, then every panel on the page in the same order.
+- Charts are redrawn as vector graphics (line, multi-line, bar, donut, scatter, FRT against threshold); tables keep all rows up to 80, with a note when a list is longer. The week, month and year comparison and the month-on-month table use the same coloured layout as the executive report. CSAT feedback is printed as a table with rating and date.
+- Consultant notes (AI) are added on the last page when they have been generated for that page.
+- While some panels are still loading the button says "Download PDF · loading" and asks before downloading without them.
+
+### Changed
+
+- gxreport.js now shares one set of layout helpers between the executive report and the page reports. The executive report output is unchanged.
+
+## 2026-11-16 (IDS: no WO waits while a team is idle)
+
+### Added
+
+- **Idle teams take H+1 work automatically.** A team is idle when it has no unfinished work: no job at all (for example a team added after the plan was made) or every job checked out. H+1 work with an internal reason goes to idle teams, highest score first, spread so each idle team gets work before one takes more, added at the end of their route. Other teams do not change. Runs on every screen refresh, for today's and tomorrow's plan, and is logged ("WO from H+1 given to idle team").
+- Still held in H+1: **Pending** (rescheduled by dispatch), **customer reschedules**, **no location**, and WO a dispatcher moved to H+1 by hand.
+- A team that was completely empty gets its new route in driving order; a team that finished its work gets the new jobs after its last one.
+
 ## 2026-11-14 (IDS: work-order rules from the dispatch team, why a WO is missing)
 
 ### Changed

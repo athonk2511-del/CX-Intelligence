@@ -1234,8 +1234,46 @@ class Dispatch {
       fresh.sort(this.cmp).forEach(j => { if (j.pend || j.noLoc) { P.next.push(j.key); P.why[j.key] = j.pend ? 'pending' : 'manual'; return; } if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
       this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan.');
     }
-    if (fresh.length || drop) this.save();
+    const filled = this.fillIdle(P, J);
+    if (fresh.length || drop || filled) this.save();
     return P;
+  }
+  // No WO waits in H+1 while a team has nothing to do (2026-11-16). A team is idle when it has no unfinished work: no job
+  // at all (a team added after the plan was made, or one the plan left empty) or every job checked out. H+1 work with an
+  // internal reason goes to idle teams, highest score first, spread so every idle team gets work before one takes
+  // more; it is added at the end of their route, so no other team changes. Held back: Pending (rescheduled by dispatch),
+  // customer reschedules, no location, and WO a dispatcher moved to H+1 by hand.
+  fillIdle(P, J) {
+    if (this.readOnly || !P || !Array.isArray(P.teams) || !P.next || !P.next.length) return 0;
+    if (this.api && !(this.sh && this.sh.ready)) return 0;
+    if (P.date && P.date < this.today()) return 0;
+    this.syncTeams(P);
+    const done = k => { const j = J.by.get(k); return !j || this.coOf(j) != null; };
+    const idle = P.teams.map((t, i) => i).filter(i => P.teams[i].every(done));
+    if (!idle.length) return 0;
+    const pool = P.next.filter(k => (P.why[k] || 'internal') === 'internal' && !P.manual[k]).map(k => J.by.get(k)).filter(j => j && !j.pend && !j.noLoc).sort(this.cmp);
+    if (!pool.length) return 0;
+    const cfg = this.st.cfg, empty = new Set(idle.filter(i => !P.teams[i].length)), got = {}, S = new Map();
+    const st = i => { if (!S.has(i)) S.set(i, this.state(P.teams[i], this.tbase(P, i), i, P)); return S.get(i); };
+    const moved = [];
+    pool.forEach(j => {
+      let best = null;
+      idle.forEach(i => {
+        const s = st(i), f = this.fit(s, j); if (!this.ok(f)) return;
+        if (got[i] && f.hop > (+cfg.hop2 || Infinity)) return;
+        const key = [got[i] ? 1 : 0, f.hop, f.end];
+        if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && (key[1] < best.key[1] || (key[1] === best.key[1] && key[2] < best.key[2])))) best = { i, s, f, key };
+      });
+      if (!best) return;
+      this.put(best.s, j, best.f); got[best.i] = (got[best.i] || 0) + 1;
+      P.next = P.next.filter(k => k !== j.key); delete P.why[j.key];
+      if (!P.home[best.i] && j.cell.c != null) { P.home[best.i] = j.cell.key; P.tb[best.i] = this.hubOf(best.i); if (P.role) P.role[best.i] = 'floater'; }
+      moved.push(j.wo + ' → ' + this.tn(best.i));
+    });
+    // Teams that were completely empty were not briefed yet: their new route is put in a sensible driving order.
+    Object.keys(got).forEach(i => { i = +i; if (empty.has(i) && P.teams[i].length > 1) P.teams[i] = this.tidy(P.teams[i], this.tbase(P, i)); });
+    if (moved.length) this.note(moved.length + ' WO from H+1 given to idle team' + (Object.keys(got).length > 1 ? 's' : '') + ': ' + moved.slice(0, 8).join(', ') + (moved.length > 8 ? ' …' : '') + '.');
+    return moved.length;
   }
   rollover(P, J) {
     let n = 0;
