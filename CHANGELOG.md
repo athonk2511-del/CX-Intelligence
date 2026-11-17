@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-17 (IDS: tanda BARU untuk WO dari upload berikutnya)
+
+### Added
+
+- **WO baru ditandai.** WO yang masuk ke plan dari upload file WO setelah plan dibuat (misalnya upload pagi atau selama shift) mendapat badge biru **BARU · upload jam** di card dan di tampilan list, dengan garis biru di sekeliling card. WO yang sudah ada waktu Prepare plan tidak ditandai.
+- **Panel "WO BARU" di atas dispatch board.** Isinya semua WO baru yang belum dicek, dikelompokkan per upload (terbaru di atas), lengkap dengan posisi yang dipilih IDS (team, urutan stop, ETA, atau H+1 dan alasannya). Setiap baris punya tombol Lihat (scroll ke card), Move to, dan ✓ Sudah dicek. Ada juga tombol "Tandai semua sudah dicek" dan Sembunyikan/Tampilkan.
+- Penempatan tetap otomatis seperti sebelumnya: WO baru disisipkan ke team yang paling cocok, atau ke H+1 kalau tidak muat. Tandanya hanya membantu dispatcher memeriksa.
+- Tanda hilang kalau dispatcher klik ✓ Sudah dicek, memindahkan WO secara manual (Move to, drag, atau Defer H+1), atau teknisi sudah check-in. Semua dispatcher boleh menandai sudah dicek, dan setiap klik tercatat di change log dengan nama yang mengklik. Tanda dibagikan ke semua layar.
+
 ## 2026-11-16 (PDF download on Trouble tickets, Chat omnichannel, CSAT, Growth & churn retail)
 
 ### Added

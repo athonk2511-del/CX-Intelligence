@@ -100,6 +100,7 @@ const DEF = {
 };
 
 const pad = n => String(n).padStart(2, '0');
+const NEW_C = '#1D4ED8', NEW_BG = '#EEF3FF';   // "BARU": WO from a later WO file upload, not checked yet
 const hm = m => { m = Math.round(m); return pad(Math.floor(m / 60)) + ':' + pad(m % 60); };
 const dh = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + pad(m % 60) + ' m'; };
 const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
@@ -1231,12 +1232,80 @@ class Dispatch {
     P.teams.forEach((t, i) => { if (!t.length) P.home[i] = null; });
     if (drop || fresh.length) P.dataAt = Math.max(P.dataAt || 0, this.dataAt || 0);
     if (fresh.length) {
+      // Marked "BARU" until a dispatcher checks it (2026-11-17): up = when the WO file was uploaded, at = when it joined.
+      const add = P.added || (P.added = {}), at = Date.now(), up = m.woUpdated || at;
+      fresh.forEach(j => { add[j.key] = { at, up }; });
       fresh.sort(this.cmp).forEach(j => { if (j.pend || j.noLoc) { P.next.push(j.key); P.why[j.key] = j.pend ? 'pending' : 'manual'; return; } if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
       this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan.');
     }
     const filled = this.fillIdle(P, J);
-    if (fresh.length || drop || filled) this.save();
+    let tidied = false;
+    if (P.added) { const inPlan = new Set([...P.teams.flat(), ...P.next]); Object.keys(P.added).forEach(k => { if (!inPlan.has(k)) { delete P.added[k]; tidied = true; } }); }
+    if (fresh.length || drop || filled || tidied) this.save();
     return P;
+  }
+  // A WO that joined the plan after it was made (a later WO file upload) and that nobody has checked yet. The mark goes
+  // when a dispatcher clicks "Sudah dicek", moves the WO by hand, or the technician checks in.
+  isNew(P, j) {
+    const a = P && P.added && P.added[j.key]; if (!a) return null;
+    const mt = this.st.meta[j.key];
+    if ((mt && mt.seenNew >= a.at) || this.ciOf(j) != null) return null;
+    return a;
+  }
+  newList(P) { const J = this._J; return Object.keys((P && P.added) || {}).map(k => J && J.by.get(k)).filter(j => j && this.isNew(P, j)); }
+  seenNew(P, js) {
+    if (this.readOnly || !js.length) return;
+    js.forEach(j => { this.meta(j.key).seenNew = P.added[j.key].at; });
+    const w = j => j.wo + ' (' + (j.uid || j.cid) + ')';
+    this.changed(js.length === 1 ? 'WO baru ' + w(js[0]) + ' ditandai sudah dicek.' : js.length + ' WO baru ditandai sudah dicek: ' + js.slice(0, 12).map(w).join(', ') + (js.length > 12 ? ', …' : '') + '.');
+  }
+  newBadge(e, P, j) {
+    const a = this.isNew(P, j); if (!a) return null;
+    const d = new Date(a.up);
+    return e('span', { key: 'new', title: 'WO tambahan dari upload file WO ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '. Cek tim dan urutannya, lalu klik Sudah dicek.',
+      style: { padding: '1px 7px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 10.5px 'IBM Plex Sans',system-ui,sans-serif", letterSpacing: '0.04em', whiteSpace: 'nowrap' } },
+      'BARU · upload ' + pad(d.getHours()) + ':' + pad(d.getMinutes()));
+  }
+  // "WO baru" panel above the board: every unchecked WO from later uploads, newest upload first, where IDS put it.
+  newBox(e, P, T) {
+    const L = this.newList(P); if (!L.length) return null;
+    const ro = this.readOnly, open = this.ui.newOpen !== false, where = new Map();
+    T.forEach((t, n) => t.rows.forEach((r, i) => where.set(r.j.key, { n, i, r })));
+    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + NEW_C, borderRadius: 3, background: solid ? NEW_C : C.white, color: solid ? '#FFFFFF' : NEW_C, font: "600 11.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const groups = new Map();
+    L.forEach(j => { const up = P.added[j.key].up; if (!groups.has(up)) groups.set(up, []); groups.get(up).push(j); });
+    const nT = P.teams.length, moveOpts = { '': 'Move to…' };
+    for (let n = 0; n < nT; n++) { moveOpts[n + ':next'] = this.tn(n) + ' · next stop'; moveOpts[n + ':last'] = this.tn(n) + ' · last stop'; }
+    const day = d => d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+    const row = j => {
+      const w = where.get(j.key), lk = this.locked(j) && !P.next.includes(j.key);
+      const place = w ? this.tn(w.n) + ' · stop ' + (w.i + 1) + ' · ETA ' + hm(w.r.arr) : P.next.includes(j.key) ? 'H+1 · ' + ({ pending: 'Pending', customer: 'customer request', manual: 'no location' }[P.why[j.key]] || 'tidak muat hari ini') : '—';
+      const opts = { ...moveOpts }; if (!P.next.includes(j.key)) opts.next = 'Defer H+1';
+      return e('div', { key: j.key, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', padding: '6px 0', borderTop: '1px solid ' + C.soft } },
+        e('span', { style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, j.wo),
+        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (j.uid || j.name || '—') + ' · CID ' + j.cid),
+        e('span', { style: { font: SANS, color: C.muted, minWidth: 130 } }, [j.tier, j.cat, j.area].filter(Boolean).join(' · ')),
+        e('span', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: w ? C.ink : C.warn, flex: '1 1 200px' } }, '→ ' + place),
+        e('span', { style: { display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' } },
+          btn('sh', 'Lihat', () => this.showOnBoard(j)),
+          ro || lk ? null : e('select', { key: 'mv', value: '', 'aria-label': 'Move to', onChange: ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, x] = v.split(':'); this.move(P, j.key, +t, x === 'next' ? this.nextSlot(P, +t, j.key) : null); },
+            style: { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, fontSize: 11.5, cursor: 'pointer' } }, ...Object.entries(opts).map(([k, v]) => e('option', { key: k, value: k }, v))),
+          ro ? null : btn('ok', '✓ Sudah dicek', () => this.seenNew(P, [j]), true)));
+    };
+    return e('div', { key: 'newbox', style: { border: '2px solid ' + NEW_C, borderRadius: 4, background: NEW_BG, padding: '8px 12px' } },
+      e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        e('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          e('span', { style: { padding: '2px 8px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 12px 'IBM Plex Sans',system-ui,sans-serif" } }, 'WO BARU · ' + L.length),
+          e('span', { style: { font: SANS, color: C.text } }, 'Masuk dari upload file WO setelah plan dibuat dan sudah ditempatkan IDS otomatis. Cek tim dan urutannya, pindahkan kalau perlu, lalu klik Sudah dicek.')),
+        e('span', { style: { display: 'flex', gap: 6 } },
+          btn('tg', open ? 'Sembunyikan' : 'Tampilkan', () => { this.ui.newOpen = !open; this.onChange(); }),
+          ro ? null : btn('all', '✓ Tandai semua sudah dicek (' + L.length + ')', () => this.seenNew(P, L), true))),
+      open ? e('div', { style: { marginTop: 4 } }, ...[...groups.entries()].sort((a, b) => b[0] - a[0]).map(([up, js]) => {
+        const d = new Date(up);
+        return e('div', { key: 'g' + up, style: { marginTop: 6 } },
+          e('div', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: NEW_C, textTransform: 'uppercase', letterSpacing: '0.04em' } }, 'Upload file WO ' + day(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + js.length + ' WO'),
+          ...js.sort((a, b) => (where.has(a.key) ? 0 : 1) - (where.has(b.key) ? 0 : 1) || this.cmp(a, b)).map(row));
+      })) : null);
   }
   // No WO waits in H+1 while a team has nothing to do (2026-11-16). A team is idle when it has no unfinished work: no job
   // at all (a team added after the plan was made, or one the plan left empty) or every job checked out. H+1 work with an
@@ -2020,6 +2089,7 @@ class Dispatch {
     if (dest === 'next') { if (!P.why[key]) P.why[key] = (this.meta(key).conf === 'resched') ? 'customer' : 'internal'; }
     else delete P.why[key];
     P.manual[key] = true;
+    if (P.added && P.added[key]) delete P.added[key];   // moved by hand: the dispatcher has seen this new WO
     const to = dest === 'next' ? 'H+1' : this.tn(dest);
     this.changed(label || (j.wo + ' (' + (j.uid || j.cid) + ') ' + (from === to ? 'moved to position ' + (list.indexOf(key) + 1) + ' in ' + to : 'moved from ' + from + ' to ' + to) + (dest === 'next' ? ', reason ' + P.why[key] : '') + '.'));
   }
@@ -2325,6 +2395,7 @@ class Dispatch {
         span: 12, meta: sched + ' scheduled · ' + P.next.length + ' deferred · ' + Object.keys(P.manual).length + ' manual changes',
         body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
+          this.newBox(e, P, T),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
           this.cxList(e, P), this.fuPopup(e)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in or checked out are locked (In Progress in the data is shown but not locked). Pending orders (rescheduled by dispatch) always start in H+1. Search a CID, User ID or WO number that is not on the board to see why it was left out, and add it by hand when needed. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
@@ -2785,6 +2856,7 @@ class Dispatch {
         e('div', { key: 'nt', style: { marginTop: 4, display: 'flex' } }, this.noteBox(e, j, 'list'))], { minWidth: 190, maxWidth: 250 }),
       td('jb', [e('div', { key: 'c' }, j.cat), e('div', { key: 'd', style: { font: MONO, color: C.muted } }, nf1(this.dur(j) / 60).replace('.0', '') + ' h')], { minWidth: 80 }),
       td('pr', e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+        this.newBadge(e, P, j),
         e('span', { key: 'u', title: ug.tip, style: { padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif", whiteSpace: 'nowrap' } }, ug.label),
         pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
         e('span', { key: 's', style: { font: MONO, color: C.ink } }, fmtN(this.score(j))))),
@@ -2800,7 +2872,8 @@ class Dispatch {
         lk || ro ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
         lk || ro ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
         lk || ro ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
-        mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))));
+        mini('loc', 'Locate', () => this.locate(j), 'Show on the map'),
+        !ro && this.isNew(P, j) ? mini('nw', '✓ Sudah dicek', () => this.seenNew(P, [j]), 'Hapus tanda BARU') : null)));
   }
   board(e, P, T, B, pill, col) {
     const J = this._J, cols = [];
@@ -2975,6 +3048,7 @@ class Dispatch {
     if (j.forced) chips.push(pill('Added by hand', 'acc', 'fz'));
     if (mt.fuBy && mt.fuBy.day === this.today()) chips.push(pill('Follow-up: ' + mt.fuBy.agent + ' ' + hm(mt.fuBy.at), 'warn', 'fu'));
     if (P.manual[j.key]) chips.push(pill('Manual', null, 'm'));
+    const nb = this.newBadge(e, P, j); if (nb) chips.unshift(nb);
     const fd = t => t ? new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'no date';
     const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }); };
     return e('div', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, style: { display: 'flex', flexDirection: 'column', borderRadius: 4, outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: 2, marginBottom: this.ui.hl === j.key ? 4 : 0 } },
@@ -2985,7 +3059,7 @@ class Dispatch {
         onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
         onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); ev.stopPropagation(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
         onDrop: ev => { ev.preventDefault(); ev.stopPropagation(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk || this.readOnly ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: lk ? 'inset 2px 0 0 ' + C.muted : 'none' },
+        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk || this.readOnly ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: (lk ? 'inset 2px 0 0 ' + C.muted : '') + (nb ? (lk ? ', ' : '') + '0 0 0 2px ' + NEW_C : '') || 'none' },
       },
         e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 8px', minWidth: 0 } },
@@ -3019,7 +3093,8 @@ class Dispatch {
           lk ? null : mini('up', '↑', () => this.nudge(P, j.key, colId, -1), 'Move up'),
           lk ? null : mini('dn', '↓', () => this.nudge(P, j.key, colId, 1), 'Move down'),
           lk ? null : sel('mv', '', moveOpts, ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, w] = v.split(':'); this.move(P, j.key, +t, w === 'next' ? this.nextSlot(P, +t, j.key) : null); }, 'Move to'),
-          mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))));
+          mini('loc', 'Locate', () => this.locate(j), 'Show on the map'),
+          nb ? mini('nw', '✓ Sudah dicek', () => this.seenNew(P, [j]), 'Hapus tanda BARU') : null)));
   }
 
   cellTable(e, P, host, col, G) {
