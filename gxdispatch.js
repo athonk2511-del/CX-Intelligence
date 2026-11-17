@@ -1236,12 +1236,30 @@ class Dispatch {
       const add = P.added || (P.added = {}), at = Date.now(), up = m.woUpdated || at;
       fresh.forEach(j => { add[j.key] = { at, up }; });
       fresh.sort(this.cmp).forEach(j => { if (j.pend || j.noLoc) { P.next.push(j.key); P.why[j.key] = j.pend ? 'pending' : 'manual'; return; } if (!this.place(P, j, B)) { P.next.push(j.key); P.why[j.key] = 'internal'; } });
-      this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan.');
+      // The log names each new WO and where it went, so the change log alone shows what an upload changed.
+      const to = j => { const n = P.teams.findIndex(t => t.includes(j.key)); return j.wo + ' → ' + (n >= 0 ? this.tn(n) : 'H+1'); };
+      this.note(fresh.length + ' new work order' + (fresh.length > 1 ? 's' : '') + ' added to the ' + name + ' plan: ' + fresh.slice(0, 15).map(to).join(', ') + (fresh.length > 15 ? ', …' : '') + '.');
+    }
+    // One-time catch-up (2026-11-17): WO that joined today's plan before the BARU mark existed (screens on the old
+    // version placed them silently). Any WO created after the plan was made cannot be part of the base plan, so it is
+    // marked too. A WO Created value without a time counts from the start of that day.
+    if (P.addedV !== 1) {
+      P.addedV = 1;
+      const add = P.added || (P.added = {}), born = P.born || 0, late = [];
+      [...P.teams.flat(), ...P.next].forEach(k => {
+        const j = J.by.get(k); if (!j || add[k] || P.manual[k] || this.ciOf(j) != null || !(j.t > 0)) return;
+        if (j.t > born) { add[k] = { at: Date.now(), up: m.woUpdated || Date.now(), late: true, made: j.t }; late.push(j); }
+      });
+      if (late.length) {
+        const to = j => { const n = P.teams.findIndex(t => t.includes(j.key)); return j.wo + ' → ' + (n >= 0 ? this.tn(n) : 'H+1'); };
+        this.note(late.length + ' WO yang masuk setelah plan dibuat ditandai BARU: ' + late.slice(0, 15).map(to).join(', ') + (late.length > 15 ? ', …' : '') + '.');
+      }
+      this._lateMarked = late.length;
     }
     const filled = this.fillIdle(P, J);
     let tidied = false;
     if (P.added) { const inPlan = new Set([...P.teams.flat(), ...P.next]); Object.keys(P.added).forEach(k => { if (!inPlan.has(k)) { delete P.added[k]; tidied = true; } }); }
-    if (fresh.length || drop || filled || tidied) this.save();
+    if (fresh.length || drop || filled || tidied || this._lateMarked !== undefined) { this._lateMarked = undefined; this.save(); }
     return P;
   }
   // A WO that joined the plan after it was made (a later WO file upload) and that nobody has checked yet. The mark goes
@@ -1261,10 +1279,10 @@ class Dispatch {
   }
   newBadge(e, P, j) {
     const a = this.isNew(P, j); if (!a) return null;
-    const d = new Date(a.up);
-    return e('span', { key: 'new', title: 'WO tambahan dari upload file WO ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '. Cek tim dan urutannya, lalu klik Sudah dicek.',
+    const d = new Date(a.late ? a.made : a.up), t = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return e('span', { key: 'new', title: a.late ? 'WO dibuat setelah plan hari ini dibuat (' + t + '), jadi masuk lewat upload berikutnya dan ditempatkan IDS otomatis. Cek tim dan urutannya, lalu klik Sudah dicek.' : 'WO tambahan dari upload file WO ' + t + '. Cek tim dan urutannya, lalu klik Sudah dicek.',
       style: { padding: '1px 7px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 10.5px 'IBM Plex Sans',system-ui,sans-serif", letterSpacing: '0.04em', whiteSpace: 'nowrap' } },
-      'BARU · upload ' + pad(d.getHours()) + ':' + pad(d.getMinutes()));
+      a.late ? 'BARU · WO dibuat ' + t : 'BARU · upload ' + t);
   }
   // "WO baru" panel above the board: every unchecked WO from later uploads, newest upload first, where IDS put it.
   newBox(e, P, T) {
@@ -1273,7 +1291,7 @@ class Dispatch {
     T.forEach((t, n) => t.rows.forEach((r, i) => where.set(r.j.key, { n, i, r })));
     const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + NEW_C, borderRadius: 3, background: solid ? NEW_C : C.white, color: solid ? '#FFFFFF' : NEW_C, font: "600 11.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
     const groups = new Map();
-    L.forEach(j => { const up = P.added[j.key].up; if (!groups.has(up)) groups.set(up, []); groups.get(up).push(j); });
+    L.forEach(j => { const a = P.added[j.key], up = a.late ? 0 : a.up; if (!groups.has(up)) groups.set(up, []); groups.get(up).push(j); });
     const nT = P.teams.length, moveOpts = { '': 'Move to…' };
     for (let n = 0; n < nT; n++) { moveOpts[n + ':next'] = this.tn(n) + ' · next stop'; moveOpts[n + ':last'] = this.tn(n) + ' · last stop'; }
     const day = d => d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
@@ -1303,7 +1321,7 @@ class Dispatch {
       open ? e('div', { style: { marginTop: 4 } }, ...[...groups.entries()].sort((a, b) => b[0] - a[0]).map(([up, js]) => {
         const d = new Date(up);
         return e('div', { key: 'g' + up, style: { marginTop: 6 } },
-          e('div', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: NEW_C, textTransform: 'uppercase', letterSpacing: '0.04em' } }, 'Upload file WO ' + day(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + js.length + ' WO'),
+          e('div', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: NEW_C, textTransform: 'uppercase', letterSpacing: '0.04em' } }, up ? 'Upload file WO ' + day(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + js.length + ' WO' : 'Masuk sebelum tanda BARU aktif · WO dibuat setelah plan dibuat · ' + js.length + ' WO'),
           ...js.sort((a, b) => (where.has(a.key) ? 0 : 1) - (where.has(b.key) ? 0 : 1) || this.cmp(a, b)).map(row));
       })) : null);
   }
@@ -1364,7 +1382,7 @@ class Dispatch {
     const JJ = done && done.length ? { ...J, list: J.list.filter(j => !gone[j.key]) } : J;
     const P = this.st.plans[name] = { date: day, teams: [], home: [], next: [], why: {}, manual: {}, prov: this.st.cfg.roadOn && this.road.busy(), reb: !ahead && this.nowMin() >= this.st.cfg.rebAt ? day : null };
     this.autoPlan(P, JJ, B, false);
-    P.dataAt = this.dataAt || 0; P.gone = gone; P.goneV = 2; P.born = now; P.touched = false; P.v = MOD_V;
+    P.dataAt = this.dataAt || 0; P.gone = gone; P.goneV = 2; P.addedV = 1; P.born = now; P.touched = false; P.v = MOD_V;
     this.note(this.type + ' plan for ' + name + ' on ' + this.fmtDay(day) + ' created: ' + P.teams.reduce((a, t) => a + t.length, 0) + ' jobs scheduled, ' + P.next.length + ' deferred' + (P.prov ? ' (provisional until road times load).' : '.'));
     this.save();
     return P;

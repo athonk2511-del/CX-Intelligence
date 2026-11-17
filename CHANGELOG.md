@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-17 b (IDS: WO baru yang terlanjur masuk tanpa tanda)
+
+### Added
+
+- **Catch-up sekali jalan.** WO yang sudah ada di plan hari ini tapi WO Created-nya setelah plan dibuat sekarang ikut ditandai BARU, dengan badge "BARU · WO dibuat jam". Ini menangkap WO yang dimasukkan oleh layar yang masih versi lama, misalnya upload jam 12:03. Di panel WO BARU, WO ini dikelompokkan sebagai "Masuk sebelum tanda BARU aktif". WO yang sudah dipindah manual atau sudah check-in tidak ditandai.
+- **Change log mencatat nomor WO dan team tujuannya** setiap ada WO baru masuk, contohnya "7 new work orders added to the Bali plan: WWR-… → Team 3, WWR-… → H+1". Satu entri menampilkan maksimal 15 WO.
+
 ## 2026-11-17 (IDS: tanda BARU untuk WO dari upload berikutnya)
 
 ### Added
