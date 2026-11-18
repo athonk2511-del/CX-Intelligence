@@ -246,7 +246,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-11-14a'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-11-18a'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -2224,7 +2224,7 @@ class Component extends DCLogic {
     const woC = { WCM: '#B08A1E', WWR: '#9B2C1F', WCA: '#2E6B34' };
     const woT = ['WCM', 'WWR', 'WCA'].map(c => es.woTypes.find(w => w.code === c) || { code: c, name: c, value: 0 });
     const woSum = woT.reduce((a, w) => a + w.value, 0);
-    const woNote = (es.woSrc === 'wo' ? 'WCM and WWR are counted from the work-order files; WCA from the ticket work-order column. ' : '') + 'Cancelled work orders excluded.' + (es.woSrc === 'wo' && woT.some(w => w.code !== 'WCA' && !w.value) ? ' No ' + woT.filter(w => w.code !== 'WCA' && !w.value).map(w => w.code).join(' / ') + ' work orders dated in this period: upload that month\'s file to Drive.' : '');
+    const woNote = 'WCA, WCM and WWR are counted from the ticket work-order column' + (es.woSrc === 'wgm' ? '; WGM from the WGM files' : '; WGM from the ticket work-order column (no WGM files in Drive)') + '. Cancelled work orders excluded.';
     const woParts = woT.map(w => ({ label: w.code + ' · ' + w.name, value: w.value, color: woC[w.code], sub: fP(w.value, woSum) + ' of these work orders' }));
     const typeData = t.type.map(x => ({ key: x.key === 'Complaint' ? 'Complaint' : 'Inquiry', value: x.value }))
       .reduce((acc, x) => { const hit = acc.find(y => y.key === x.key); if (hit) hit.value += x.value; else acc.push({ ...x }); return acc; }, []);
@@ -2340,7 +2340,7 @@ class Component extends DCLogic {
           { label: 'Work orders on these CIDs', value: fI(r30.list.reduce((a, x) => a + x.n, 0)), sub: fP(r30.list.reduce((a, x) => a + x.n, 0), r30.woInWindow) + ' of ' + fI(r30.woInWindow) + ' work orders in the window' },
           { label: '3 or more', value: fI(r30.list.filter(x => x.n >= 3).length), sub: 'CIDs visited three times or more' },
         ]), repRows.length ? this.table(['CID', 'WOs', 'Mix', 'Work orders · date', 'Category · problem'], repRows, { maxHeight: 460, minWidth: 820 }) : wait('No CID had more than one work order in this window.')),
-        note: 'Follows the branch filter. The window ends on the latest work-order date in the data' + (r30.list.length > 80 ? '; the first 80 CIDs are listed.' : '.'),
+        note: 'WWR and WCM from the ticket work-order column, dated by the ticket' + (r30.fromWgm ? '; WGM from the WGM files (only WGM with a CID)' : '') + '. Follows the branch filter. The window ends on the latest work-order date in the data' + (r30.list.length > 80 ? '; the first 80 CIDs are listed.' : '.'),
       }),
 
       section('Customer voice', 'Post-interaction survey for the selected period.'),

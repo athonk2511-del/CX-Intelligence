@@ -311,15 +311,15 @@ function gxTrackPost_(user, req) {
 const GX_CSV_FOLDER = '1XPOvL9Tcqsq7JKKd76m_tKz7pNBPyv3g';
 const GX_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const GX_MENU_SETS = {
-  overview: ['tickets', 'csat', 'customers', 'wo'], tickets: ['tickets', 'wo'], chat: ['tickets'], csat: ['csat'],
+  overview: ['tickets', 'csat', 'customers', 'wgm'], tickets: ['tickets', 'wgm'], chat: ['tickets'], csat: ['csat'],
   growth: ['customers', 'wo'], intracity: ['customers', 'wo'], churnRisk: ['customers', 'churn'],
   map: ['customers', 'wo'], dispatch: ['customers', 'wo'], dispatchWcm: ['customers', 'wo'], settings: [],
 };
 // Same rules as kindOf() in gxcsv.js.
 function gxKindOf_(name, inFolder) {
   const n = String(name || '').toLowerCase();
-  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
-  return /csat/.test(n) ? 'csat' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
+  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /\bwgm\b/.test(n) ? 'wgm' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
+  return /csat/.test(n) ? 'csat' : /^wgm\b/.test(n) ? 'wgm' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
 }
 function gxCsvKinds_(user) {
   if (user.role === 'admin') return null;            // everything

@@ -123,7 +123,7 @@ export function useProxyDrive() {
   setDrive(true);
 }
 const SET_OF = { [TABS.tickets]: 'tickets', [TABS.customers]: 'customers', [TABS.csat]: 'csat', wo: 'wo' };
-const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders', csat: 'CSAT' };
+const SET_LABEL = { tickets: 'tickets', customers: 'customers', wo: 'work orders', wgm: 'WGM work orders', csat: 'CSAT' };
 let CSV = null, setsP = null, setP = {}, csvFailed = {};
 // Drive CSV can be switched off per user (dispatchers read the sheet through the key-checked proxy instead,
 // so they need no access to the Drive folder and no Google sign-in).
@@ -151,7 +151,7 @@ function dropPartial(name) {
   [...cache.keys()].forEach(k => { if (k.startsWith(pre) && !k.endsWith('|F')) cache.delete(k); });
 }
 function driveSets() {
-  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.csat, s.churn || [])); return s; })()
+  if (!setsP) setsP = (async () => { CSV = CSV || await import('./gxcsv.js?v=2026-11-18a'); const s = await CSV.listSets(CSV_FOLDER, DRIVE_AUTH); CSV.pruneCache([].concat(s.tickets, s.customers, s.wo, s.wgm || [], s.csat, s.churn || [])); return s; })()
     .catch(e => { setsP = null; csvInfo.error = e.message; throw e; });
   return setsP;
 }
@@ -191,11 +191,21 @@ export async function churnFiles() {
   try { const s = await driveSets(); return { files: s.churn || [] }; }
   catch (e) { return { files: [], error: e.message }; }
 }
-export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); return CSV.fileText(f, DRIVE_AUTH); }
-export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-10-25a'); return CSV.parseCSV(text); }
+export async function driveFileText(f) { CSV = CSV || await import('./gxcsv.js?v=2026-11-18a'); return CSV.fileText(f, DRIVE_AUTH); }
+export async function parseCsvText(text) { CSV = CSV || await import('./gxcsv.js?v=2026-11-18a'); return CSV.parseCSV(text); }
 export async function woTable() {
   if (!CSV_FOLDER || !driveOn || csvFailed.wo) return null;
   try { return await csvSet('wo', true); } catch (e) { csvFailed.wo = e.message || 'failed'; console.warn('Work order CSV unavailable:', e.message); return null; }
+}
+// WGM (mass outage) work orders: their own folder, same export layout as the WWR / WCM files. Reports only;
+// the IDS keeps reading the WWR / WCM files (2026-11-18).
+export async function wgmQuery(tq) {
+  if (!CSV_FOLDER || !driveOn || csvFailed.wgm) return null;
+  let t; try { t = await csvSet('wgm', true); } catch (e) { csvFailed.wgm = e.message || 'failed'; return null; }
+  if (!t) return null;
+  const key = 'wgm|' + tq; if (cache.has(key)) return cache.get(key);
+  stats.queries++;
+  const out = CSV.runQuery(t, tq); cache.set(key, out); return out;
 }
 export async function woQuery(tq) {
   const t = await woTable(); if (!t) return null;
@@ -427,7 +437,6 @@ export async function loadIndex() {
       gviz(TABS.csat, 'select year(S), month(S), count(G) group by year(S), month(S)'),
       gviz(TABS.customers, 'select year(J), month(J), count(E) group by year(J), month(J)'),
       gviz(TABS.customers, "select year(L), month(L), count(E) where G = 'Termination' group by year(L), month(L)"),
-      woQuery('select year(H), month(H), count(B) group by year(H), month(H)'),
     ].map(p => Promise.resolve(p).catch(() => null))).then(rs => ({ rows: rs.flatMap(r => (r && r.rows) || []) })),
   ]);
   const byPeriod = new Map();
@@ -537,19 +546,19 @@ export async function loadEscalation(period, branch) {
       count(W(period, branch, `AC starts with '${t.code}' and ${sentCtso}`)),
     ]),
   ]);
-  // WWR / WCM come from the work-order CSV files when present (more complete than ticket column AC).
+  // Reports (2026-11-18): WCA, WCM and WWR from ticket column AC; WGM from the WGM files when present. The IDS
+  // work-order files (WWR / WCM folders) are daily dispatch files and are not used for reporting.
   let woN = wo, woSrc = 'tickets';
-  if (await woTable()) {
-    woSrc = 'wo';
-    for (let i = 0; i < WO_TYPES.length; i++) {
-      const c = WO_TYPES[i].code; if (c !== 'WWR' && c !== 'WCM') continue;
-      const [v, via] = await Promise.all([woCount(woWhere(period, branch, `B starts with '${c}' and ${WO_LIVE}`)), woCount(woWhere(period, branch, `B starts with '${c}' and ${WO_LIVE} and J is not null and J <> '-'`))]);
-      woN += v - rest[i * 2]; rest[i * 2] = v; rest[i * 2 + 1] = via;
-    }
+  const gi = WO_TYPES.findIndex(t => t.code === 'WGM');
+  const wq = w => wgmQuery('select count(B)' + woWhere(period, branch, "B starts with 'WGM' and " + WO_LIVE + (w ? ' and ' + w : '')));
+  const [gv, gvia] = await Promise.all([wq(''), wq("J is not null and J <> '-'")]);
+  if (gv) {
+    const v = num(gv.rows[0] && gv.rows[0][0]), via = num(gvia && gvia.rows[0] && gvia.rows[0][0]);
+    woSrc = 'wgm'; woN += v - rest[gi * 2]; rest[gi * 2] = v; rest[gi * 2 + 1] = via;
   }
   const woTypes = WO_TYPES.map((t, i) => {
     const value = rest[i * 2], viaCtso = rest[i * 2 + 1];
-    return { ...t, value, viaCtso, direct: value - viaCtso, share: pct(value, woN), src: woSrc === 'wo' && (t.code === 'WWR' || t.code === 'WCM') ? 'wo' : 'tickets' };
+    return { ...t, value, viaCtso, direct: value - viaCtso, share: pct(value, woN), src: woSrc === 'wgm' && t.code === 'WGM' ? 'wgm' : 'tickets' };
   });
   const [ctsoAgents, woByCategory] = await Promise.all([
     gviz(TABS.tickets, `select N, count(B)${W(period, branch, namedCtso)} group by N order by count(B) desc limit 15`),
@@ -666,18 +675,17 @@ export async function loadRepeat(period, branch) {
   const code = v => String(v || '').trim().slice(0, 3).toUpperCase();
   const byCid = new Map();
   let woTotal = 0;
-  // WWR / WCM from the work-order CSV files when present; WGM stays on ticket column AC.
-  const fromWo = !!(await woTable());
+  // WWR / WCM from ticket column AC; WGM from the WGM files when present (only WGM with a CID attach to a customer).
+  const [gl, gk] = await Promise.all([
+    wgmQuery(`select L, B${woWhere(period, branch, "B starts with 'WGM' and " + WO_LIVE)}`),
+    wgmQuery(`select B${woWhere(period, branch, "B starts with 'WGM' and (F = 'Cancelled' or F = 'Canceled')")}`),
+  ]);
+  const fromWo = false, fromWgm = !!gl;
   let liveRows = live.rows, killedRows = killed.rows;
-  if (fromWo) {
-    const isWo = "(B starts with 'WWR' or B starts with 'WCM') and L is not null";
-    const [wl, wk] = await Promise.all([
-      woQuery(`select L, B${woWhere(period, branch, isWo + ' and ' + WO_LIVE)}`),
-      woQuery(`select B${woWhere(period, branch, isWo + " and (F = 'Cancelled' or F = 'Canceled')")}`),
-    ]);
+  if (fromWgm) {
     const cidOf = v => String(v || '').replace(/\D/g, '');
-    liveRows = live.rows.filter(r => code(r[1]) === 'WGM').concat(wl.rows.map(([l, b]) => [cidOf(l), b]));
-    killedRows = killed.rows.filter(r => code(r[0]) === 'WGM').concat(wk.rows);
+    liveRows = live.rows.filter(r => code(r[1]) !== 'WGM').concat(gl.rows.map(([l, b]) => [cidOf(l), b]).filter(r => r[0]));
+    killedRows = killed.rows.filter(r => code(r[0]) !== 'WGM').concat(gk ? gk.rows : []);
   }
   liveRows.forEach(([f, ac]) => {
     const c = code(ac);
@@ -714,7 +722,7 @@ export async function loadRepeat(period, branch) {
     uniq, multi, multiShare: pct(multi, uniq), three, threeShare: pct(three, uniq),
     five, fiveShare: pct(five, uniq),
     woTotal, cancelled, repeatWo, repeatWoShare: pct(repeatWo, woTotal),
-    byType, mixedFault, fromWo,
+    byType, mixedFault, fromWo, fromWgm,
     top: list.slice(0, 12), bands,
   };
 }
@@ -1437,21 +1445,19 @@ export async function loadCollected(period, branch) {
 export async function loadRepeat30(branch) {
   const code = v => String(v || '').trim().slice(0, 3).toUpperCase();
   const cidOf = v => String(v || '').replace(/\D/g, '');
-  const fromWo = !!(await woTable());
-  const items = new Map();
-  if (fromWo) {
-    const bw = branch && branch !== 'all' ? ` and C = '${esc(branch)}'` : '';
-    const r = await woQuery(`select L, B, H, Y, R, S where ${WO_LIVE} and L is not null${bw}`);
-    (r ? r.rows : []).forEach(([l, b, h, y, cat, prob]) => {
-      const wo = String(b || '').trim(), c = code(wo);
-      if (!wo || c === 'WCA') return;
-      items.set(wo, { cid: cidOf(l), wo, code: c, date: parseAnyDate(y) || parseAnyDate(h), cat: String(cat || '').trim(), prob: String(prob || '').trim() });
-    });
-  }
+  // Reports (2026-11-18): WWR / WCM from ticket column AC (the ticket date, category and problem); WGM from the WGM
+  // files when present, only those with a CID. The IDS work-order files are not used here.
+  const fromWo = false, items = new Map();
+  const bw = branch && branch !== 'all' ? ` and C = '${esc(branch)}'` : '';
+  const g = await wgmQuery(`select L, B, H, Y, R, S where B starts with 'WGM' and ${WO_LIVE} and L is not null and L <> '-'${bw}`);
+  (g ? g.rows : []).forEach(([l, b, h, y, cat, prob]) => {
+    const wo = String(b || '').trim(); if (!wo || !cidOf(l)) return;
+    items.set(wo, { cid: cidOf(l), wo, code: 'WGM', date: parseAnyDate(y) || parseAnyDate(h), cat: String(cat || '').trim(), prob: String(prob || '').trim() });
+  });
   const t = await gviz(TABS.tickets, `select F, AC, D, P, Q${W('all', branch, "F is not null and AC is not null and AC <> '-' and AD <> 'Canceled'")} limit 240000`);
   t.rows.forEach(([f, ac, d, p, q]) => {
     const wo = String(ac || '').trim(), c = code(wo);
-    if (!wo || c === 'WCA' || items.has(wo) || (fromWo && (c === 'WWR' || c === 'WCM'))) return;
+    if (!/^W[A-Z]{2}-/i.test(wo) || c === 'WCA' || items.has(wo) || (g && c === 'WGM')) return;
     items.set(wo, { cid: cidOf(f), wo, code: c, date: parseAnyDate(d), cat: String(p || '').trim(), prob: String(q || '').trim() });
   });
   const now = Date.now();
@@ -1466,7 +1472,7 @@ export async function loadRepeat30(branch) {
     const cats = [...new Set(v.map(x => [x.cat, x.prob].filter(Boolean).filter((s, i, a) => a.indexOf(s) === i).join(' · ')).filter(Boolean))];
     return { cid, n: v.length, wos: v, mix: Object.entries(mix).map(([k, n]) => k + '×' + n).join('  '), cats, last: v[v.length - 1].date };
   }).sort((a, b) => b.n - a.n || b.last - a.last);
-  return { list, cids: byCid.size, start: end ? new Date(start + DAY) : null, end: end ? new Date(end) : null, fromWo,
+  return { list, cids: byCid.size, start: end ? new Date(start + DAY) : null, end: end ? new Date(end) : null, fromWo, fromWgm: !!g,
     woInWindow: all.filter(x => x.date.getTime() > start).length };
 }
 

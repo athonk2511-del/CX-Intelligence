@@ -204,8 +204,8 @@ async function cachePrune(keep) { try { const db = await idb(); const st = db.tr
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 export function kindOf(name, inFolder) {
   const n = String(name || '').toLowerCase();
-  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
-  return /csat/.test(n) ? 'csat' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
+  if (inFolder) return /churn ?model/.test(n) ? 'churn' : /csat/.test(n) ? 'csat' : /\bwgm\b/.test(n) ? 'wgm' : /work ?order|^wo\b|wwr|wcm/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : /ticket|tiket/.test(n) ? 'tickets' : null;
+  return /csat/.test(n) ? 'csat' : /^wgm\b/.test(n) ? 'wgm' : /^(wwr|wcm|wo)\b|work ?order/.test(n) ? 'wo' : /customer|pelanggan/.test(n) ? 'customers' : 'tickets';
 }
 // auth: { key } for an API key, or { token: async (renew) => accessToken } for Google sign-in.
 async function driveFetch(url, auth, retry = true) {
@@ -228,7 +228,7 @@ async function listDrive(folderId, apiKey) {
   return out;
 }
 export async function listSets(rootId, apiKey) {
-  const sets = { tickets: [], customers: [], wo: [], csat: [], churn: [] };
+  const sets = { tickets: [], customers: [], wo: [], wgm: [], csat: [], churn: [] };
   const root = await listDrive(rootId, apiKey);
   const isCsv = f => !f.folder && /\.csv$/i.test(f.name);
   root.filter(isCsv).forEach(f => sets[kindOf(f.name, false)].push(f));
@@ -242,15 +242,32 @@ export async function listSets(rootId, apiKey) {
 }
 // Parses one file into T.rows, yielding to the browser every ~300k characters so the page stays responsive.
 const tick = () => new Promise(r => setTimeout(r, 0));
+// Files of one dataset are stacked by column NAME, not position: a later export that adds a column (the November 2026
+// ticket export added "Solved by Dispatcher" before the WO columns) keeps every known column on its usual letter, and
+// new columns go to the end. Columns listed in LATE always go to the end, so the letters stay those of the older layout
+// that the queries are written for, whichever file is read first.
+const LATE = new Set(['solved by dispatcher']);
+const hNorm = h => String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, ' ');
+function headerMap(row, T) {
+  const h = row.map(hNorm), idx = h.map((_, i) => i);
+  const order = idx.filter(i => !LATE.has(h[i])).concat(idx.filter(i => LATE.has(h[i])));
+  if (!T.header) { T.header = order.map(i => row[i]); T.hn = T.header.map(hNorm); return order.every((v, i) => v === i) ? null : order; }
+  const used = new Set(), map = T.hn.map(c => { const j = h.findIndex((x, k) => x === c && !used.has(k)); if (j >= 0) used.add(j); return j; });
+  // Too few names in common (no header row, or another layout): stack by position as before.
+  if (map.filter(j => j >= 0).length < Math.min(T.hn.length, h.length) * 0.6) return null;
+  order.filter(i => !used.has(i) && h[i]).forEach(i => { map.push(i); T.header.push(row[i]); T.hn.push(h[i]); });
+  return map.every((v, i) => v === i) && map.length === h.length ? null : map;
+}
 async function parseInto(text, T) {
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
   const nl = text.indexOf('\n'), head = text.slice(0, nl < 0 ? text.length : nl);
   const cnt = ch => head.split(ch).length;
   const sep = cnt(';') > cnt(',') ? (cnt(';') > cnt('\t') ? ';' : '\t') : (cnt('\t') > cnt(',') ? '\t' : ',');
-  let row = [], f = '', q = false, i = 0, first = true, budget = 300000; const n = text.length;
+  let row = [], f = '', q = false, i = 0, first = true, budget = 300000, map = null; const n = text.length;
   const end = () => {
-    if (first) { first = false; if (!T.header) T.header = row; return; }
+    if (first) { first = false; map = headerMap(row, T); return; }
     if (row.length === 1 && row[0] === '') return;
+    if (map) { const r = row; row = map.map(j => j < 0 ? '' : (r[j] == null ? '' : r[j])); }
     T.rows.push(row); if (row.length > T.width) T.width = row.length;
   };
   while (i < n) {

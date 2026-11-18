@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-18 (Report WO dari data tiket, WGM dari folder WGM, kolom tiket November)
+
+### Changed
+
+- **Work orders by type** (Executive summary dan Trouble tickets) menghitung WCA, WCM, dan WWR dari kolom WO di data tiket. WGM diambil dari folder **WGM** di Drive. File WWR dan WCM yang dipakai IDS tidak lagi dipakai untuk laporan.
+- **CIDs with repeat work orders · last 30 days** (Executive summary) dan repeat work orders di Trouble tickets memakai WO dari data tiket, dengan tanggal, kategori, dan problem tiket. WGM dari folder WGM ikut dihitung hanya kalau punya CID. WGM gamas tanpa CID tidak menempel ke pelanggan.
+- **IDS tidak berubah.** IDS tetap membaca folder WWR dan WCM.
+- Daftar bulan di pemilih periode tidak lagi membaca file WO IDS.
+
+### Fixed
+
+- **Kolom tiket November bergeser.** Export tiket November menambah kolom "Solved by Dispatcher" sebelum kolom WO. Akibatnya untuk data November, kolom WO Number terbaca sebagai WO Created (tanggal), Status sebagai WO Number, dan Total Reports sebagai Status. Ini yang membuat tabel repeat menampilkan tanggal di kolom WO dan WCA terbaca 0. File CSV sekarang ditumpuk berdasarkan **nama kolom**, bukan posisi. Kolom baru dipindah ke paling kanan, jadi semua bulan memakai susunan kolom yang sama.
+
+### Admin
+
+- **apps-script/roles.gs:** folder WGM dikenali, dan menu Executive summary serta Trouble tickets bisa membaca WGM. Supaya user non-admin ikut melihat angka WGM, update file roles di Apps Script lalu Deploy dengan New version.
+
 ## 2026-11-17 b (IDS: WO baru yang terlanjur masuk tanpa tanda)
 
 ### Added
