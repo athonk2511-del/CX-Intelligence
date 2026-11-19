@@ -1283,6 +1283,11 @@ class Dispatch {
     // so an older screen never removes new work orders or brings back closed ones.
     const gone = P.gone || (P.gone = {});
     const isCx = k => !!(this.st.meta[k] || {}).cx;
+    // 2026-11-19: a WO that dropped out because an earlier WO file did not list it comes back as soon as a NEWER WO file
+    // lists it open again (it is marked BARU). A WO taken out because it was checked out in IDS stays out (the data
+    // often still says Open after the visit); the dispatcher sees why in the "WO tertahan" panel and can add it back.
+    const upAt = m.woUpdated || 0;
+    Object.keys(gone).forEach(k => { if (upAt > gone[k] && J.by.has(k) && !known.has(k) && (this.st.meta[k] || {}).stat !== 'checkout') delete gone[k]; });
     const unknown = [...known].filter(k => !J.by.has(k) && !isCx(k));
     const fresh = J.list.filter(j => !known.has(j.key) && !gone[j.key]);
     this.behind = (unknown.length > 0 || fresh.length > 0) && (P.dataAt || 0) > (this.dataAt || 0) + 60000 && !this.skewOK;
@@ -2479,6 +2484,7 @@ class Dispatch {
         body: e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.newBox(e, P, T),
+          this.heldBox(e, P),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
           this.cxList(e, P), this.fuPopup(e)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in or checked out are locked (In Progress in the data is shown but not locked). Pending orders (rescheduled by dispatch) always start in H+1. Search a CID, User ID or WO number that is not on the board to see why it was left out, and add it by hand when needed. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
@@ -2562,7 +2568,11 @@ class Dispatch {
     if (!w) { out.reasons.push('Tidak ada WO ' + this.type + ' yang masih open untuk CID ini di data WO' + (m.woUpdated ? ' (file WO terakhir di-upload ' + when(m.woUpdated) + ')' : '') + '. WO yang dibuat setelah upload terakhir belum terbaca: upload ulang file WO. Bisa juga WO-nya sudah Cancelled atau tipenya bukan ' + this.type + '.'); return out; }
     if (w.state === 2) { out.reasons.push('WO ' + w.wo + ' sudah Closed di data (status "' + (w.raw || 'Closed') + '").'); return out; }
     const key = String(w.wo);
-    if (J.by.has(key)) { out.inIds = true; return out; }
+    if (J.by.has(key)) {
+      const P = this.st.plans[x.name];
+      if (!P || !Array.isArray(P.teams) || P.teams.some(t => t.includes(key)) || P.next.includes(key)) { out.inIds = true; return out; }
+      return Object.assign(out, this.heldWhy(P, J.by.get(key)), { held: true, can: true });
+    }
     if (J.cxBy && J.cxBy.has(key)) { out.reasons.push('WO ' + key + ' sudah di-Cancel di IDS. Pulihkan dari daftar Cancelled WO di bawah board.'); return out; }
     if (i != null) {
       if (m.branch[i] !== x.bi) { out.reasons.push('WO ini milik cabang ' + (m.branches[m.branch[i]] || '?') + '. Buka IDS cabang itu.'); return out; }
@@ -2589,9 +2599,42 @@ class Dispatch {
     if (!out.reasons.length) out.reasons.push('Pelanggan tidak tampil di peta (status ' + c.status + ', koordinat ' + c.coord + ').');
     return out;
   }
+  // Why an open WO of the data is not in the plan (2026-11-19). Shown in the search and in the "WO tertahan" panel.
+  heldWhy(P, j) {
+    const mt = this.st.meta[j.key] || {}, g = P && P.gone && P.gone[j.key], up = (this._ctx && this._ctx.m && this._ctx.m.woUpdated) || 0;
+    const when = t => { const d = new Date(t); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+    const st = 'Status di data WO: "' + (j.raw || 'Open') + '".';
+    if (mt.stat === 'checkout') return { kind: 'co', reasons: ['Sudah di-check-out di IDS' + (mt.co != null ? ' jam ' + hm(mt.co) : '') + (mt.coDay ? ' tanggal ' + mt.coDay : '') + ', jadi dikeluarkan dari plan supaya tidak dikirim ulang. ' + st + ' Kalau masih perlu kunjungan ulang (misalnya statusnya Pending karena di-reschedule), klik Masukkan ke IDS.'] };
+    if (g) return { kind: 'left', reasons: ['WO ini sempat tidak ada di file WO (' + when(g) + '), jadi dikeluarkan dari plan. ' + st + (up > g ? ' Akan masuk lagi otomatis saat halaman dimuat ulang.' : ' Akan masuk lagi otomatis saat file WO berikutnya di-upload, atau klik Masukkan ke IDS sekarang.')] };
+    return { kind: 'wait', reasons: ['Ada di data tapi belum ditempatkan di plan. Muat ulang halaman; kalau tetap tidak masuk, klik Masukkan ke IDS.'] };
+  }
+  heldList(P) {
+    const J = this._J; if (!J || !P || !Array.isArray(P.teams) || this.stale) return [];
+    const inPlan = new Set([...P.teams.flat(), ...P.next]);
+    return J.list.filter(j => !inPlan.has(j.key)).map(j => ({ j, ...this.heldWhy(P, j) }));
+  }
+  heldBox(e, P) {
+    const L = this.heldList(P); if (!L.length) return null;
+    const ro = this.readOnly, open = !!this.ui.heldOpen;
+    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + C.warn, borderRadius: 3, background: solid ? C.warn : C.white, color: solid ? '#FFFFFF' : C.warn, font: "600 11.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const nCo = L.filter(x => x.kind === 'co').length;
+    return e('div', { key: 'heldbox', style: { border: '1px solid ' + C.warn, borderRadius: 4, background: C.white, padding: '6px 12px' } },
+      e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.warn } }, 'WO TERTAHAN · ' + L.length + ' WO open di data tapi tidak ada di plan' + (nCo ? ' (' + nCo + ' sudah di-check-out di IDS)' : '')),
+        btn('tg', open ? 'Sembunyikan' : 'Lihat alasannya', () => { this.ui.heldOpen = !open; this.onChange(); })),
+      open ? e('div', { style: { marginTop: 4 } }, ...L.sort((a, b) => this.cmp(a.j, b.j)).map(x => e('div', { key: x.j.key, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', padding: '6px 0', borderTop: '1px solid ' + C.soft } },
+        e('span', { style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, x.j.wo),
+        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (x.j.uid || x.j.name || '—') + ' · CID ' + x.j.cid),
+        e('span', { style: { font: SANS, color: C.text, flex: '1 1 320px' } }, x.reasons.join(' ')),
+        ro ? null : btn('in', 'Masukkan ke IDS', () => this.forceIn({ w: { wo: x.j.wo }, cid: x.j.cid, uid: x.j.uid, name: x.j.name, area: x.j.area, can: true, reasons: x.reasons, held: true }), true)))) : null);
+  }
   forceIn(dg) {
     if (this.readOnly || !dg || !dg.w || !dg.can) return;
     const x = this._ctx, P = this.st.plans[x.name], key = String(dg.w.wo);
+    // Held back (checked out earlier, or dropped from an older file): clear that, so it is planned again as a new visit.
+    if (P && P.gone) delete P.gone[key];
+    const hm0 = this.st.meta[key];
+    if (dg.held && hm0 && hm0.stat === 'checkout') { hm0.stat = 'none'; delete hm0.co; delete hm0.coDay; delete hm0.ci; delete hm0.ciDay; delete hm0.ciAuto; delete hm0.coAuto; delete hm0.coUndo; }
     const f = { by: this.user || '', at: Date.now(), type: this.type, branch: x.name, cid: dg.cid, uid: dg.uid || '', name: dg.name || '', area: dg.area || '', reason: dg.reasons.join(' ') };
     if (dg.offMap) { f.offMap = true; if (dg.ll) { f.lat = dg.ll.lat; f.lng = dg.ll.lng; } }
     this.meta(key).force = f; this._jobs = null;

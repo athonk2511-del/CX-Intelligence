@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-19 b (IDS: WO tertahan dijelaskan, WO yang kembali ke file masuk lagi)
+
+### Fixed
+
+- **WO open yang tidak masuk plan tanpa penjelasan.** Pencarian menampilkan "Sudah ada di IDS" untuk WO yang memang ada di data tapi tidak ada di team mana pun maupun H+1. Sekarang pencarian menjelaskan alasannya dan menampilkan tombol **Masukkan ke IDS**. Ada dua sebab:
+  - WO sudah di-check-out di IDS (pada hari itu atau sebelumnya), lalu dikeluarkan dari plan supaya tidak dikirim ulang, padahal status di data masih Open atau Pending. Contohnya WO yang di-reschedule (Pending) setelah kunjungan.
+  - WO sempat tidak ada di file WO yang di-upload, lalu muncul lagi.
+- **WO yang kembali ke file WO masuk lagi otomatis.** Sebelumnya WO yang sempat hilang dari file ditahan selama 3 hari. Sekarang WO itu langsung masuk lagi begitu file WO yang lebih baru mencantumkannya, lengkap dengan tanda BARU.
+
+### Added
+
+- **Panel "WO TERTAHAN"** di atas board: jumlah WO yang open di data tapi tidak ada di plan. Klik "Lihat alasannya" untuk melihat alasan per WO, lalu pakai tombol Masukkan ke IDS. WO yang sudah di-check-out dan dimasukkan lagi diperlakukan sebagai kunjungan baru: status teknisi dan jam check-in/check-out direset. WO Pending tetap masuk H+1.
+
 ## 2026-11-19 (IDS: tracker mengikuti jumlah team, Working area, tracker otomatis)
 
 ### Added
