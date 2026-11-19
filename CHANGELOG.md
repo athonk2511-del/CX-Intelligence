@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-19 c (IDS: pegangan drag, teks WO bisa di-copy)
+
+### Changed
+
+- **Card WO di board dan baris WO di tampilan List sekarang digeser lewat pegangan ⠿.** Pegangan ada di sebelah kiri UID (board) atau nomor urut (list). Bagian lain card kembali seperti teks biasa: bisa di-blok, di-double-click, dan di-copy-paste. Saat digeser, seluruh card tetap terlihat ikut terbawa. Move to tetap tersedia. WO yang sudah dimulai (terkunci) dan layar view-only tidak menampilkan pegangan.
+
 ## 2026-11-19 b (IDS: WO tertahan dijelaskan, WO yang kembali ke file masuk lagi)
 
 ### Fixed

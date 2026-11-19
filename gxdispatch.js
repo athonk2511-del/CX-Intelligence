@@ -2678,6 +2678,21 @@ class Dispatch {
     const txt = 'File WO terakhir di-upload ' + d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' (' + (age < 1 ? Math.max(1, Math.round(age * 60)) + ' menit' : Math.floor(age) + ' jam') + ' lalu)' + (old ? '. WO yang dibuat setelah itu belum masuk: upload ulang file WO.' : '.');
     return e('div', { key: 'wf', style: { padding: '4px 2px 0', font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: old ? C.warn : C.muted } }, txt);
   }
+  // Drag handle (2026-11-19): a WO card or row is moved only by dragging this grip, so its text can be selected and
+  // copied like normal text. The whole card or row is shown as the drag image. Move to stays available.
+  grip(e, j, on) {
+    if (!on) return null;
+    return e('span', { key: 'grip', draggable: true, title: 'Tarik untuk memindahkan WO ini', 'aria-label': 'Drag ' + j.wo,
+      onDragStart: ev => {
+        this.ui.drag = j.key;
+        try {
+          ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move';
+          const el = ev.currentTarget.closest('[data-wo]'); if (el && ev.dataTransfer.setDragImage) ev.dataTransfer.setDragImage(el, 16, 16);
+        } catch (x) {}
+      },
+      onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
+      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, minWidth: 18, height: 22, marginRight: 2, borderRadius: 3, background: C.soft, color: C.muted, cursor: 'grab', font: "700 13px 'IBM Plex Mono',ui-monospace,monospace", lineHeight: 1, userSelect: 'none', flex: 'none' } }, '⠿');
+  }
   // Scroll the board (or list) to a job and outline it for a few seconds.
   showOnBoard(j) {
     this.ui.hl = j.key; this.onChange();
@@ -2966,13 +2981,11 @@ class Dispatch {
     const drop = this.ui.drop, line = drop && drop.col === colId && drop.idx === idx && this.ui.drag !== j.key;
     const flags = r ? r.f.filter(f => f[0] !== 'info' || /Nearby|Lunch/.test(f[1])) : [];
     const co = this.coOf(j);
-    return e('tr', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, draggable: !lk && !ro,
-      onDragStart: ev => { if (ro) return; this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
-      onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
+    return e('tr', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, 'data-wo': j.key,
       onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
       onDrop: ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-      style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: lk || ro ? 'default' : 'grab', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none', outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: -3 } },
-      td('n', colId === 'next' ? '—' : String(idx + 1), { borderLeft: '5px solid ' + ug.c, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, width: 28 }),
+      style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: 'auto', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none', outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: -3 } },
+      td('n', [this.grip(e, j, !lk && !ro), colId === 'next' ? '—' : String(idx + 1)], { borderLeft: '5px solid ' + ug.c, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, width: 46, whiteSpace: 'nowrap' }),
       td('wo', [e('div', { key: 'a', style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' } }, j.wo),
         e('div', { key: 'b', style: { font: MONO, color: C.muted, whiteSpace: 'nowrap' } }, (j.uid || '—') + ' · CID ' + j.cid)]),
       td('cu', [e('div', { key: 'a', style: { color: C.ink } }, j.name || '—'), e('div', { key: 'b', style: { color: C.muted, fontSize: 11.5 } }, [j.area, j.prob].filter(Boolean).join(' · ')),
@@ -3029,7 +3042,7 @@ class Dispatch {
       style: { width: '100%', boxSizing: 'border-box', padding: '5px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.white, color: C.ink, font: SANS, outline: 'none' } });
     const nextCol = this.column(e, 'next', 'Defer to H+1', '#D9480F', [
         e('span', { key: 'nx', style: { font: SANS, color: C.warn } }, 'Internal reasons add aging +' + AGING + ' tomorrow. Customer requests do not.'),
-        e('span', { key: 'nx2', style: { font: SANS, color: C.muted } }, 'Drag a card into any team, or use Move to.'),
+        e('span', { key: 'nx2', style: { font: SANS, color: C.muted } }, 'Drag a card by its ⠿ handle into any team, or use Move to.'),
         search],
       pill((q ? found.length + ' of ' : '') + P.next.length + ' jobs', 'warn'),
       shown.map(k => this.cardEl(e, P, J.by.get(k), null, 'next', P.next.indexOf(k), pill)).concat(!q && P.next.length > shown.length ? [e('button', { key: 'more', type: 'button', onClick: () => { this.ui.nextAll = true; this.onChange(); }, style: { padding: '6px', border: '1px dashed ' + C.warnLine, borderRadius: 3, background: 'transparent', font: SANS, color: C.warn, cursor: 'pointer' } }, 'Show all ' + P.next.length)] : []), P, true);
@@ -3184,15 +3197,14 @@ class Dispatch {
     return e('div', { key: j.key, id: 'ids-wo-' + this.type + '-' + j.key, style: { display: 'flex', flexDirection: 'column', borderRadius: 4, outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: 2, marginBottom: this.ui.hl === j.key ? 4 : 0 } },
       line ? e('div', { style: { height: 3, background: C.acc, borderRadius: 2, margin: '2px 0 4px' } }) : null,
       e('div', {
-        draggable: !lk && !this.readOnly,
-        onDragStart: ev => { if (this.readOnly) return; this.ui.drag = j.key; try { ev.dataTransfer.setData('text/plain', j.key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) {} },
-        onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
+        'data-wo': j.key,
         onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); ev.stopPropagation(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
         onDrop: ev => { ev.preventDefault(); ev.stopPropagation(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
-        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: lk || this.readOnly ? 'default' : 'grab', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: (lk ? 'inset 2px 0 0 ' + C.muted : '') + (nb ? (lk ? ', ' : '') + '0 0 0 2px ' + NEW_C : '') || 'none' },
+        style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '8px 9px', marginBottom: 6, background: ug.bg, border: '1px solid ' + C.line, borderLeft: '5px solid ' + ug.c, borderRadius: 3, cursor: 'auto', opacity: this.ui.drag === j.key ? 0.4 : 1, boxShadow: (lk ? 'inset 2px 0 0 ' + C.muted : '') + (nb ? (lk ? ', ' : '') + '0 0 0 2px ' + NEW_C : '') || 'none' },
       },
         e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 8px', minWidth: 0 } },
+            this.grip(e, j, !lk && !this.readOnly),
             e('span', { style: { font: "600 14px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, wordBreak: 'break-all' } }, j.uid || j.name || '—'),
             e('span', { style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, 'CID ' + j.cid)),
           e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' }, title: 'Priority score' }, fmtN(sc))),
