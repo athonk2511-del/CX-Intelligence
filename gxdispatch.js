@@ -222,6 +222,14 @@ class Dispatch {
   /* ---------- trackers (Traccar devices) assigned to teams ---------- */
   // Live devices of this screen (null when tracking is not live: demo devices never count).
   devs() { return Array.isArray(this._devs) ? this._devs : null; }
+  // Teams that can carry a tracker (2026-11-19): the "Available teams" setting or, when today's plan of any branch has
+  // more team columns (teams in charge today), that number. Team details, tracker matching and auto-tagging use it.
+  teamCount() {
+    let n = Math.max(1, Math.round(+this.st.cfg.teams || 1));
+    const day = this.today();
+    Object.values(this.st.plans || {}).forEach(P => { if (P && Array.isArray(P.teams) && P.date >= day) n = Math.max(n, P.teams.length); });
+    return Math.min(60, n);
+  }
   // The tracker of team i, or null.
   trackerOf(i) {
     const L = this.devs(); if (!L) return null;
@@ -229,13 +237,13 @@ class Dispatch {
   }
   devLabel(d) { return d.name + (d.uniqueId ? ' (' + d.uniqueId + ')' : '') + ' · ' + (d.state || 'offline'); }
   // Tracker choice for a team in Teams & crew: a list of the live Traccar devices; typed ID when tracking is not live.
-  trackerField(e, cr, upd, d, n, tx) {
+  trackerField(e, cr, upd, d, n, tx, nDet) {
     const L = this.devs(), cur = String(cr.app || '');
     if (!L || !L.length) return [e('input', { key: 'cap', type: 'text', defaultValue: cur, placeholder: 'Traccar device identifier', 'aria-label': 'Team ' + (n + 1) + ' tracker', onBlur: ev => upd({ app: ev.target.value.trim() }), style: { ...tx, width: 190 } }),
       e('span', { key: 'capn', style: { font: SANS, color: C.muted } }, 'live tracking off: type the identifier')];
     const opts = [e('option', { key: '', value: '' }, 'No tracker')].concat(L.map(x => e('option', { key: 'd' + x.id, value: String(x.uniqueId || x.id) }, this.devLabel(x))));
     if (cur && !L.some(x => String(x.uniqueId || x.id) === cur || String(x.id) === cur)) opts.push(e('option', { key: 'old', value: cur }, cur + ' · not found in Traccar'));
-    const dup = cur && (d.crew || []).some((x, k) => k !== n && k < Math.round(+d.teams || 1) && x && String(x.app || '') === cur);
+    const dup = cur && (d.crew || []).some((x, k) => k !== n && k < (nDet || Math.round(+d.teams || 1)) && x && String(x.app || '') === cur);
     return [e('select', { key: 'cap', value: cur, 'aria-label': 'Team ' + (n + 1) + ' tracker', onChange: ev => upd({ app: ev.target.value }), style: { padding: '4px 6px', border: '1px solid ' + (dup ? C.bad : C.line), borderRadius: 3, background: C.white, color: C.ink, font: SANS, maxWidth: 280 } }, ...opts),
       dup ? e('span', { key: 'capd', style: { font: SANS, color: C.bad } }, 'also used by another team') : null];
   }
@@ -393,6 +401,52 @@ class Dispatch {
     });
     if (out.length) this.changed(out.join('; ') + '. ETAs after it moved.');
   }
+  // Automatic tracker tagging (2026-11-19). Phones get swapped between teams, so a tracker is given to the team whose
+  // work it is visiting: parked (two positions in a row) within the auto check-in radius of a team's FIRST WO not done
+  // yet, or of a WO that team is checked in at. It then becomes that team's tracker (its old team loses it, the team's
+  // previous tracker is released). Skipped when WO of two teams are inside the radius, when that team's own tracker is
+  // online at the same WO, or when a dispatcher corrected an automatic tag by hand today (that team and that tracker
+  // stay as set by hand for the rest of the day). The manual tracker choice in Team details always stays available.
+  autoTag(P) {
+    const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J, day = this.today();
+    if (!R || !L || this.readOnly || !P || P.date !== day || !J) return;
+    const TA = P.trkAuto || (P.trkAuto = {}), PIN = P.trkPin || {}, pinT = (PIN.t || {}), pinD = (PIN.d || {});
+    const seen = this._tagSeen || (this._tagSeen = {}), done = [];
+    const targets = [];
+    P.teams.forEach((ids, i) => {
+      if (pinT[i] === day) return;
+      const open = ids.filter(k => this.coOf(J.by.get(k) || { key: k }) == null && (this.st.meta[k] || {}).stat !== 'checkout');
+      const first = open.find(k => { const j = J.by.get(k); return j && isFinite(j.lat); });
+      if (first) targets.push({ i, k: first, why: 'WO pertama' });
+      ids.forEach(k => { const j = J.by.get(k); if (j && k !== first && isFinite(j.lat) && this.ciOf(j) != null && this.coOf(j) == null) targets.push({ i, k, why: 'sedang check-in' }); });
+    });
+    L.forEach(dv => {
+      const key = this.devKey(dv);
+      if (!key || pinD[key] === day || dv.lat == null || !dv.last || Date.now() - dv.last > 10 * 60000 || this.gpsJump(dv)) { delete seen[dv.id]; return; }
+      const hits = targets.map(t => ({ ...t, j: J.by.get(t.k) })).map(t => ({ ...t, m: this.metres(dv, t.j) })).filter(t => t.m <= R);
+      const teams = [...new Set(hits.map(h => h.i))];
+      if (teams.length !== 1) { delete seen[dv.id]; return; }
+      const best = hits.sort((a, b) => a.m - b.m)[0], i = best.i, cur = this.teamOfDevice(dv);
+      if (cur === i) { delete seen[dv.id]; return; }
+      const own = this.trackerOf(i);
+      if (own && own.id !== dv.id && own.lat != null && own.last && Date.now() - own.last <= 10 * 60000 && this.metres(own, best.j) <= R * 2) { delete seen[dv.id]; return; }
+      const prev = seen[dv.id];
+      if (!prev || prev.i !== i || prev.last === dv.last) { seen[dv.id] = { i, last: dv.last }; return; }   // needs a second position
+      delete seen[dv.id];
+      const crew = (this.st.cfg.crew || []).slice(), was = cur >= 0 ? cur : null, old = String((crew[i] || {}).app || '');
+      if (was != null) crew[was] = { ...(crew[was] || {}), app: '' };
+      crew[i] = { ...(crew[i] || {}), app: key };
+      this.st.cfg.crew = crew;
+      if (was != null) delete TA[was];
+      TA[i] = { dev: key, name: dv.name, wo: best.j.wo, why: best.why, m: Math.round(best.m), at: Date.now(), from: was, prev: old && old !== key ? old : null };
+      done.push('tracker ' + dv.name + (dv.name !== key ? ' (' + key + ')' : '') + ' → ' + this.tn(i) + ' (berhenti ' + Math.round(best.m) + ' m dari ' + best.j.wo + ', ' + best.why + ')' +
+        (was != null ? '; sebelumnya di ' + this.tn(was) : '') + (old && old !== key ? '; tracker lama ' + old + ' dilepas' : ''));
+      targets.splice(0, targets.length, ...targets.filter(t => t.i !== i));
+    });
+    if (done.length) this.changed('Tracker dipasang otomatis: ' + done.join('; ') + '. Kalau salah, ubah di Teams & crew.');
+  }
+  // The automatic tag of team n when it is still the team's tracker, else null.
+  autoTagOf(P, n) { const a = P && P.trkAuto && P.trkAuto[n]; return a && String(this.crew(n).app || '') === a.dev && P.date === this.today() ? a : null; }
   autoCheckin(P) {
     const R = Math.max(0, +this.st.cfg.ciM || 0), L = this.devs(), J = this._J;
     if (!R || !L || this.readOnly || !P || P.date !== this.today()) return;
@@ -559,12 +613,23 @@ class Dispatch {
   // or the device name equals the team name.
   teamOfDevice(d) {
     const uid = String(d.uniqueId == null ? '' : d.uniqueId).trim(), nm = String(d.name || '').trim().toLowerCase();
-    const n = Math.max(1, Math.round(+this.st.cfg.teams || 1));
-    for (let i = 0; i < n; i++) {
-      const app = String(this.crew(i).app || '').trim();
-      if ((app && (app === uid || app === String(d.id))) || (nm && this.tn(i).toLowerCase() === nm)) return i;
-    }
+    const n = this.teamCount();
+    // The assigned identifier wins over a device name that happens to equal a team name.
+    for (let i = 0; i < n; i++) { const app = String(this.crew(i).app || '').trim(); if (app && (app === uid || app === String(d.id))) return i; }
+    for (let i = 0; i < n; i++) if (nm && this.tn(i).toLowerCase() === nm) return i;
     return -1;
+  }
+  devKey(d) { return String(d.uniqueId == null || d.uniqueId === '' ? d.id : d.uniqueId).trim(); }
+  // Working area of a team (2026-11-19): the area with the most WO in its route today (customer area, "Kelurahan" /
+  // "Desa" left out). Ties go to the area of the earliest stop.
+  areaName(a) { return String(a || '').trim().replace(/^(kelurahan|kel\.|desa|ds\.|kecamatan|kec\.)\s+/i, '').trim(); }
+  workArea(P, n) {
+    const ids = (P && P.teams && P.teams[n]) || [], J = this._J; if (!J || !ids.length) return null;
+    const cnt = new Map();
+    ids.forEach((k, pos) => { const j = J.by.get(k); const a = j && this.areaName(j.area); if (!a) return; const c = cnt.get(a) || { n: 0, pos }; c.n++; cnt.set(a, c); });
+    if (!cnt.size) return null;
+    const L = [...cnt.entries()].sort((x, y) => y[1].n - x[1].n || x[1].pos - y[1].pos);
+    return { name: L[0][0], n: L[0][1].n, total: ids.length, others: L.slice(1).map(([a, c]) => a + ' ' + c.n) };
   }
   // Live technicians for the IDS map: hidden teams and the "Live technicians" switch apply; team name in the label.
   mapDevices(list) {
@@ -2262,7 +2327,7 @@ class Dispatch {
     }
     // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
     const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
-    if (this.active) { this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); }
+    if (this.active) { this.autoTag(P); this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); }
     const T = this.calc(P, B);
     this.etaPublish(P, T);
     this.ensureRoutes(P, B);
@@ -2944,7 +3009,11 @@ class Dispatch {
         : e('span', null, 'From ' + ((BS[this.readOnly ? cur : 0] || BS[0] || {}).name || 'base')),
       e('span', null, '· shift ' + hm(this.tstart(n)) + '–' + hm(this.tend(n))),
       this.devs() ? (dv => e('span', { key: 'trk', title: dv ? this.devLabel(dv) : 'Assign a tracker in Teams & crew', style: { color: !dv ? C.muted : dv.state === 'online' ? C.good : dv.state === 'stale' ? C.warn : C.bad } },
-        dv ? '· tracker ' + dv.name + ' · ' + dv.state + (dv.last ? ' ' + dh((Date.now() - dv.last) / 60000) + ' ago' : '') : '· no tracker'))(this.trackerOf(n)) : null);
+        dv ? '· tracker ' + dv.name + ' · ' + dv.state + (dv.last ? ' ' + dh((Date.now() - dv.last) / 60000) + ' ago' : '') : '· no tracker'))(this.trackerOf(n)) : null,
+      (a => a ? e('span', { key: 'tga', title: 'Tracker dipasang otomatis ' + hm((d => d.getHours() * 60 + d.getMinutes())(new Date(a.at))) + ': berhenti ' + a.m + ' m dari ' + a.wo + ' (' + a.why + ')' + (a.from != null ? ', sebelumnya di ' + this.tn(a.from) : '') + '. Ubah di Teams & crew kalau salah.',
+        style: { padding: '0 5px', borderRadius: 3, background: C.good, color: '#FFFFFF', font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace" } }, 'AUTO') : null)(this.autoTagOf(P, n)),
+      (w => w ? e('span', { key: 'wa', title: w.others.length ? 'Area lain: ' + w.others.join(', ') : 'Semua WO di area ini', style: { color: C.ink, fontWeight: 600 } },
+        '· Working area: ' + w.name + ' (' + w.n + '/' + w.total + ' WO' + (w.others.length ? ', +' + w.others.length + ' area' : '') + ')') : null)(this.workArea(P, n)));
   }
   evRow(e, P, n) {
     const L = this.evList(P, n), br = this.activeEv(P, n, 'break'), pr = this.activeEv(P, n, 'problem');
@@ -3159,10 +3228,11 @@ class Dispatch {
     const bl = this.draftBases(d, name), setB = () => { d.bases = { ...d.bases, [name]: bl }; this.onChange(); };
     const tx = { padding: '5px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: MONO };
     const canPlan = this.canPlan(), dis = canPlan ? {} : { disabled: true };
-    const nTeams = Math.max(1, Math.round(+d.teams || 1));
+    const nTeams = Math.max(1, Math.round(+d.teams || 1)), nDet = Math.max(nTeams, this.teamCount());
+    const Pn = this.st.plans[name];
     const tLab = n => e('span', { key: 'tl', style: { ...tx, width: 170, display: 'inline-block', border: 0, background: 'transparent', font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (d.names || [])[n] || 'Team ' + (n + 1));
     // 1. Team details: name and tracker. Never changes an ETA or the schedule.
-    const detailRows = Array.from({ length: nTeams }, (_, n) => {
+    const detailRows = Array.from({ length: nDet }, (_, n) => {
         const cr = (d.crew || [])[n] || {}, upd = p => { const a = (d.crew || []).slice(); a[n] = { ...(a[n] || {}), ...p }; d.crew = a; this.onChange(); };
         const nm = (d.names || [])[n] || '';
         return row(n ? '' : 'Team', [
@@ -3170,7 +3240,9 @@ class Dispatch {
             onChange: ev => { const a = (d.names || []).slice(); a[n] = ev.target.value; d.names = a; this.onChange(); },
             style: { ...tx, width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif" } }),
           lab('Tracker', 'ca' + n),
-          ...this.trackerField(e, cr, upd, d, n, tx),
+          ...this.trackerField(e, cr, upd, d, n, tx, nDet),
+          (a => a && String(cr.app || '') === a.dev ? e('span', { key: 'tga', style: { font: SANS, color: C.good } }, 'AUTO ' + hm((t => t.getHours() * 60 + t.getMinutes())(new Date(a.at))) + ' · ' + a.wo) : null)(this.autoTagOf(Pn, n)),
+          (w => w ? e('span', { key: 'wa', style: { font: SANS, color: C.muted } }, 'Working area: ' + w.name + ' (' + w.n + '/' + w.total + ')') : null)(this.workArea(Pn, n)),
         ], 'det' + n);
       });
     // 2. Planning setup per team: hub and shift. Changes ETAs and the next Re-plan, never the order of the schedule.
@@ -3195,7 +3267,7 @@ class Dispatch {
       e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, title),
       e('span', { style: { font: SANS, color: color || C.muted } }, note));
     const detBlock = [
-      head('h1', '1 · Team details (name and tracker)', 'Safe to change at any time. Saving does not change any ETA, team or order of the schedule.', C.good),
+      head('h1', '1 · Team details (name and tracker)', 'Safe to change at any time. Saving does not change any ETA, team or order of the schedule. ' + nDet + ' teams: follows the number of teams in charge today. A tracker that parks at a team\u2019s first WO (or a WO it is checked in at) is given to that team automatically (AUTO); correct it here if it is wrong.', C.good),
       ...detailRows,
       row('', [btn('sd', 'Save team details', () => this.saveDetails(), true, dDirty ? null : { opacity: 0.6 }),
         e('span', { key: 'sdn', style: { font: SANS, color: dDirty ? C.warn : C.muted } }, dDirty ? 'Unsaved team details.' : 'No unsaved team details.')], 'sdr'),
@@ -3347,18 +3419,31 @@ class Dispatch {
   detailPick(c, n) { return { names: Array.from({ length: n }, (_, i) => String(((c.names || [])[i]) == null ? '' : c.names[i]).trim()), apps: Array.from({ length: n }, (_, i) => String((((c.crew || [])[i]) || {}).app || '')) }; }
   detailsDirty() {
     const d = this.ui.draft; if (!d) return false;
-    const n = Math.max(1, Math.round(+d.teams || 1), Math.round(+this.st.cfg.teams || 1));
+    const n = Math.max(1, Math.round(+d.teams || 1), this.teamCount());
     return JSON.stringify(this.detailPick(d, n)) !== JSON.stringify(this.detailPick(JSON.parse(this.ui.base || '{}'), n));
   }
   saveDetails() {
     const d = this.ui.draft; if (!d || this.readOnly) return;
-    const c = this.st.cfg, n = Math.max(1, Math.round(+d.teams || 1), Math.round(+c.teams || 1)), pick = this.detailPick(d, n);
+    const c = this.st.cfg, n = Math.max(1, Math.round(+d.teams || 1), this.teamCount()), pick = this.detailPick(d, n);
     const names = (c.names || []).slice(), crew = (c.crew || []).slice();
-    const base = JSON.parse(this.ui.base || '{}'), bNames = (base.names || []).slice(), bCrew = (base.crew || []).slice();
+    const base = JSON.parse(this.ui.base || '{}'), bNames = (base.names || []).slice(), bCrew = (base.crew || []).slice(), bPick = this.detailPick(base, n);
+    const day = this.today(), plans = Object.values(this.st.plans || {}).filter(P => P && P.date === day);
     for (let i = 0; i < n; i++) {
-      names[i] = pick.names[i].slice(0, 40); bNames[i] = (d.names || [])[i];
-      crew[i] = { ...(crew[i] || {}), app: pick.apps[i] };
-      bCrew[i] = { ...(bCrew[i] || {}), app: ((d.crew || [])[i] || {}).app };
+      // Only what this person changed is written, so a tracker tagged automatically meanwhile is not undone.
+      if (pick.names[i] !== bPick.names[i]) { names[i] = pick.names[i].slice(0, 40); bNames[i] = (d.names || [])[i]; }
+      if (pick.apps[i] !== bPick.apps[i]) {
+        const was = String((crew[i] || {}).app || '');
+        crew[i] = { ...(crew[i] || {}), app: pick.apps[i] };
+        bCrew[i] = { ...(bCrew[i] || {}), app: ((d.crew || [])[i] || {}).app };
+        // A hand correction of an automatic tag keeps this team and both trackers as set by hand for the rest of the day.
+        plans.forEach(P => {
+          const TA = P.trkAuto || {}, auto = Object.values(TA).some(a => a && (a.dev === was || a.dev === pick.apps[i])) || (TA[i] && TA[i].dev === was);
+          if (!auto) return;
+          const PIN = P.trkPin || (P.trkPin = { t: {}, d: {} }); PIN.t = PIN.t || {}; PIN.d = PIN.d || {};
+          PIN.t[i] = day; if (was) PIN.d[was] = day; if (pick.apps[i]) PIN.d[pick.apps[i]] = day;
+          delete TA[i];
+        });
+      }
     }
     c.names = names; c.crew = crew;
     base.names = bNames; base.crew = bCrew; this.ui.base = JSON.stringify(base);

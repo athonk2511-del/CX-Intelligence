@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-19 (IDS: tracker mengikuti jumlah team, Working area, tracker otomatis)
+
+### Added
+
+- **Jumlah baris tracker mengikuti team yang bertugas.** Team details (nama dan tracker) menampilkan baris sebanyak team yang bertugas hari ini: angka Available teams, atau jumlah kolom team di plan hari ini kalau lebih banyak. Batasnya 60 team. Pencocokan tracker ke team, auto check-in, dan auto check-out juga berlaku untuk semua team itu, tidak lagi hanya sampai angka Available teams.
+- **Working area per team.** Di header setiap team (board dan list) dan di Team details muncul "Working area: Pecatu (4/6 WO, +2 area)". Area ditentukan dari area pelanggan yang paling banyak WO-nya di rute team hari ini. Kata "Kelurahan" dan "Desa" dibuang. Kalau seri, yang dipakai area stop paling awal. Arahkan kursor ke tulisan itu untuk melihat area lainnya.
+- **Tracker dipasang otomatis.** Kalau sebuah tracker berhenti (dua posisi berturut-turut) dalam radius Auto check-in dari WO pertama sebuah team yang belum selesai, atau dari WO yang sedang di-check-in team itu, tracker itu otomatis jadi tracker team tersebut. Team lamanya kehilangan tracker itu, dan tracker lama team baru dilepas. Di header team muncul tanda **AUTO**, dan change log mencatat tracker, team, WO, jarak, dan team sebelumnya. Auto check-in langsung jalan dengan tracker yang baru.
+- Pemasangan otomatis dilewati kalau ada WO dari dua team dalam radius yang sama, atau kalau tracker team itu sendiri sedang online di WO yang sama.
+- **Pilihan manual tetap ada.** Kalau dispatcher mengoreksi tracker yang dipasang otomatis lewat Team details, team itu dan tracker-tracker yang terlibat tidak akan diubah otomatis lagi sampai akhir hari.
+
+### Changed
+
+- Save team details sekarang hanya menyimpan nama atau tracker yang diubah oleh orang tersebut, supaya tracker yang dipasang otomatis tidak tertimpa oleh layar yang membuka Team details lebih lama.
+- Identifier tracker yang dipilih menang atas nama device di Traccar yang kebetulan sama dengan nama team.
+
 ## 2026-11-18 (Report WO dari data tiket, WGM dari folder WGM, kolom tiket November)
 
 ### Changed
