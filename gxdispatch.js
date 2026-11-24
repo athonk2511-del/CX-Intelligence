@@ -97,10 +97,13 @@ const DEF = {
   dur: Object.fromEntries(Object.entries(CATS).map(([k, v]) => [k, v.d])), bases: {}, branch: '', crew: [], breakEst: 60, probEst: 30, massH: 6, massM: 300,
   lunchAt: 720, lunchMin: 60, gridMin: 3, floatPct: 10, slaB0: 300, slaBd: 200,
   sla: 12, slaVip: 6, nearH: 3, rebOn: true, rebAt: 720, nearM: 500, nearDelay: 60, ciM: 50, coM: 150, coKmh: 10, coMin: 10, coBack: 60, jobTypes: null,
+  idleOn: true, idleStop: 30, idleHub: 20, idleHubLeft: 90, idleLong: 60, idleHubM: 300,   // technician alarms (2026-11-24)
 };
 
 const pad = n => String(n).padStart(2, '0');
-const NEW_C = '#1D4ED8', NEW_BG = '#EEF3FF';   // "BARU": WO from a later WO file upload, not checked yet
+const NEW_C = '#1D4ED8', NEW_BG = '#EEF3FF';
+const IDLE_T = { stop: 'berhenti lama', hub: 'kembali ke kantor', long: 'terlalu lama di WO' };
+const IDLE_REASONS = ['Sudah dihubungi, lanjut ke WO berikutnya', 'Ambil material / peralatan', 'Kendaraan bermasalah', 'Menunggu pelanggan / akses lokasi', 'Pekerjaan memang rumit', 'Istirahat / makan', 'Cuaca / hujan', 'Diminta atasan / tugas lain', 'Tidak bisa dihubungi', 'Lainnya'];   // "BARU": WO from a later WO file upload, not checked yet
 const hm = m => { m = Math.round(m); return pad(Math.floor(m / 60)) + ':' + pad(m % 60); };
 const dh = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + pad(m % 60) + ' m'; };
 const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
@@ -548,10 +551,10 @@ class Dispatch {
     } catch (e) {}
   }
   fuTick() {
-    const L = this.fuOpen(), seen = this._fuSeen || (this._fuSeen = new Set());
+    const L = this.fuOpen().map(x => ({ k: x.k, at: x.f.at })).concat(this.idleOpen().map(x => ({ k: x.k, at: x.a.at }))), seen = this._fuSeen || (this._fuSeen = new Set());
     if (!L.length) { this._ringAt = 0; return; }
-    const fresh = L.some(x => !seen.has(x.k + '@' + x.f.at));
-    L.forEach(x => seen.add(x.k + '@' + x.f.at));
+    const fresh = L.some(x => !seen.has(x.k + '@' + x.at));
+    L.forEach(x => seen.add(x.k + '@' + x.at));
     if (fresh || Date.now() - (this._ringAt || 0) >= 30000) { this._ringAt = Date.now(); this.ring(); }
     if (fresh) { this.ver++; this.onChange(); }
   }
@@ -595,6 +598,143 @@ class Dispatch {
             b ? 'Saya tangani · tutup alert' : 'OK, tutup'),
           b ? e('button', { type: 'button', onClick: () => this.locate(b), style: { padding: '6px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, 'Lihat ' + b.wo) : null,
           b && !can ? e('span', { style: { font: SANS, color: C.bad } }, 'Isi nama agent untuk menutup alert.') : null)));
+  }
+
+  /* ---------- technician alarms (2026-11-24) ----------
+     A team with WO left and time in its shift whose tracker:
+       stop: stays in one place (within 150 m) longer than idleStop min, away from every WO and hub, while the team is not
+             on a break, the planned lunch or a mass outage;
+       hub:  stays at a hub (within idleHubM m) longer than idleHub min with at least idleHubLeft min of its shift left,
+             after its day started (a WO checked in today, or 60 min after its shift start);
+       long: is checked in at one of its WO longer than the planned duration + idleLong min.
+     Raised once per stop (or per WO for "long"), shared by all screens through a record "~idle:<day>:<team>:<type>:<t>"
+     in the WO records (meta), so every dispatcher screen rings the same pop-up until one dispatcher enters who called
+     the team and what they said. An alarm whose cause ends (the tracker moves on, checks out, the shift ends) before
+     anyone answers closes itself and stays in the day's history as "selesai sendiri". The stop time is measured by
+     this screen from the tracker positions, so a screen opened later starts counting when it opens. */
+  idleRecs(day) {
+    const out = [], d = day || this.today(), name = this._ctx && this._ctx.name;
+    Object.keys(this.st.meta).forEach(k => { const a = (this.st.meta[k] || {}).idle; if (k.startsWith('~idle:') && a && a.day === d && (!name || a.branch === name)) out.push({ k, a }); });
+    return out.sort((x, y) => x.a.at - y.a.at);
+  }
+  idleCheck(P) {
+    const cfg = this.st.cfg, L = this.devs(), J = this._J, day = this.today();
+    if (this.readOnly || !L || !J || !P || P.date !== day || cfg.idleOn === false) return;
+    const now = this.nowMin(), BS = this._BS || [], hubM = Math.max(50, +cfg.idleHubM || 300), R = Math.max(+cfg.ciM || 0, 100);
+    const anc = this._dwell || (this._dwell = {}), recs = this.idleRecs(day), msgs = [];
+    const allWo = [...P.teams.flat(), ...P.next].map(k => J.by.get(k)).filter(j => j && isFinite(j.lat));
+    const openRec = (i, type) => recs.find(r => r.a.team === i && r.a.type === type && !r.a.ackAt && !r.a.endAt);
+    const n = Math.min(P.teams.length, this.teamCount());
+    for (let i = 0; i < n; i++) {
+      const dv = this.trackerOf(i), ids = P.teams[i] || [];
+      const left = ids.map(k => J.by.get(k)).filter(j => j && this.coOf(j) == null && (this.st.meta[j.key] || {}).stat !== 'checkout' && !(this.st.meta[j.key] || {}).cx);
+      const end = this.tend(i), st0 = this.tstart(i);
+      const usable = dv && dv.lat != null && dv.last && Date.now() - dv.last <= 20 * 60000 && !this.gpsJump(dv);
+      const closeIf = (type, why) => { const r = openRec(i, type); if (r) { r.a.endAt = Date.now(); r.a.endWhy = why; msgs.push(this.tn(i) + ': alarm ' + IDLE_T[type] + ' selesai sendiri (' + why + ')'); } };
+      if (!usable) { continue; }
+      const key = this.devKey(dv);
+      let A = anc[key];
+      if (!A || this.metres(dv, A) > 150) { A = anc[key] = { lat: dv.lat, lng: dv.lng, since: Date.now() }; }
+      const dwell = (Date.now() - A.since) / 60000;
+      const onShift = now >= st0 && now < end;
+      // long: checked in far past the planned duration
+      const ciJ = left.find(j => this.ciOf(j) != null);
+      if (ciJ && onShift) {
+        const over = now - this.ciOf(ciJ) - this.dur(ciJ);
+        if (over > (+cfg.idleLong || 60)) { if (!recs.some(r => r.a.team === i && r.a.type === 'long' && r.a.wo === ciJ.wo)) this.idleRaise(P, i, 'long', dv, { wo: ciJ.wo, woKey: ciJ.key, ci: this.ciOf(ciJ), dur: this.dur(ciJ), left: left.length }, msgs); }
+      } else closeIf('long', ciJ ? 'shift selesai' : 'sudah check-out');
+      if (!left.length || !onShift) { closeIf('stop', !left.length ? 'tidak ada WO tersisa' : 'shift selesai'); closeIf('hub', !left.length ? 'tidak ada WO tersisa' : 'shift selesai'); continue; }
+      const hub = BS.find(b => b && isFinite(b.lat) && this.metres(dv, b) <= hubM);
+      const atWo = allWo.some(j => this.metres(dv, j) <= R);
+      // hub
+      const started = ids.some(k => { const j = J.by.get(k); return j && this.ciOf(j) != null; }) || now >= st0 + 60;
+      if (hub && started && end - now >= (+cfg.idleHubLeft || 0) && dwell >= (+cfg.idleHub || 20)) {
+        if (!recs.some(r => r.a.team === i && r.a.type === 'hub' && r.a.since === A.since)) this.idleRaise(P, i, 'hub', dv, { since: A.since, place: hub.name || 'hub', left: left.length }, msgs);
+      } else if (!hub) closeIf('hub', 'sudah meninggalkan ' + 'hub');
+      // stop
+      const busy = this.massOf(P, i) || this.baseEv(P, i).some(x => x.type === 'break' && now >= x.at && now < x.end);
+      if (!hub && !atWo && !ciJ && !busy && end - now >= 30 && dwell >= (+cfg.idleStop || 30)) {
+        if (!recs.some(r => r.a.team === i && r.a.type === 'stop' && r.a.since === A.since)) this.idleRaise(P, i, 'stop', dv, { since: A.since, left: left.length }, msgs);
+      } else {
+        const r = openRec(i, 'stop');
+        if (r && (this.metres(dv, r.a) > 150 || atWo || ciJ)) closeIf('stop', atWo || ciJ ? 'sudah di lokasi WO' : 'sudah bergerak lagi');
+      }
+    }
+    if (msgs.length) this.changed('Alarm teknisi: ' + msgs.join('; ') + '.');
+  }
+  idleRaise(P, i, type, dv, x, msgs) {
+    const J = this._J, nx = (P.teams[i] || []).map(k => J.by.get(k)).find(j => j && this.coOf(j) == null && this.ciOf(j) == null && !(this.st.meta[j.key] || {}).cx);
+    const at = Date.now(), k = '~idle:' + this.today() + ':' + i + ':' + type + ':' + (x.since || x.woKey || at);
+    this.st.meta[k] = { idle: { day: this.today(), branch: this._ctx.name, team: i, tn: this.tn(i), type, at, since: x.since || null, lat: dv.lat, lng: dv.lng,
+      dev: dv.name, place: x.place || null, wo: x.wo || null, ci: x.ci != null ? x.ci : null, dur: x.dur || null, onSite: x.ci != null ? Math.round(this.nowMin() - x.ci) : null, left: x.left || 0, next: nx ? nx.wo : null, shiftEnd: this.tend(i),
+      ackAt: null, agent: null, reason: null, note: null, by: null, endAt: null, endWhy: null } };
+    msgs.push(this.tn(i) + ': ' + this.idleText(this.st.meta[k].idle));
+  }
+  idleText(a) {
+    const ref = a.ackAt || a.endAt || Date.now(), mins = t => Math.max(1, Math.round((ref - t) / 60000));   // frozen once handled
+    if (a.type === 'long') return 'sudah ' + Math.round((a.onSite || 0) + (ref - a.at) / 60000) + ' menit di ' + a.wo + ' (rencana ' + a.dur + ' menit), belum check-out';
+    if (a.type === 'hub') return 'di ' + (a.place || 'kantor') + ' sejak ' + hm((t => t.getHours() * 60 + t.getMinutes())(new Date(a.since))) + ' (' + mins(a.since) + ' menit) padahal masih ada ' + a.left + ' WO';
+    return 'berhenti di luar lokasi WO sejak ' + hm((t => t.getHours() * 60 + t.getMinutes())(new Date(a.since))) + ' (' + mins(a.since) + ' menit), masih ada ' + a.left + ' WO';
+  }
+  idleOpen() { return this.readOnly ? [] : this.idleRecs().filter(r => !r.a.ackAt && !r.a.endAt); }
+  idleAck(k, agent, reason, note) {
+    const r = (this.st.meta[k] || {}).idle; if (!r || r.ackAt) return;
+    const who = String(agent || '').replace(/\s+/g, ' ').trim().slice(0, 40), why = String(reason || '').trim(); if (!who || !why) return;
+    Object.assign(r, { agent: who, reason: why, note: String(note || '').trim().slice(0, 200) || null, by: this.user || '', ackAt: Date.now() });
+    let L = []; try { L = store.load('gx.ids.agents') || []; } catch (e) {}
+    store.save('gx.ids.agents', [who, ...L.filter(x => x !== who)].slice(0, 12));
+    this.ui.idName = ''; this.ui.idWhy = ''; this.ui.idNote = '';
+    this.changed('Alarm ' + r.tn + ' (' + IDLE_T[r.type] + ') ditangani ' + who + ': ' + why + (r.note ? ' — ' + r.note : '') + '.');
+  }
+  idlePopup(e) {
+    if (this.readOnly) return null;
+    const L = this.idleOpen(); if (!L.length) return null;
+    const x = L[0], a = x.a;
+    let names = []; try { names = store.load('gx.ids.agents') || []; } catch (er) {}
+    const who = this.ui.idName || '', why = this.ui.idWhy || '', note = this.ui.idNote || '', can = who.trim() && why && (why !== 'Lainnya' || note.trim());
+    const ln = (t, st) => e('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
+    const inp = { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, background: C.white };
+    const go = () => { if (can) this.idleAck(x.k, who, why, note); };
+    const map = 'https://www.google.com/maps?q=' + a.lat + ',' + a.lng;
+    return e('div', { key: 'idle', role: 'alertdialog', 'aria-live': 'assertive', 'aria-label': 'Alarm teknisi',
+        style: { position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', width: 'min(580px, calc(100vw - 32px))', zIndex: 9998,
+          background: C.white, border: '3px solid #B42318', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
+      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#B42318;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
+      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#B42318', color: C.white } },
+        e('span', { style: { font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, 'ALARM TEKNISI · ' + IDLE_T[a.type].toUpperCase()),
+        L.length > 1 ? e('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alarm') : null),
+      e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px' } },
+        ln([e('b', { key: 't' }, a.tn), ' ' + this.idleText(a) + '.']),
+        ln('Tracker ' + a.dev + ' · sisa shift sampai ' + hm(a.shiftEnd) + (a.next ? ' · WO berikutnya ' + a.next : ''), { color: C.muted, fontSize: 12 }),
+        e('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          e('a', { href: map, target: '_blank', rel: 'noopener', style: { font: SANS, color: C.ink } }, 'Lihat posisi di Google Maps')),
+        ln('Hubungi team ini, lalu catat hasilnya:', { fontWeight: 600, fontSize: 12 }),
+        e('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
+          e('input', { type: 'text', value: who, list: 'gx-fu-agents', maxLength: 40, placeholder: 'Nama agent yang menghubungi', onChange: ev => { this.ui.idName = ev.target.value; this.onChange(); }, style: inp }),
+          e('select', { value: why, onChange: ev => { this.ui.idWhy = ev.target.value; this.onChange(); }, style: inp },
+            ...['', ...IDLE_REASONS].map(r => e('option', { key: r || '0', value: r }, r || 'Hasil konfirmasi…')))),
+        e('datalist', { id: 'gx-fu-agents' }, ...names.map(n => e('option', { key: n, value: n }))),
+        e('input', { type: 'text', value: note, maxLength: 200, placeholder: why === 'Lainnya' ? 'Wajib: jelaskan alasannya' : 'Catatan (opsional)', onChange: ev => { this.ui.idNote = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Enter') go(); }, style: inp }),
+        e('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+          e('button', { type: 'button', onClick: go, disabled: !can, style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#B42318' : '#D0D5DD', color: C.white, font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } }, 'Simpan · tutup alarm'),
+          !can ? e('span', { style: { font: SANS, color: C.bad } }, 'Isi nama agent dan hasil konfirmasi.') : null)));
+  }
+  // The day's alarm history under the board: every alarm, who handled it and what the team said.
+  idleBox(e) {
+    const L = this.idleRecs(); if (!L.length) return null;
+    const open = !!this.ui.idleHist, nOpen = L.filter(r => !r.a.ackAt && !r.a.endAt).length;
+    const t = ms => { const d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+    return e('div', { key: 'idlebox', style: { border: '1px solid ' + C.line, borderRadius: 4, background: C.white, padding: '6px 12px' } },
+      e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: nOpen ? C.bad : C.ink } }, 'ALARM TEKNISI HARI INI · ' + L.length + (nOpen ? ' (' + nOpen + ' belum ditangani)' : '')),
+        e('button', { type: 'button', onClick: () => { this.ui.idleHist = !open; this.onChange(); }, style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, font: SANS, cursor: 'pointer' } }, open ? 'Sembunyikan' : 'Lihat riwayat')),
+      open ? e('div', { style: { marginTop: 4 } }, ...L.slice().reverse().map(({ k, a }) => e('div', { key: k, style: { display: 'flex', flexWrap: 'wrap', gap: '2px 10px', padding: '5px 0', borderTop: '1px solid ' + C.soft, font: SANS, color: C.text } },
+        e('span', { style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 44 } }, t(a.at)),
+        e('span', { style: { fontWeight: 600, color: C.ink, minWidth: 130 } }, a.tn),
+        e('span', { style: { minWidth: 110, color: C.bad } }, IDLE_T[a.type]),
+        e('span', { style: { flex: '1 1 260px' } }, this.idleText(a)),
+        e('span', { style: { color: a.ackAt ? C.good : a.endAt ? C.muted : C.bad, flex: '1 1 220px' } },
+          a.ackAt ? t(a.ackAt) + ' · ' + a.agent + ': ' + a.reason + (a.note ? ' — ' + a.note : '') : a.endAt ? t(a.endAt) + ' · selesai sendiri (' + a.endWhy + ')' : 'belum ditangani')))) : null);
   }
 
   /* ---------- what this screen shows on the map (per screen, not shared) ---------- */
@@ -2332,7 +2472,7 @@ class Dispatch {
     }
     // The midday rebalance is offered, never run by itself: the dispatchers' schedule only changes when they choose.
     const rebDue = !this.readOnly && cfg.rebOn && P.date === this.today() && P.reb !== P.date && !P.prov && this.nowMin() >= cfg.rebAt;
-    if (this.active) { this.autoTag(P); this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); }
+    if (this.active) { this.autoTag(P); this.autoMass(P); this.autoCheckout(P); this.autoCheckin(P); this.idleCheck(P); }
     const T = this.calc(P, B);
     this.etaPublish(P, T);
     this.ensureRoutes(P, B);
@@ -2485,8 +2625,9 @@ class Dispatch {
           e('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } }, this.searchBox(e, P, T, pill), this.layoutToggle(e)),
           this.newBox(e, P, T),
           this.heldBox(e, P),
+          this.idleBox(e),
           this.ui.layout === 'list' ? this.listView(e, P, T, B, pill, col) : this.board(e, P, T, B, pill, col),
-          this.cxList(e, P), this.fuPopup(e)),
+          this.cxList(e, P), this.fuPopup(e), this.idlePopup(e)),
         note: 'Click a team name to rename it. Within a route: started jobs, urgent VIP, then highest score first (equal scores: nearest stop), non-urgent VIP, then customers who did not answer. A planned lunch of ' + cfg.lunchMin + ' min, ' + dh(cfg.lunchAt - cfg.start) + ' after each team\u2019s shift start, is included in every ETA. Setting a job to Cancelled removes it from the plan (no team, ETA or map pin) and recalculates every route at once; it can be restored from the Cancelled WO list under the board. Setting a job to No answer moves it to the end of its team; Confirmed moves it back ahead of the unanswered jobs. Drag a card to reorder a route at any time. Drag a card to reorder a route, move it to another team or defer it to H+1; on touch screens use the arrows and the Move to list. Jobs on the way, checked in or checked out are locked (In Progress in the data is shown but not locked). Pending orders (rescheduled by dispatch) always start in H+1. Search a CID, User ID or WO number that is not on the board to see why it was left out, and add it by hand when needed. When a job is set to Checked out, type the real check-out time (hh:mm): the finish, the ETAs after it and the team\u2019s working time use the real time, and the plan is recalculated at once (every job stays in its team and order; a team that finishes early takes extra work from H+1 at the end of its route). A job checked in or on the way that runs past its projected finish pushes the next ETAs back automatically. Drive times marked "est." are straight-line estimates. The plan is shared: every screen that opens IDS shows the same board, and changes appear on the others within about 10 seconds.',
       }),
       host.card('Dispatcher change log', { span: 12, meta: this.type + ' · latest first', body: this.logView(e) }),
@@ -3375,6 +3516,9 @@ class Dispatch {
         lab('min after the check-in. Two positions in a row must be outside, and a position that jumps faster than 130 km/h is ignored as a GPS jump. The check-out time is when the technician left the site, worked back from the distance and speed (never before the last position on site). 0 m = off. Keep this radius well above the check-in radius so GPS drift on site never checks a job out.', 'ao4')]),
       row('Back on site', [lab('An automatic check-out is undone when the technician is back and parked at the same WO within', 'ab1'), num('coBack', 56, 5),
         lab('min (two positions in a row inside the check-out radius, or one inside the check-in radius), unless the team has checked in at another WO since. The job shows "Back on site" so the dispatcher can ask about a problem. At most 3 times per WO a day. 0 = off.', 'ab2')]),
+      row('Technician alarm', [e('label', { key: 'ion', style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: SANS, color: C.ink } }, e('input', { type: 'checkbox', checked: d.idleOn !== false, onChange: ev => set('idleOn', ev.target.checked), style: { margin: 0 } }), 'On'), lab('· Alarm when a team with WO left stops more than', 'ia1'), num('idleStop', 52, 5), lab('min away from its WO and hubs (not on a break, lunch or mass outage) · stays at a hub (within', 'ia2'), num('idleHubM', 60, 50),
+        lab('m) more than', 'ia3'), num('idleHub', 52, 5), lab('min with at least', 'ia4'), num('idleHubLeft', 56, 10), lab('min of its shift left, after its day started · stays checked in at a WO more than', 'ia5'), num('idleLong', 52, 10),
+        lab('min past the planned duration. The pop-up rings on every dispatcher screen until a dispatcher enters who called the team and what they said. Every alarm is kept in the day\u2019s alarm history.', 'ia6')]),
       row('Way back', [lab('Every team with hours left picks up WO on the way back to its base, at most', 'wb1'), num('homeDetour', 56, 5), lab('min extra drive per stop, highest score first', 'wb2')]),
       row('Anchor', [lab('A cell with more than', 'an1'), num('gridMin', 48), lab('WO, or an urgent VIP, gets its own team (highest total score first) ·', 'an2'), num('floatPct', 52, 5), lab('% of teams kept as floaters for isolated WO', 'an3')]),
       row('SLA', [lab('Normal', 's1'), num('sla', 56), lab('h · VIP', 's2'), num('slaVip', 56), lab('working h from WO Created (paused on reschedule) · near breach at', 's3'), num('nearH', 56, 0.5), lab('h or less left', 's4')]),
@@ -3463,7 +3607,7 @@ class Dispatch {
   discardSettings() { store.save(this.draftKey(), null); this.ui.settings = false; this.ui.draft = null; this.ui.base = null; this.onChange(); }
   // Fields that change how the plan is built. Team names and app IDs do not: saving only those keeps the board as it is.
   replanKeys(base, d) {
-    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin', 'coBack', 'massH', 'massM'].includes(k));
+    const keys = Object.keys(d).filter(k => JSON.stringify(d[k]) !== JSON.stringify(base[k]) && !['names', 'branch', 'cellA', 'routeA', 'defV', 'hubV', 'ciM', 'coM', 'coKmh', 'coMin', 'coBack', 'massH', 'massM', 'idleOn', 'idleStop', 'idleHub', 'idleHubLeft', 'idleLong', 'idleHubM'].includes(k));
     if (keys.includes('crew')) {
       const strip = a => JSON.stringify((a || []).map(x => x ? { base: x.base, start: x.start, end: x.end } : null));
       if (strip(d.crew) === strip(base.crew)) keys.splice(keys.indexOf('crew'), 1);
@@ -3552,7 +3696,7 @@ class Dispatch {
       teams: Math.round(clean(d.teams, 1, 60, DEF.teams)), gridKm: d.gridKm,
       speed: clean(d.speed, 5, 80, DEF.speed), road: clean(d.road, 1, 2.5, DEF.road), roadOn: !!d.roadOn, osrm,
       zTour: clean(d.zTour, 1, 4, DEF.zTour), zDense: clean(d.zDense, 1, 4, DEF.zDense), zMid: clean(d.zMid, 1, 4, DEF.zMid), zOpen: clean(d.zOpen, 1, 4, DEF.zOpen), tR: clean(d.tR, 0.5, 10, DEF.tR),
-      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin), coBack: clean(d.coBack, 0, 480, DEF.coBack),
+      maxHop: clean(d.maxHop, 5, 180, DEF.maxHop), ring: Math.round(clean(d.ring, 0, 5, DEF.ring)), ring2: Math.round(clean(d.ring2, 0, 8, DEF.ring2)), hop2: clean(d.hop2, 5, 240, DEF.hop2), homeDetour: clean(d.homeDetour, 0, 120, DEF.homeDetour), nearM: Math.round(clean(d.nearM, 0, 3000, DEF.nearM)), nearDelay: clean(d.nearDelay, 0, 240, DEF.nearDelay), ciM: Math.round(clean(d.ciM, 0, 500, DEF.ciM)), coM: Math.round(clean(d.coM, 0, 2000, DEF.coM)), coKmh: clean(d.coKmh, 3, 60, DEF.coKmh), coMin: clean(d.coMin, 0, 240, DEF.coMin), coBack: clean(d.coBack, 0, 480, DEF.coBack), idleOn: d.idleOn !== false, idleStop: clean(d.idleStop, 10, 240, DEF.idleStop), idleHub: clean(d.idleHub, 5, 240, DEF.idleHub), idleHubLeft: clean(d.idleHubLeft, 0, 480, DEF.idleHubLeft), idleLong: clean(d.idleLong, 10, 480, DEF.idleLong), idleHubM: clean(d.idleHubM, 50, 2000, DEF.idleHubM),
       start: d.start, end: Math.max(d.start + 60, d.end), lastBefore: clean(d.lastBefore, 0, 480, DEF.lastBefore), maxAge: Math.round(clean(d.maxAge, 0, 3650, DEF.maxAge)),
       blocked: d.blocked === true || d.blocked === 'intracity' ? d.blocked : false, prog: !!d.prog, bases: { ...d.bases }, names: (d.names || c.names || []).map(x => String(x == null ? '' : x).trim().slice(0, 40)),
       crew: (d.crew || []).map(x => x ? { base: Math.max(0, Math.round(+x.base || 0)), start: isFinite(x.start) && x.start !== '' ? +x.start : undefined, end: isFinite(x.end) && x.end !== '' && x.end !== null ? +x.end : undefined, app: x.app || '' } : null),

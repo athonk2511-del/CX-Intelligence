@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-24 (IDS: alarm teknisi)
+
+### Added
+
+- **Alarm teknisi** untuk team yang masih punya WO dan masih dalam jam shift-nya, berdasarkan posisi tracker:
+  - **Berhenti lama**: tracker diam (dalam radius 150 m) lebih dari **30 menit** di luar lokasi WO dan hub, sementara team tidak sedang Break, jam makan, atau Mass outage.
+  - **Kembali ke kantor**: tracker berada di hub (radius 300 m) lebih dari **20 menit**, sisa shift masih minimal **90 menit**, dan hari kerja team sudah dimulai (ada WO yang sudah check-in, atau sudah 60 menit sejak shift mulai).
+  - **Terlalu lama di WO**: WO sudah di-check-in lebih dari **durasi rencana + 60 menit** dan belum check-out.
+- Pop-up merah berkedip muncul di **semua layar dispatcher** dengan bunyi ring setiap 30 detik. Pop-up menampilkan team, tracker, sejak jam berapa, sisa WO, WO berikutnya, akhir shift, dan link posisi di Google Maps. Pop-up hanya bisa ditutup setelah mengisi **nama agent** dan **hasil konfirmasi**: pilih dari daftar alasan, dan isi catatan kalau memilih "Lainnya". Siapa yang menutup tercatat di change log.
+- Alarm yang penyebabnya hilang sebelum ditangani (tracker bergerak lagi, sudah di lokasi WO, sudah check-out, WO habis, atau shift selesai) tertutup sendiri dan dicatat "selesai sendiri".
+- Panel **"Alarm teknisi hari ini"** di atas board berisi riwayat semua alarm hari itu: jam, team, jenis, durasi, siapa yang menangani dan alasannya. Bisa dipakai sebagai bahan evaluasi.
+- Batas waktu dan radius bisa diubah di Settings → **Technician alarm** (admin), termasuk tombol On/Off.
+
+### Catatan
+
+- Lama berhenti dihitung oleh layar yang terbuka dari posisi tracker. Kalau semua layar IDS ditutup lalu dibuka lagi, hitungan mulai dari saat layar dibuka.
+- Alarm adalah indikasi, bukan bukti pelanggaran. Selalu konfirmasi ke team dulu.
+
 ## 2026-11-19 c (IDS: pegangan drag, teks WO bisa di-copy)
 
 ### Changed
