@@ -665,7 +665,7 @@ class Dispatch {
   idleRaise(P, i, type, dv, x, msgs) {
     const J = this._J, nx = (P.teams[i] || []).map(k => J.by.get(k)).find(j => j && this.coOf(j) == null && this.ciOf(j) == null && !(this.st.meta[j.key] || {}).cx);
     const at = Date.now(), k = '~idle:' + this.today() + ':' + i + ':' + type + ':' + (x.since || x.woKey || at);
-    this.st.meta[k] = { idle: { day: this.today(), branch: this._ctx.name, team: i, tn: this.tn(i), type, at, since: x.since || null, lat: dv.lat, lng: dv.lng,
+    this.st.meta[k] = { conf: 'none', stat: 'none', aging: [], idle: { day: this.today(), branch: this._ctx.name, team: i, tn: this.tn(i), type, at, since: x.since || null, lat: dv.lat, lng: dv.lng,
       dev: dv.name, place: x.place || null, wo: x.wo || null, ci: x.ci != null ? x.ci : null, dur: x.dur || null, onSite: x.ci != null ? Math.round(this.nowMin() - x.ci) : null, left: x.left || 0, next: nx ? nx.wo : null, shiftEnd: this.tend(i),
       ackAt: null, agent: null, reason: null, note: null, by: null, endAt: null, endWhy: null } };
     msgs.push(this.tn(i) + ': ' + this.idleText(this.st.meta[k].idle));
@@ -1160,7 +1160,7 @@ class Dispatch {
   }
 
   /* ---------- scoring ---------- */
-  aging(j) { const a = this.st.meta[j.key]; return a ? a.aging.length : 0; }
+  aging(j) { const a = this.st.meta[j.key]; return a && a.aging ? a.aging.length : 0; }
   // The job types in use: saved list, or the defaults with any work times saved by the older Duration setting.
   types() {
     const c = this.st.cfg;
@@ -1389,7 +1389,7 @@ class Dispatch {
     this._need = { J: this._J, rv: this.road.ver, cv: sig, v };
     return v;
   }
-  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, c.nearM, c.nearDelay, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(c.jobTypes || null), JSON.stringify(Object.values(this.st.meta).map(x => x.aging.length))].join('|'); }
+  cfgSig() { const c = this.st.cfg; return [c.start, c.end, c.lastBefore, JSON.stringify(c.crew || []), c.zTour, c.zDense, c.zMid, c.zOpen, c.tR, c.homeDetour, c.speed, c.road, c.roadOn, c.gridMin, c.lunchAt, c.lunchMin, c.slaB0, c.slaBd, c.sla, c.slaVip, c.nearH, c.nearM, c.nearDelay, Math.floor(Date.now() / 600000), JSON.stringify(c.dur), JSON.stringify(c.jobTypes || null), JSON.stringify(Object.values(this.st.meta).map(x => (x && x.aging ? x.aging.length : 0)))].join('|'); }
 
   /* ---------- planning ---------- */
   today() { return ymd(new Date()); }

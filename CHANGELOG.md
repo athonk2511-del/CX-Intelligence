@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-24 b (hotfix IDS: Rendering issue setelah alarm teknisi pertama)
+
+### Fixed
+
+- IDS menampilkan **"Rendering issue: Cannot read properties of undefined (reading 'length')"** begitu alarm teknisi pertama tercatat. Catatan alarm disimpan di tempat yang sama dengan catatan WO, tapi tidak punya daftar aging, sehingga perhitungan aging di board gagal. Perhitungan sekarang aman untuk catatan tanpa aging, dan catatan alarm baru juga membawa daftar aging kosong. Alarm yang sudah tercatat tetap tersimpan.
+
 ## 2026-11-24 (IDS: alarm teknisi)
 
 ### Added
