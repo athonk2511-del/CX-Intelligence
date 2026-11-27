@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-27 (Surveys: survey builder, terhubung ke CSAT)
+
+### Added
+
+- **Menu Surveys** (05) untuk membuat survei pelanggan maupun internal, seperti Google Form: 16 jenis pertanyaan (jawaban singkat, paragraf, pilihan ganda, kotak centang, dropdown, ya/tidak, skala linear, rating bintang, NPS 0–10, grid pilihan, email, telepon, angka, tanggal, waktu, teks info), wajib/tidak, opsi "Lainnya", acak opsi, tempel banyak opsi, logika lompat ke pertanyaan berdasarkan jawaban, validasi email/telepon/angka/batas karakter. Template: CSAT layanan, kunjungan teknisi, NPS.
+- **Halaman responden `survey.html`** bergaya Typeform: satu pertanyaan per layar dengan animasi, progress bar, keyboard (Enter, huruf A/B/C, Y/T, angka), logo GlobalXtreme. Responden tidak perlu login atau access key.
+- **Hidden fields**: data yang ikut lewat link tanpa ditanyakan, misalnya `survey.html?f=ID&cid=12345&wo=WWR-001`. Hanya kunci yang didaftarkan di pengaturan survei yang disimpan.
+- **Respons**: filter tanggal, ringkasan (distribusi, rata-rata, top-2-box, bottom-2-box, skor NPS), per responden, tabel, serta **Unduh Excel** (sheet Respons, Ringkasan, Info) dan **Unduh CSV** (UTF-8, bisa langsung dibuka Excel).
+- **Terhubung ke CSAT**: survei dengan "Masukkan respons ke laporan CSAT" aktif ikut dihitung di halaman CSAT (skor, distribusi rating, komentar, jumlah respons), Executive overview dan perbandingan week/month/year. Yang dipakai: pertanyaan skor 1–5 (rating 5 bintang atau skala 1–5), komentar, dan identitas (mis. CID dari link). Kartu Responses di halaman CSAT menyebut berapa respons berasal dari Surveys.
+- Setiap survei punya tab **"Jawaban - <judul> [id]"** di spreadsheet Survey DB, satu kolom per pertanyaan, sebagai arsip yang mudah diolah.
+- Menu Surveys bisa diberikan per user di Role management. Viewer hanya bisa melihat respons dan mengunduh; Dispatcher dan Admin bisa membuat dan mengubah survei.
+
+### Admin
+
+- Tambahkan **apps-script/survey.gs** ke project proxy, update **roles.gs**, jalankan `gxSurveySetup` sekali, lalu Deploy dengan New version. Langkahnya di **SURVEY_SETUP.md**.
+
 ## 2026-11-24 b (hotfix IDS: Rendering issue setelah alarm teknisi pertama)
 
 ### Fixed

@@ -23,7 +23,7 @@ export function setSheetUrl(url) {
 export function sheetId() { return SHEET_ID; }
 
 const cache = new Map();
-export function clearCache() { cache.clear(); setP = {}; fullP = {}; setsP = null; csvFailed = {}; csvInfo.sets = {}; csvSummary(); }
+export function clearCache() { surveyCsatP = null; cache.clear(); setP = {}; fullP = {}; setsP = null; csvFailed = {}; csvInfo.sets = {}; csvSummary(); }
 
 /* ---------- CSV files in Google Drive ----------
    Tickets, Customers and Work Orders are read from the CSV files in one Drive folder
@@ -807,16 +807,20 @@ export async function loadChat(frtSla = 5, rtSla = 2) {
 /* ---------- 7. CSAT ---------- */
 
 export async function loadCsat(period) {
-  const [daily, device, browser, comments] = await Promise.all([
+  const [daily, device, browser, comments, surv] = await Promise.all([
     gviz(TABS.csat, 'select year(S), month(S), day(S), C, count(G) group by year(S), month(S), day(S), C'),
     gviz(TABS.csat, 'select J, count(G) group by J order by count(G) desc'),
     gviz(TABS.csat, 'select K, count(G) group by K order by count(G) desc limit 8'),
     gviz(TABS.csat, 'select S, C, D, E, F where D is not null order by S desc limit 400'),
+    surveyCsat(),
   ]);
+  // Survey Studio responses linked to CSAT count like sheet rows: [year, month (0-based), day, rating, 1].
+  const survIn = surv.filter(x => period === 'all' || (String(x.date.getMonth() + 1).padStart(2, '0') + '/' + x.date.getFullYear()) === period);
+  const dailyRows = daily.rows.concat(survIn.map(x => [x.date.getFullYear(), x.date.getMonth(), x.date.getDate(), x.rating, 1]));  // cached query objects stay untouched
   const inPeriod = (y, m) => period === 'all' || (String(m + 1).padStart(2, '0') + '/' + y) === period;
   const dist = new Map(), byDay = new Map();
   let total = 0, score = 0;
-  daily.rows.forEach(([y, m, d, rating, n]) => {
+  dailyRows.forEach(([y, m, d, rating, n]) => {
     if (y == null || rating == null) return;
     if (!inPeriod(num(y), num(m))) return;
     const c = num(n), r = num(rating);
@@ -840,7 +844,9 @@ export async function loadCsat(period) {
       ? new Date(...s.slice(5, -1).split(',').map(Number)) : (s instanceof Date ? s : null);
     return { date: dt, rating: num(c), text: String(d || ''), who: e ? String(e) : '', extra: f ? String(f) : '' };
   }).filter(c => c.text && (period === 'all' || !c.date ||
-    (String(c.date.getMonth() + 1).padStart(2, '0') + '/' + c.date.getFullYear()) === period));
+    (String(c.date.getMonth() + 1).padStart(2, '0') + '/' + c.date.getFullYear()) === period))
+    .concat(survIn.filter(x => x.text.trim()).map(x => ({ date: x.date, rating: x.rating, text: x.text, who: x.who, extra: x.extra })))
+    .sort((a, b) => (b.date ? b.date.getTime() : 0) - (a.date ? a.date.getTime() : 0));
   return {
     total, avg: total ? score / total : 0,
     ratings, top2, top2Share: pct(top2, total), bottom2, bottom2Share: pct(bottom2, total),
@@ -849,6 +855,7 @@ export async function loadCsat(period) {
     browser: browser.rows.filter(r => r[0]).map(r => ({ key: String(r[0]), value: num(r[1]) })),
     comments: cmt,
     commentShare: pct(cmt.length, total),
+    survey: { n: survIn.length, forms: surveyCsatInfo.forms, error: surveyCsatInfo.error },
     detractors: cmt.filter(c => c.rating <= 3),
     promoters: cmt.filter(c => c.rating >= 4),
   };
@@ -1228,12 +1235,14 @@ export async function runSwapAnalysis(onProgress, seg = 'retail') {
    calendar days (month-to-date, year-to-date) so a partial month is never set
    against a full one. Today is excluded because it is still being logged. */
 export async function loadTrends(branch) {
-  const [daily, mass, wo, csat] = await Promise.all([
+  const [daily, mass, wo, csat, surv] = await Promise.all([
     gviz(TABS.tickets, `select D, O, count(B)${W('all', branch)} group by D, O`),
     gviz(TABS.tickets, `select D, count(B)${W('all', branch, "Q = 'Mass-Problem'")} group by D`),
     gviz(TABS.tickets, `select D, count(B)${W('all', branch, "AC is not null and AC <> '-'")} group by D`),
     gviz(TABS.csat, 'select year(S), month(S), day(S), C, count(G) group by year(S), month(S), day(S), C'),
+    surveyCsat(),
   ]);
+  const csatRows = csat.rows.concat(surv.map(x => [x.date.getFullYear(), x.date.getMonth(), x.date.getDate(), x.rating, 1]));
   const F = ['tickets', 'complaints', 'mass', 'wo', 'csatN', 'csatTop2', 'csatScore'];
   const day = new Map();
   const at = k => { let e = day.get(k); if (!e) { e = {}; F.forEach(f => { e[f] = 0; }); day.set(k, e); } return e; };
@@ -1241,7 +1250,7 @@ export async function loadTrends(branch) {
   daily.rows.forEach(([d, o, n]) => { const k = dk(d); if (k == null) return; const e = at(k); e.tickets += num(n); if (o === 'Complaint') e.complaints += num(n); });
   mass.rows.forEach(([d, n]) => { const k = dk(d); if (k != null) at(k).mass += num(n); });
   wo.rows.forEach(([d, n]) => { const k = dk(d); if (k != null) at(k).wo += num(n); });
-  csat.rows.forEach(([y, m, d, r, n]) => {
+  csatRows.forEach(([y, m, d, r, n]) => {
     if (y == null || r == null) return;
     const e = at(new Date(num(y), num(m), num(d)).getTime()), c = num(n);
     e.csatN += c; e.csatScore += c * num(r); if (num(r) >= 4) e.csatTop2 += c;
@@ -1668,4 +1677,34 @@ export async function trackPut(cfg) {
   let out; try { out = JSON.parse(await res.text()); } catch (e) { throw new Error('The proxy did not answer. Update the Apps Script (roles.gs) and deploy a new version.'); }
   if (out.error) throw new Error(out.error === 'UNAUTHORIZED' ? 'Only an admin can change the tracking settings.' : out.error);
   return out.track;
+}
+
+
+/* ---------- Surveys (apps-script/survey.gs) ----------
+   surveyCall(op, payload): the survey builder (gxsurvey.js) talks to the proxy with the viewer's access key.
+   surveyCsat(): responses of surveys whose "CSAT report" link is on, merged into the CSAT figures below.
+   Rows: { date, rating 1–5, text, who, extra: survey title }. An older proxy without survey.gs gives []. */
+export const surveyProxyUrl = () => PROXY_URL;
+export async function surveyCall(op, payload) {
+  if (!useProxy()) throw new Error('Surveys need the Apps Script proxy.');
+  let res;
+  try { res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'survey', op, key: readKey(), ...(payload || {}) }) }); }
+  catch (e) { throw new Error('The Apps Script proxy did not answer. Check the connection.'); }
+  let out; try { out = JSON.parse(await res.text()); } catch (e) { throw new Error('The proxy has no survey module yet. Add apps-script/survey.gs and deploy a new version (SURVEY_SETUP.md).'); }
+  if (out.error && !('ok' in out)) throw new Error(out.error === 'UNAUTHORIZED' ? 'This access key may not use Surveys.' : String(out.error));
+  if (!out.ok) throw new Error(out.error === 'UNAUTHORIZED' ? 'This access key may not use Surveys.' : String(out.error || 'Survey request failed'));
+  return out.data;
+}
+let surveyCsatP = null;
+export const surveyCsatInfo = { n: 0, forms: 0, error: null };
+export function surveyCsat() {
+  if (!surveyCsatP) surveyCsatP = (useProxy() ? surveyCall('csatFeed') : Promise.resolve({ rows: [], forms: 0 }))
+    .then(d => {
+      const rows = (d && d.rows || []).map(([iso, r, text, who, title]) => ({ date: new Date(iso), rating: num(r), text: String(text || ''), who: String(who || ''), extra: 'Survei: ' + title }))
+        .filter(x => !isNaN(x.date) && x.rating >= 1 && x.rating <= 5);
+      surveyCsatInfo.n = rows.length; surveyCsatInfo.forms = (d && d.forms) || 0; surveyCsatInfo.error = null;
+      return rows;
+    })
+    .catch(e => { surveyCsatInfo.error = e.message; console.warn('Survey CSAT feed unavailable:', e.message); return []; });
+  return surveyCsatP;
 }

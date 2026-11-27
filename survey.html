@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Survei · GlobalXtreme</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Halaman responden survei CX Intelligence (gaya Typeform). Data: Apps Script proxy → survey.gs. */
+:root{--f:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%;margin:0}
+body{font:16px/1.55 var(--f);-webkit-font-smoothing:antialiased;background:#fff}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--pa,#1F1F1D);outline-offset:2px}
+.plogo{position:absolute;top:18px;left:max(3vw,16px);height:14px;z-index:6;opacity:.9}
+.plogo.inv{filter:brightness(0) invert(1)}
+/* ---------- Player (responden) ---------- */
+.pl{position:fixed;inset:0;background:var(--pb);color:var(--pi);font-family:Inter,var(--f);overflow:hidden}
+.pl.load{display:grid;place-items:center;background:#fff}
+.spin{width:36px;height:36px;border-radius:50%;border:3px solid #e3e6eb;border-top-color:#1f5eff;animation:rot 0.8s linear infinite}
+.pbar{position:absolute;top:0;left:0;right:0;height:4px;background:color-mix(in srgb,var(--pa) 18%,transparent);z-index:5}
+.pbar i{display:block;height:100%;width:0;background:var(--pa);transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.pvbar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;background:#14171c;color:#fff;font-size:13px;border-radius:99px;padding:6px 6px 6px 14px;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.pvbar button{border:0;border-radius:99px;background:#fff;color:#14171c;font-size:13px;font-weight:600;padding:6px 12px}
+.stage{position:absolute;inset:0}
+.step{position:absolute;inset:0;overflow-y:auto;display:flex;padding:72px max(6vw,20px) 110px}
+.step>div{margin:auto;width:100%;max-width:720px}
+.in-up{animation:inUp .6s cubic-bezier(.16,1,.3,1) both}
+.in-down{animation:inDown .6s cubic-bezier(.16,1,.3,1) both}
+.out-up{animation:outUp .4s cubic-bezier(.7,0,.84,0) both;pointer-events:none}
+.out-down{animation:outDown .4s cubic-bezier(.7,0,.84,0) both;pointer-events:none}
+@keyframes inUp{from{opacity:0;transform:translateY(70px)}}
+@keyframes inDown{from{opacity:0;transform:translateY(-70px)}}
+@keyframes outUp{to{opacity:0;transform:translateY(-70px)}}
+@keyframes outDown{to{opacity:0;transform:translateY(70px)}}
+@keyframes fade{from{opacity:0}}@keyframes pop{from{opacity:0;transform:scale(.96) translateY(8px)}}
+@keyframes rot{to{transform:rotate(360deg)}}
+@keyframes blink{0%,100%{opacity:1}25%,75%{opacity:.35}}
+@keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+.qwrap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px}
+.qnum{font-size:16px;color:var(--pa);padding-top:9px;white-space:nowrap;font-weight:500}
+.qq{font-size:clamp(22px,3.4vw,32px);line-height:1.25;font-weight:400;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.star{color:var(--pa);margin-left:4px}
+.qd{margin:10px 0 0;font-size:clamp(16px,2vw,19px);opacity:.7;white-space:pre-line}
+.qd.sm{font-size:14px}
+.qin{margin-top:28px}
+.pin{width:100%;border:0;border-bottom:2px solid color-mix(in srgb,var(--pa) 35%,transparent);background:transparent;color:var(--pa);font-size:clamp(20px,3vw,28px);padding:8px 0;outline:none;border-radius:0;resize:none;font-family:inherit}
+.pin::placeholder{color:color-mix(in srgb,var(--pa) 40%,transparent)}
+.pin:focus{border-bottom-color:var(--pa)}
+select.pin{cursor:pointer;-webkit-appearance:none;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--pa) 50%),linear-gradient(135deg,var(--pa) 50%,transparent 50%);background-position:calc(100% - 18px) 55%,calc(100% - 11px) 55%;background-size:7px 7px;background-repeat:no-repeat;padding-right:40px}
+select.pin option{color:#111;background:#fff}
+input.pin[type=date],input.pin[type=time]{color-scheme:light dark;max-width:320px}
+.chs{display:flex;flex-direction:column;gap:8px;max-width:min(100%,460px)}
+.ch{display:flex;align-items:center;gap:12px;text-align:left;padding:8px 12px 8px 8px;min-height:46px;border-radius:8px;border:1px solid color-mix(in srgb,var(--pa) 45%,transparent);background:color-mix(in srgb,var(--pa) 9%,transparent);color:var(--pa);font-size:18px;transition:background .15s,box-shadow .15s}
+.ch:hover{background:color-mix(in srgb,var(--pa) 18%,transparent)}
+.ch.on{background:color-mix(in srgb,var(--pa) 24%,transparent);box-shadow:inset 0 0 0 1px var(--pa)}
+.ch.on kbd{background:var(--pa);color:var(--pb)}
+.ch span{flex:1}
+.ch svg{width:20px;height:20px;opacity:0;flex:none}.ch.on svg{opacity:1}
+.ch.blink{animation:blink .4s}
+.othin{flex:1;border:0;background:transparent;color:var(--pa);font-size:18px;outline:none;padding:4px 0}
+.othin::placeholder{color:color-mix(in srgb,var(--pa) 55%,transparent)}
+.yn{flex-direction:row;flex-wrap:wrap}.yn .ch{min-width:150px}
+.nums{display:flex;gap:6px;flex-wrap:wrap}
+.nums button{flex:1 1 0;min-width:40px;height:56px;border-radius:8px;border:1px solid color-mix(in srgb,var(--pa) 45%,transparent);background:color-mix(in srgb,var(--pa) 9%,transparent);color:var(--pa);font-size:18px;font-weight:500;transition:.15s}
+.nums button:hover{background:color-mix(in srgb,var(--pa) 20%,transparent)}
+.nums button.on{background:var(--pa);color:var(--pb)}
+.nlab{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-size:14px;opacity:.75}
+.stars{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:4px;flex-wrap:wrap-reverse}
+.stars button{border:0;background:none;padding:4px;color:color-mix(in srgb,var(--pa) 28%,transparent);transition:transform .15s,color .15s}
+.stars button svg{width:clamp(38px,7vw,54px);height:clamp(38px,7vw,54px);display:block}
+.stars button.on,.stars button:hover,.stars button:hover~button{color:var(--pa)}
+.stars button:active{transform:scale(.9)}
+.mx{display:grid;gap:16px}
+.mxl{font-size:17px;margin-bottom:8px}
+.mxo{display:flex;gap:6px;flex-wrap:wrap}
+.pill{border:1px solid color-mix(in srgb,var(--pa) 45%,transparent);background:color-mix(in srgb,var(--pa) 9%,transparent);color:var(--pa);border-radius:8px;padding:8px 14px;font-size:15px;min-height:42px}
+.pill.on{background:var(--pa);color:var(--pb)}
+.okrow{display:flex;align-items:center;gap:14px;margin-top:28px;flex-wrap:wrap}
+.okrow.shake{animation:shake .4s}
+.okb{border:0;border-radius:8px;background:var(--pa);color:var(--pb);font-size:18px;font-weight:600;padding:10px 22px;min-height:48px;box-shadow:0 4px 14px -4px color-mix(in srgb,var(--pa) 60%,transparent);transition:filter .15s}
+.okb:hover{filter:brightness(1.1)}.okb[disabled]{opacity:.6}
+.okb.lg{font-size:20px;padding:12px 28px}
+.hint{font-size:13px;opacity:.65}.hint b{font-weight:600}
+.wel{text-align:center}
+.wel .okrow{justify-content:center}
+.wt{font-size:clamp(30px,5vw,48px);line-height:1.1;font-weight:500;margin:0;letter-spacing:-.02em;text-wrap:balance}
+.wd{font-size:clamp(17px,2.2vw,20px);opacity:.7;white-space:pre-line;margin:16px auto 0;max-width:600px}
+.meta{font-size:14px;opacity:.6;margin-top:18px}
+.endc{width:84px;height:84px;margin:0 auto 22px;color:var(--pa)}
+.endc circle{stroke-dasharray:240;stroke-dashoffset:240;animation:draw .8s .1s ease-out forwards}
+.endc path{stroke-dasharray:60;stroke-dashoffset:60;animation:draw .5s .7s ease-out forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.pnav{position:absolute;right:max(3vw,14px);bottom:max(3vh,16px);display:flex;gap:2px;z-index:5}
+.pnav button{width:44px;height:40px;border:0;background:var(--pa);color:var(--pb);font-size:18px}
+.pnav button:first-child{border-radius:8px 0 0 8px}.pnav button:last-child{border-radius:0 8px 8px 0}
+.perr{position:absolute;left:50%;bottom:max(3vh,16px);transform:translate(-50%,12px);opacity:0;transition:.25s;background:#fde8e6;color:#9b1c13;font-size:15px;padding:10px 16px;border-radius:8px;z-index:6;pointer-events:none;max-width:calc(100vw - 140px)}
+.perr.show{opacity:1;transform:translate(-50%,0)}
+@media (pointer:coarse){.hint{display:none}}
+@media(max-width:600px){.start{grid-template-columns:minmax(0,1fr)}.tplart{height:64px}.types,.grid2,.mxe{grid-template-columns:minmax(0,1fr)}.qnum{display:none}.qwrap{grid-template-columns:minmax(0,1fr)}.bar{grid-template-columns:minmax(0,1fr) auto}.bar .bt{grid-column:1/-1;grid-row:2}.save{display:none}.h1{font-size:28px}.tabs{top:61px;justify-content:flex-start}.jump{max-width:none;flex:1 1 100%}.opt{flex-wrap:wrap}.step{padding-top:60px}.nums button{flex:1 1 14%;min-width:0;height:50px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important}}
+
+</style>
+</head>
+<body>
+<div id="app"><div class="pl load"><div class="spin"></div></div></div>
+<script>
+{
+// Sama dengan PROXY_URL di gxdata.js.
+const PROXY_URL = 'https://script.google.com/macros/s/AKfycbweJLkjh789z2UXN9kI1qOlhfL1Lyr2UZgcNoqi2toYCqHNcqCaUeSfK13IsDukv8df/exec';
+const app = document.getElementById('app');
+const S = { view: 'player' };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const range = (a, b) => { const r = []; for (let i = a; i <= b; i++) r.push(i); return r; };
+const LS = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+const safeColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#1F1F1D';
+function lum(hex) { const c = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; }
+function theme(f) {
+  const c = safeColor(f.color);
+  if (f.bg === 'dark') return { bg: '#0f1115', ink: '#f2f4f7', ac: lum(c) < .08 ? '#f2f4f7' : c };
+  if (f.bg === 'color') { const ink = lum(c) > .45 ? '#111317' : '#ffffff'; return { bg: c, ink, ac: ink }; }
+  return { bg: '#ffffff', ink: '#14171c', ac: lum(c) > .5 ? '#7A5E00' : c };
+}
+const tvars = t => `--pb:${t.bg};--pi:${t.ink};--pa:${t.ac}`;
+async function call(op, payload) {
+  const res = await fetch(PROXY_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action: 'survey', op }, payload)) });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'Gagal');
+  return j.data;
+}
+const store = { getForm: id => call('form', { id }), submit: (formId, answers, hidden) => call('submit', { formId, answers, hidden }) };
+const QS = new URLSearchParams(location.search);
+// Hidden fields (mis. ?cid=...&wo=...) dikirim hanya jika didaftarkan di pengaturan survei; server menyaring lagi.
+let HIDDEN = {};
+
+/* ====== PLAYER (RESPONDEN) ====== */
+let P = null;
+const CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>';
+const STAR = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg>';
+const L = k => String.fromCharCode(65 + k);
+async function startRespondent(id, preview) {
+  S.view = 'player'; P = null; app.innerHTML = '<div class="pl load"><div class="spin"></div></div>';
+  let f; try { f = await store.getForm(id); } catch (e) { return openPlayer({ title: 'Survei tidak ditemukan', questions: [], color: '#1f5eff', bg: 'light' }, false, 'missing'); }
+  if (preview) return openPlayer(f, true);
+  if (!f.accepting) return openPlayer(f, false, 'closed');
+  if (f.oneResponse && LS.get('gxs_done_' + id, false)) return openPlayer(f, false, 'already');
+  openPlayer(f, false);
+}
+function openPlayer(form, preview, special) {
+  S.view = 'player';
+  P = { form, preview, i: special || (form.showWelcome !== false ? -1 : 0), ans: {}, other: {}, hist: [], order: {}, busy: false, cur: null };
+  if (!special && !form.questions.length) P.i = 'empty';
+  form.questions.forEach(q => { if (q.shuffle && q.options) { const a = q.options.map((_, k) => k); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } P.order[q.id] = a; } });
+  app.innerHTML = `<div class="pl" id="pl" style="${tvars(theme(form))}">${form.showProgress !== false ? '<div class="pbar"><i id="pfill"></i></div>' : ''}
+  ${form.showLogo !== false ? `<img class="plogo${theme(form).bg === '#ffffff' ? '' : ' inv'}" src="gx-wordmark.png" alt="GlobalXtreme">` : ''}
+  ${preview ? '<div class="pvbar">Pratinjau, jawaban tidak disimpan <button data-p="exit">Tutup</button></div>' : ''}
+  <div class="stage" id="stage"></div><div class="pnav" id="pnav"><button data-p="prev" aria-label="Pertanyaan sebelumnya">↑</button><button data-p="next" aria-label="Pertanyaan berikutnya">↓</button></div><div class="perr" id="perr" role="alert"></div></div>`;
+  document.title = form.title || 'Survei';
+  showStep(1);
+}
+function msgStep(title, msg) { return `<div class="wel"><h1 class="wt">${esc(title)}</h1>${msg ? `<p class="wd">${esc(msg)}</p>` : ''}</div>`; }
+function stepHTML() {
+  const f = P.form, qs = f.questions;
+  if (P.i === -1) { const n = qs.filter(q => q.type !== 'statement').length; return `<div class="wel"><h1 class="wt">${esc(f.title || 'Survei')}</h1>${f.desc ? `<p class="wd">${esc(f.desc)}</p>` : ''}<div class="okrow"><button class="okb lg" data-p="next">${esc(f.startText || 'Mulai')}</button><span class="hint">tekan <b>Enter ↵</b></span></div><p class="meta">${n} pertanyaan · sekitar ${Math.max(1, Math.round(n * 0.3))} menit</p></div>`; }
+  if (P.i === 'end') return `<div class="wel"><svg class="endc" viewBox="0 0 84 84" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><circle cx="42" cy="42" r="38"/><path d="M26 43l11 11 21-23"/></svg><h1 class="wt">${esc(f.thanksTitle || 'Terima kasih!')}</h1>${f.thanksMsg ? `<p class="wd">${esc(f.thanksMsg)}</p>` : ''}${P.preview ? '<div class="okrow"><button class="okb" data-p="restart">Ulangi pratinjau</button><button class="okb" style="background:transparent;color:var(--pa);box-shadow:inset 0 0 0 1px var(--pa)" data-p="exit">Tutup pratinjau</button></div>' : ''}</div>`;
+  if (P.i === 'closed') return msgStep(f.title || 'Survei', f.closedMsg || 'Survei ini sudah tidak menerima jawaban.');
+  if (P.i === 'already') return msgStep('Anda sudah mengisi survei ini', 'Terima kasih atas partisipasi Anda.');
+  if (P.i === 'missing') return msgStep('Survei tidak ditemukan', 'Link mungkin salah atau survei sudah dihapus.');
+  if (P.i === 'empty') return msgStep(f.title || 'Survei', 'Survei ini belum memiliki pertanyaan.');
+  const q = qs[P.i], num = qs.slice(0, P.i + 1).filter(x => x.type !== 'statement').length, last = P.i === qs.length - 1;
+  return `<div><div class="qwrap"><div class="qnum">${q.type === 'statement' ? '' : num + ' →'}</div><div><h2 class="qq">${esc(q.title || 'Tanpa judul')}${q.required ? '<span class="star" aria-label="wajib">*</span>' : ''}</h2>${q.desc ? `<p class="qd">${esc(q.desc)}</p>` : ''}
+  ${q.type === 'statement' ? '' : `<div class="qin" id="qin">${inputFor(q)}</div>`}
+  <div class="okrow" id="okrow"><button class="okb" data-p="next">${last ? 'Kirim' : q.type === 'statement' ? 'Lanjut' : 'OK ✓'}</button><span class="hint">tekan <b>Enter ↵</b>${q.type === 'long' ? ' · Shift+Enter untuk baris baru' : ''}</span></div></div></div></div>`;
+}
+function inputFor(q) {
+  const v = P.ans[q.id], d = `data-q="${q.id}"`;
+  switch (q.type) {
+    case 'short': case 'email': case 'phone': case 'number':
+      return `<input class="pin" ${d} data-pq="1" type="${q.type === 'email' ? 'email' : q.type === 'phone' ? 'tel' : 'text'}" ${q.type === 'number' ? 'inputmode="decimal"' : ''} value="${esc(v ?? '')}" placeholder="${{ email: 'nama@email.com', phone: '08xxxxxxxxxx', number: 'Ketik angka…' }[q.type] || 'Ketik jawaban Anda di sini…'}" ${q.maxLen ? `maxlength="${+q.maxLen}"` : ''} autocomplete="off" aria-label="Jawaban">`;
+    case 'long': return `<textarea class="pin" ${d} data-pq="1" rows="1" placeholder="Ketik jawaban Anda di sini…" ${q.maxLen ? `maxlength="${+q.maxLen}"` : ''} aria-label="Jawaban">${esc(v ?? '')}</textarea>`;
+    case 'date': case 'time': return `<input class="pin" ${d} data-pq="1" type="${q.type}" value="${esc(v ?? '')}" aria-label="Jawaban">`;
+    case 'dropdown': return `<select class="pin" ${d} data-pq="1" aria-label="Jawaban"><option value="">Pilih jawaban…</option>${(P.order[q.id] || q.options.map((_, k) => k)).map(k => q.options[k]).map(o => `<option ${v === o.label ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+    case 'choice': case 'checkbox': {
+      const multi = q.type === 'checkbox', order = P.order[q.id] || q.options.map((_, k) => k), arr = multi ? (v || []) : [];
+      const isOn = l => multi ? arr.includes(l) : v === l, otherOn = isOn('__other');
+      return `<div class="chs" role="${multi ? 'group' : 'radiogroup'}">${order.map((k, j) => { const o = q.options[k], on = isOn(o.label); return `<button class="ch ${on ? 'on' : ''}" data-p="pick" ${d} data-v="${esc(o.label)}" role="${multi ? 'checkbox' : 'radio'}" aria-checked="${on}"><kbd>${L(j)}</kbd><span>${esc(o.label)}</span>${CHECK}</button>`; }).join('')}
+      ${q.allowOther ? `<div class="ch oth ${otherOn ? 'on' : ''}" data-p="oth" ${d}><kbd>${L(order.length)}</kbd><input class="othin" ${d} data-po="1" placeholder="Lainnya…" value="${esc(P.other[q.id] || '')}" aria-label="Lainnya"></div>` : ''}</div>${multi ? '<p class="qd sm">Boleh pilih lebih dari satu</p>' : ''}`;
+    }
+    case 'yesno': return `<div class="chs yn" role="radiogroup">${q.options.map((o, j) => `<button class="ch ${v === o.label ? 'on' : ''}" data-p="pick" ${d} data-v="${esc(o.label)}" role="radio" aria-checked="${v === o.label}"><kbd>${j ? 'T' : 'Y'}</kbd><span>${esc(o.label)}</span>${CHECK}</button>`).join('')}</div>`;
+    case 'scale': case 'nps': { const lo = q.type === 'nps' ? 0 : +q.min, hi = q.type === 'nps' ? 10 : +q.max;
+      return `<div class="nums" role="radiogroup">${range(lo, hi).map(n => `<button class="${v === n ? 'on' : ''}" data-p="pick" ${d} data-v="${n}" role="radio" aria-checked="${v === n}">${n}</button>`).join('')}</div>${q.minLabel || q.maxLabel ? `<div class="nlab"><span>${esc(q.minLabel)}</span><span>${esc(q.maxLabel)}</span></div>` : ''}`; }
+    case 'rating': return `<div class="stars" role="radiogroup">${range(1, +q.max).reverse().map(n => `<button class="${v >= n ? 'on' : ''}" data-p="pick" ${d} data-v="${n}" role="radio" aria-checked="${v === n}" aria-label="${n} bintang">${STAR}</button>`).join('')}</div>`;
+    case 'matrix': return `<div class="mx">${q.rows.map(r => `<div><div class="mxl">${esc(r)}</div><div class="mxo" role="radiogroup">${q.cols.map(c => `<button class="pill ${v && v[r] === c ? 'on' : ''}" data-p="mx" ${d} data-r="${esc(r)}" data-v="${esc(c)}" role="radio" aria-checked="${!!(v && v[r] === c)}">${esc(c)}</button>`).join('')}</div></div>`).join('')}</div>`;
+  }
+  return '';
+}
+function curStep() { const st = document.getElementById('stage'); return st && st.querySelector('.step:not(.gone)'); }
+function refreshInput(q, blinkV) {
+  const s = curStep(), box = s && s.querySelector('#qin'); if (!box) return; box.innerHTML = inputFor(q);
+  if (blinkV != null) { const b = [...box.querySelectorAll('[data-v]')].find(x => x.dataset.v === String(blinkV)); if (b) b.classList.add('blink'); }
+}
+function showStep(dir) {
+  const st = document.getElementById('stage'); if (!st || !P) return;
+  const qs = P.form.questions; P.cur = typeof P.i === 'number' && P.i >= 0 ? qs[P.i].id : null;
+  const old = curStep(); if (old) { old.classList.add('gone', dir < 0 ? 'out-down' : 'out-up'); setTimeout(() => old.remove(), 420); }
+  const d = document.createElement('div'); d.className = 'step ' + (dir < 0 ? 'in-down' : 'in-up'); d.innerHTML = stepHTML(); st.appendChild(d);
+  const fill = document.getElementById('pfill'); if (fill) fill.style.width = (P.i === 'end' ? 100 : typeof P.i === 'number' && P.i >= 0 ? Math.round(P.i / qs.length * 100) : 0) + '%';
+  const nav = document.getElementById('pnav'); if (nav) nav.style.visibility = P.cur ? 'visible' : 'hidden';
+  const ta = d.querySelector('textarea.pin'); if (ta) autoGrow(ta);
+  setTimeout(() => { const i = d.querySelector('.pin'); if (i && matchMedia('(pointer:fine)').matches && i.tagName !== 'SELECT') i.focus({ preventScroll: true }); }, 420);
+}
+function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 320) + 'px'; }
+function finalVal(q) {
+  const v = P.ans[q.id], ot = (P.other[q.id] || '').trim();
+  if (q.type === 'choice' && v === '__other') return ot ? 'Lainnya: ' + ot : '';
+  if (q.type === 'checkbox' && Array.isArray(v)) return v.map(x => x === '__other' ? (ot ? 'Lainnya: ' + ot : null) : x).filter(Boolean);
+  if (typeof v === 'string') return v.trim();
+  return v;
+}
+function validate(q) {
+  if (q.type === 'statement') return '';
+  const raw = P.ans[q.id], v = finalVal(q), ot = (P.other[q.id] || '').trim();
+  if ((raw === '__other' || (Array.isArray(raw) && raw.includes('__other'))) && !ot) return 'Tulis jawaban untuk "Lainnya"';
+  const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) || (q.type === 'matrix' && !Object.keys(v || {}).length);
+  if (q.required) { if (empty) return 'Mohon isi pertanyaan ini'; if (q.type === 'matrix' && q.rows.some(r => !v[r])) return 'Mohon jawab semua baris'; }
+  if (empty) return '';
+  if (q.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return 'Format email belum benar';
+  if (q.type === 'phone' && !/^\+?[0-9][0-9\s-]{7,16}$/.test(v)) return 'Nomor telepon belum benar';
+  if (q.type === 'number') { const n = Number(String(v).replace(',', '.')); if (isNaN(n)) return 'Masukkan angka yang valid'; if (q.min !== '' && q.min != null && n < q.min) return 'Minimal ' + q.min; if (q.max !== '' && q.max != null && n > q.max) return 'Maksimal ' + q.max; }
+  if ((q.type === 'short' || q.type === 'long') && q.maxLen && String(v).length > q.maxLen) return 'Maksimal ' + q.maxLen + ' karakter';
+  return '';
+}
+function showErr(m) {
+  const e = document.getElementById('perr'); if (!e) return; e.textContent = m; e.classList.add('show'); clearTimeout(showErr.t); showErr.t = setTimeout(() => e.classList.remove('show'), 2600);
+  const r = curStep() && curStep().querySelector('#okrow'); if (r) { r.classList.remove('shake'); void r.offsetWidth; r.classList.add('shake'); }
+}
+async function next() {
+  if (!P || P.busy) return;
+  if (P.i === -1) { P.i = 0; return showStep(1); }
+  if (typeof P.i !== 'number') return;
+  const qs = P.form.questions, q = qs[P.i], err = validate(q);
+  if (err) return showErr(err);
+  let target = P.i + 1;
+  if (q.logic && LOGIC.includes(q.type)) { const o = q.options.find(o => o.label === P.ans[q.id]); if (o && o.jump) { if (o.jump === '_end') target = qs.length; else { const ti = qs.findIndex(x => x.id === o.jump); if (ti > P.i) target = ti; } } }
+  if (target >= qs.length) return submit();
+  P.hist.push(P.i); P.i = target; showStep(1);
+}
+function prev() {
+  if (!P || typeof P.i !== 'number' || P.i < 0) return;
+  if (P.hist.length) { P.i = P.hist.pop(); showStep(-1); } else if (P.form.showWelcome !== false) { P.i = -1; showStep(-1); }
+}
+async function submit() {
+  const visited = new Set([...P.hist, P.i].map(i => P.form.questions[i].id)), answers = {};
+  P.form.questions.forEach(q => {
+    if (q.type === 'statement' || !visited.has(q.id)) return;
+    let v = finalVal(q); if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) || (q.type === 'matrix' && !Object.keys(v).length)) return;
+    if (q.type === 'number') v = Number(String(v).replace(',', '.'));
+    answers[q.id] = v;
+  });
+  if (P.preview) { P.i = 'end'; return showStep(1); }
+  P.busy = true; const b = curStep() && curStep().querySelector('.okb'); if (b) { b.disabled = true; b.textContent = 'Mengirim…'; }
+  try { await store.submit(P.form.id, answers, HIDDEN); if (P.form.oneResponse) LS.set('gxs_done_' + P.form.id, true); P.i = 'end'; showStep(1); }
+  catch (e) { if (b) { b.disabled = false; b.textContent = 'Kirim'; } showErr(e.message === 'CLOSED' ? 'Maaf, survei sudah ditutup' : 'Gagal mengirim, periksa koneksi lalu coba lagi'); }
+  P.busy = false;
+}
+function onPlayerClick(el) {
+  const a = el.dataset.p, q = P && P.form.questions.find(x => x.id === el.dataset.q);
+  if (a === 'next') return next();
+  if (a === 'prev') return prev();
+  if (a === 'exit') { window.close(); return; }
+  if (a === 'restart') return openPlayer(P.form, true);
+  if (!q || q.id !== P.cur) return;
+  if (a === 'pick') {
+    const v = el.dataset.v;
+    if (q.type === 'checkbox') { const arr = (P.ans[q.id] || []).slice(), k = arr.indexOf(v); k >= 0 ? arr.splice(k, 1) : arr.push(v); P.ans[q.id] = arr; refreshInput(q); return; }
+    const val = ['scale', 'nps', 'rating'].includes(q.type) ? Number(v) : v; P.ans[q.id] = val; refreshInput(q, v);
+    setTimeout(() => { if (P && P.cur === q.id && P.ans[q.id] === val) next(); }, 450);
+  }
+  if (a === 'mx') { const o = Object.assign({}, P.ans[q.id] || {}); o[el.dataset.r] = el.dataset.v; P.ans[q.id] = o; refreshInput(q); }
+  if (a === 'oth') {
+    if (q.type === 'choice') P.ans[q.id] = '__other'; else { const arr = (P.ans[q.id] || []).slice(); if (!arr.includes('__other')) arr.push('__other'); P.ans[q.id] = arr; }
+    const box = curStep().querySelector('#qin'); if (q.type === 'choice') box.querySelectorAll('.ch').forEach(c => c.classList.remove('on')); el.classList.add('on');
+    const i = el.querySelector('input'); if (i && document.activeElement !== i) i.focus();
+  }
+}
+
+
+document.addEventListener('input', e => {
+  const t = e.target; if (!P) return;
+  const q = P.form.questions.find(x => x.id === t.dataset.q); if (!q) return;
+  if (t.dataset.pq) { P.ans[q.id] = t.value; if (t.tagName === 'TEXTAREA') autoGrow(t); }
+  if (t.dataset.po) {
+    P.other[q.id] = t.value; const has = !!t.value.trim(), box = t.closest('.oth');
+    if (q.type === 'choice') { if (has) { P.ans[q.id] = '__other'; box.parentNode.querySelectorAll('.ch').forEach(c => c.classList.remove('on')); } box.classList.toggle('on', has || P.ans[q.id] === '__other'); }
+    else { const arr = (P.ans[q.id] || []).filter(x => x !== '__other'); if (has) arr.push('__other'); P.ans[q.id] = arr; box.classList.toggle('on', has); }
+  }
+});
+document.addEventListener('click', e => { const pe = e.target.closest('[data-p]'); if (pe) onPlayerClick(pe); });
+document.addEventListener('keydown', e => {
+  if (!P) return;
+  const t = e.target, tag = t.tagName;
+  if (e.key === 'Enter') {
+    if (tag === 'TEXTAREA' && e.shiftKey) return;
+    if (tag === 'BUTTON' && (t.classList.contains('okb') || t.closest('.pnav,.pvbar'))) return;
+    e.preventDefault(); return next();
+  }
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const q = P.cur && P.form.questions.find(x => x.id === P.cur); if (!q) return;
+  const s = curStep(), key = e.key.toUpperCase();
+  if ((q.type === 'choice' || q.type === 'checkbox') && /^[A-Z]$/.test(key)) { const b = s.querySelectorAll('.ch')[key.charCodeAt(0) - 65]; if (b) { e.preventDefault(); b.click(); } }
+  if (q.type === 'yesno' && (key === 'Y' || key === 'T' || key === 'N')) { const b = s.querySelectorAll('.ch')[key === 'Y' ? 0 : 1]; if (b) { e.preventDefault(); b.click(); } }
+  if (['scale', 'nps', 'rating'].includes(q.type) && /^[0-9]$/.test(e.key)) { const b = s.querySelector(`[data-v="${e.key}"]`); if (b) { e.preventDefault(); b.click(); } }
+});
+
+const fid = (QS.get('f') || '').replace(/[^a-z0-9]/gi, '');
+if (!fid) openPlayer({ title: 'Survei tidak ditemukan', questions: [], bg: 'light' }, false, 'missing');
+else {
+  const preview = QS.get('preview') === '1';
+  startRespondent(fid, preview).then(() => {
+    if (!P || !P.form) return;
+    String(P.form.hidden || '').split(',').map(x => x.trim()).filter(Boolean).forEach(k => { const v = QS.get(k); if (v) HIDDEN[k] = v.slice(0, 120); });
+  });
+}
+}
+</script>
+</body>
+</html>

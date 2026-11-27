@@ -10,6 +10,7 @@
  *   GX_IDS_*     The shared IDS plan (WWR and WCM), written by the dashboard. Do not edit by hand.
  *   GX_ETA_*     ETA snapshot of today's IDS plan, sent by every open IDS screen. Do not edit by hand.
  *   GX_DOTAI_KEY Secret key DotAI uses to read the ETA API (GET ?action=eta&key=...&cid=...). Set it by hand.
+ *   GX_SURVEY_SHEET  Id of the Survey DB spreadsheet, created by gxSurveySetup() in survey.gs.
  *   GX_DATA_KEY  One of your existing (owner) access keys. After the role check, requests made with a
  *                user's key are passed to doGetData_ / doPostData_ with this key, so your original key
  *                check keeps working unchanged.
@@ -33,6 +34,7 @@ const GX_MENU_GIDS = {
   dispatch: ['customers', 'tickets'],
   dispatchWcm: ['customers', 'tickets'],
   settings: [],
+  surveys: [],   // Survey builder (survey.gs). Reads no sheet tabs.
 };
 const GX_MENUS = Object.keys(GX_MENU_GIDS);
 
@@ -115,6 +117,8 @@ function doPost(e) {
   let req = {};
   try { req = JSON.parse(e.postData.contents); } catch (err) { return gxJson_({ error: 'Bad request' }); }
   if (req.action === 'users') return gxUsersApi_(req);
+  // Surveys: respondents have no key, so survey.gs checks the key itself where needed.
+  if (req.action === 'survey') return typeof gxSurveyApi_ === 'function' ? gxSurveyApi_(req) : gxJson_({ ok: false, error: 'survey.gs is not in the proxy project yet. See SURVEY_SETUP.md.' });
   const user = gxUser_(req.key);
   if (!user) return gxJson_({ error: 'UNAUTHORIZED' });
   // Viewers read the IDS board and tracking; they change nothing.

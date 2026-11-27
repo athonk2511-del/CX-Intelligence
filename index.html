@@ -246,7 +246,7 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.onUndoKey);
     document.addEventListener('fullscreenchange', this.onFsChange);
     try {
-      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-11-18a'), import('./gxcharts-v2.js')]);
+      const [D, C] = await Promise.all([import('./gxdata.js?v=2026-11-27a'), import('./gxcharts-v2.js')]);
       this.D = D; this.charts = C.makeCharts(React); this.PAL = C.PALETTE;
       D.setSheetUrl(this.props.sheetUrl);
       if (D.onCsvProgress) this.offCsv = D.onCsvProgress(ev => this.onCsvBatch(ev));
@@ -279,7 +279,7 @@ class Component extends DCLogic {
   }
 
   key(view) {
-    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map', dispatchArr: 'map', dispatchWcmArr: 'map', roles: 'roles', none: 'none' };
+    const perView = { chat: 'chat', growth: 'growth', intracity: 'intracity', map: 'map', dispatch: 'map', dispatchWcm: 'map', dispatchArr: 'map', dispatchWcmArr: 'map', roles: 'roles', none: 'none', surveys: 'surveys' };
     return perView[view] ? perView[view] : view + '|' + this.state.period + '|' + this.state.branch;
   }
 
@@ -312,6 +312,7 @@ class Component extends DCLogic {
       dispatchWcmArr: () => D.loadMap(),
       roles: () => D.users('list').catch(e => ({ error: e.message })),
       none: () => Promise.resolve({}),
+      surveys: () => Promise.resolve({}),
     };
     try {
       const seg = this.seg(view);
@@ -1934,6 +1935,19 @@ class Component extends DCLogic {
 
   /* ---------- tracking setup ---------- */
 
+  /* ---------- surveys (gxsurvey.js) ---------- */
+  surveysView() {
+    return { kpis: [], cards: [this.card('Surveys', { span: 12, body: React.createElement('div', { ref: this.surveyRef, style: { minHeight: 420 } }) })] };
+  }
+  surveyRef = el => {
+    if (el === this.surveyEl) return;
+    if (this.surveyApi) { this.surveyApi.destroy(); this.surveyApi = null; }
+    this.surveyEl = el;
+    if (!el) return;
+    import('./gxsurvey.js?v=2026-11-27a').then(M => { if (this.surveyEl !== el) return; this.surveyApi = M.mount(el, { D: this.D, me: this.state.me || { role: 'admin' } }); })
+      .catch(e => { el.textContent = 'Survey module failed to load: ' + e.message; });
+  };
+
   settingsView() {
     const T = this.track, e = React.createElement, h = this.h.bind(this);
     if (!T) return { kpis: [], cards: [this.card('Tracking setup', { span: 12, meta: 'loading', body: h('div', { height: 160, background: '#F4F4F2', borderRadius: 3, animation: 'gxpulse 1.6s ease-in-out infinite' }) })] };
@@ -2083,7 +2097,7 @@ class Component extends DCLogic {
 
   /* ---------- users and roles ---------- */
   // Menus a non-admin can be given. Role management itself is admin only.
-  static MENUS = [['overview', 'Executive overview'], ['tickets', 'Trouble tickets'], ['chat', 'Chat omnichannel'], ['csat', 'CSAT'],
+  static MENUS = [['overview', 'Executive overview'], ['tickets', 'Trouble tickets'], ['chat', 'Chat omnichannel'], ['csat', 'CSAT'], ['surveys', 'Surveys'],
     ['growth', 'Growth & churn · Retail'], ['intracity', 'Growth & churn · Intracity'], ['churnRisk', 'Churn risk'], ['map', 'Customer map'],
     ['dispatch', 'IDS · WWR wiredown'], ['dispatchWcm', 'IDS · WCM maintenance'], ['settings', 'Tracking setup']];
   isAdmin(me) { me = me || this.state.me; return !!me && me.role === 'admin'; }
@@ -2949,7 +2963,7 @@ class Component extends DCLogic {
     const D = this.D;
     const kpis = [
       { label: 'CSAT score', value: s.total ? s.avg.toFixed(2) + ' / 5' : '—', sub: s.total ? D.fmtPct(s.top2Share) + ' top-2-box' : 'No responses in period' },
-      { label: 'Responses', value: D.fmtInt(s.total), sub: D.fmtInt(s.comments.length) + ' left a written comment' },
+      { label: 'Responses', value: D.fmtInt(s.total), sub: D.fmtInt(s.comments.length) + ' left a written comment' + (s.survey && s.survey.n ? ' · ' + D.fmtInt(s.survey.n) + ' from Surveys' : '') },
       { label: 'Low ratings (1–2★)', value: D.fmtInt(s.bottom2), sub: D.fmtPct(s.bottom2Share) + ' bottom-2-box' },
       { label: 'Detractor comments', value: D.fmtInt(s.detractors.length), sub: 'rated 3★ or below with written feedback' },
     ];
@@ -3211,6 +3225,7 @@ class Component extends DCLogic {
       { id: 'dispatchWcm', label: 'IDS · WCM maintenance', tag: '09', kicker: 'Intelligence Dispatch System', title: 'IDS · WCM maintenance', sub: 'Open WCM work orders, planned separately from wiredown with their own teams, grid priorities and board. Follows the branch filter; the period filter does not apply.' },
       { id: 'dispatchArr', label: 'WWR · arrivals board', tag: '08', kicker: 'Intelligence Dispatch System', title: 'WWR · technician arrivals', sub: 'Every WWR work order in today\u2019s shared plan with its team, ETA and technician status, like an airport arrivals board. Pages turn by themselves for a TV; read only.' },
       { id: 'dispatchWcmArr', label: 'WCM · arrivals board', tag: '09', kicker: 'Intelligence Dispatch System', title: 'WCM · technician arrivals', sub: 'Every WCM work order in today\u2019s shared plan with its team, ETA and technician status, like an airport arrivals board. Pages turn by themselves for a TV; read only.' },
+      { id: 'surveys', label: 'Surveys', tag: '12', kicker: 'Voice of customer', title: 'Survey builder', sub: 'Build customer and internal surveys, share them by link, read the results and download them as Excel or CSV. Surveys linked to CSAT feed the CSAT page and the executive figures. The period and branch filters do not apply here.' },
       { id: 'roles', label: 'Role management', tag: '11', kicker: 'Access', title: 'Role management', sub: 'Give dispatchers and other colleagues their own access key and choose which menus they see. Only admins can open this page.' },
       { id: 'none', label: 'No access', tag: '—', kicker: 'Access', title: 'No menus yet', sub: 'Your access key works, but no menus have been given to it yet.' },
       { id: 'settings', label: 'Tracking setup', tag: '10', kicker: 'Field team', title: 'Tracking setup', sub: 'Connect the dashboard to your own Traccar server. Settings are saved in this browser; demo data runs until a server is connected.' },
@@ -3250,6 +3265,7 @@ class Component extends DCLogic {
             dispatchArr: () => this.arrivalsView(payload),
             dispatchWcmArr: () => this.arrivalsView(payload),
             settings: () => this.settingsView(),
+            surveys: () => this.surveysView(),
             roles: () => this.rolesView(payload),
             none: () => ({ kpis: [], cards: [this.card('No menus yet', { span: 12, body: React.createElement('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: '#3A3A37' } }, 'Ask the dashboard admin to give your access key one or more menus in Role management, then press Re-sync data.') })] }),
           })[S.view]();
@@ -3258,7 +3274,7 @@ class Component extends DCLogic {
             ? [this.opsCompareCard('overview', 7), this.growthCompareCard(S.data.growth, 'retail', 5)]
             : [this.opsCompareCard(S.view, 12)]));
           if (S.view === 'growth' || S.view === 'intracity') built.cards.splice(1, 0, this.growthCompareCard(payload, this.seg(S.view), 12));
-          if (S.view !== 'overview' && S.view !== 'settings' && S.view !== 'roles' && S.view !== 'none' && this.isAdmin() && !payload.error) {
+          if (S.view !== 'overview' && S.view !== 'settings' && S.view !== 'roles' && S.view !== 'none' && S.view !== 'surveys' && this.isAdmin() && !payload.error) {
             const ready = !built.cards.some(c => c && /^loading/i.test(String(c.meta || '')));
             const facts = ready ? this.pageFacts(view, built) : null;
             const sig = facts ? S.view + '-' + this.hashStr(JSON.stringify(facts)) : null;
@@ -3290,7 +3306,7 @@ class Component extends DCLogic {
     const sync = D && D.stats.lastSync ? D.stats.lastSync : null;
     return {
       nav: (() => {
-        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity'], ['churnRisk', 'Churn risk']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchArr', 'WWR · arrivals board'], ['dispatchWcm', 'WCM · maintenance'], ['dispatchWcmArr', 'WCM · arrivals board']]], ['settings'], ['roles']]
+        const G = [['overview'], ['tickets'], ['chat'], ['csat'], ['surveys'], ['Growth & churn', [['growth', 'Retail'], ['intracity', 'Intracity'], ['churnRisk', 'Churn risk']]], ['map'], ['IDS dispatch', [['dispatch', 'WWR · wiredown'], ['dispatchArr', 'WWR · arrivals board'], ['dispatchWcm', 'WCM · maintenance'], ['dispatchWcmArr', 'WCM · arrivals board']]], ['settings'], ['roles']]
           .map(g => g[1] ? [g[0], g[1].filter(c => this.canSee(c[0]))] : g).filter(g => g[1] ? g[1].length : this.canSee(g[0]));
         const by = id => views.find(v => v.id === id), og = S.navGroups || {};
         return G.map((g, i) => {
