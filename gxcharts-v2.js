@@ -1,10 +1,10 @@
 // GlobalXtreme BI — SVG chart components (React function components with hover state).
-export const PALETTE = ['#2B2B29', '#3E5C76', '#2E6B34', '#8A3B6E', '#C4561B', '#8C8C88', '#5B4E8C', '#B08A1E'];
-export const INK = '#1F1F1D';
-export const MUTED = '#5F5F5B';
-export const GRID = '#E6E6E2';
-const FONT = "'IBM Plex Sans',system-ui,sans-serif";
-const MONO = "'IBM Plex Mono',ui-monospace,monospace";
+export const PALETTE = ['#F9C900', '#5B8BC7', '#2FA35A', '#B4589A', '#F0782D', '#8C8C88', '#8B7FD1', '#D4A20B'];
+export const INK = 'var(--gx-ink)';
+export const MUTED = 'var(--gx-mut)';
+export const GRID = 'var(--gx-ln2)';
+const FONT = "'Inter',system-ui,sans-serif";
+const MONO = "'JetBrains Mono',ui-monospace,monospace";
 
 export function makeCharts(React) {
   const h = React.createElement;
@@ -41,8 +41,8 @@ export function makeCharts(React) {
     return h('div', {
       style: {
         position: 'absolute', left: tip.x + '%', top: tip.y + '%', transform: 'translate(-50%,-125%)',
-        pointerEvents: 'none', zIndex: 5, background: '#FFFFFF',
-        border: '1px solid #CFCFCA', borderRadius: 3,
+        pointerEvents: 'none', zIndex: 5, background: 'var(--gx-sf)',
+        border: '1px solid var(--gx-ln3)', borderRadius: 3,
         padding: '6px 9px', font: '500 12px/1.45 ' + MONO, color: INK, whiteSpace: 'nowrap',
         boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
       },
@@ -57,7 +57,7 @@ export function makeCharts(React) {
   }, children, h(Tip, { tip }));
 
   /* ---------- line / area with optional overlay bars ---------- */
-  function LineChart({ series, valueKey = 'value', overlayKey, label = 'Tickets', overlayLabel = 'Mass-problem', height = 240, color = PALETTE[0], overlayColor = '#C4561B', formatX }) {
+  function LineChart({ series, valueKey = 'value', overlayKey, label = 'Tickets', overlayLabel = 'Mass-problem', height = 240, color = PALETTE[0], overlayColor = '#F0782D', formatX }) {
     const [tip, setTip] = useState(null);
     const [boxRef, CW] = useWidth();
     const W = CW, H = height, PL = 46, PR = 14, PT = 16, PB = 30;
@@ -125,7 +125,7 @@ export function makeCharts(React) {
         [0, 1, 2, 3, 4].map(t => h('g', { key: 'g' + t },
           h('line', { x1: PL, x2: W - PR, y1: y(axis.step * t), y2: y(axis.step * t), stroke: GRID }),
           h('text', { x: PL - 10, y: y(axis.step * t) + 4, textAnchor: 'end', fill: MUTED, style: { font: '500 12px ' + MONO } }, nf(axis.step * t)))),
-        tip && h('line', { x1: x(tip.i), x2: x(tip.i), y1: PT, y2: H - PB, stroke: '#CFCFCA' }),
+        tip && h('line', { x1: x(tip.i), x2: x(tip.i), y1: PT, y2: H - PB, stroke: 'var(--gx-ln3)' }),
         shown.map(l => h('path', {
           key: l.key, fill: 'none', stroke: l.color, strokeWidth: 2, strokeDasharray: l.dash || null, strokeLinejoin: 'round', strokeLinecap: 'round',
           d: data.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[l.key] || 0).toFixed(1)).join(' '),
@@ -194,7 +194,7 @@ export function makeCharts(React) {
             h('span', { style: { font: '400 13px ' + FONT, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.key || d.label),
             h('span', { style: { font: '500 12px ' + MONO, color: MUTED } },
               (valueFormat ? valueFormat(d.value) : nf(d.value) + unit) + (showShare && total ? '  ·  ' + ((d.value / total) * 100).toFixed(1) + '%' : ''))),
-          h('div', { style: { height: 6, borderRadius: 0, background: '#EDEDEA', overflow: 'hidden' } },
+          h('div', { style: { height: 6, borderRadius: 0, background: 'var(--gx-sf2)', overflow: 'hidden' } },
             h('div', {
               style: {
                 width: Math.max(1.5, (d.value / top) * 100) + '%', height: '100%', borderRadius: 0,
@@ -213,7 +213,7 @@ export function makeCharts(React) {
     return h('div', { style: { position: 'relative', display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' } },
       h('div', { style: { position: 'relative', width: size, height: size, flex: '0 0 auto' } },
         h('svg', { viewBox: `0 0 ${size} ${size}`, style: { width: '100%', height: '100%', transform: 'rotate(-90deg)' } },
-          h('circle', { cx: size / 2, cy: size / 2, r, fill: 'none', stroke: '#EDEDEA', strokeWidth: thickness }),
+          h('circle', { cx: size / 2, cy: size / 2, r, fill: 'none', stroke: 'var(--gx-sf2)', strokeWidth: thickness }),
           data.map((d, i) => {
             const len = (d.value / total) * C, off = acc; acc += len;
             return h('circle', {
@@ -238,7 +238,7 @@ export function makeCharts(React) {
           h('span', { style: { width: 9, height: 9, borderRadius: 1, background: colors[i % colors.length], flex: '0 0 auto' } }),
           h('span', { style: { font: '400 13px ' + FONT, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 } }, d.key || d.label),
           h('span', { style: { font: '500 12px ' + MONO, color: MUTED, flex: '0 0 auto' } }, nf(d.value)),
-          h('span', { style: { font: '500 12px ' + MONO, color: '#5F5F5B', flex: '0 0 auto', width: 46, textAlign: 'right' } }, ((d.value / total) * 100).toFixed(1) + '%'))))
+          h('span', { style: { font: '500 12px ' + MONO, color: 'var(--gx-mut)', flex: '0 0 auto', width: 46, textAlign: 'right' } }, ((d.value / total) * 100).toFixed(1) + '%'))))
     );
   }
 
@@ -262,15 +262,15 @@ export function makeCharts(React) {
       [0.25, 0.5, 0.75, 1].map((t, i) => h('line', { key: i, x1: PL, x2: W - PR, y1: Y(yMax * t), y2: Y(yMax * t), stroke: GRID })),
       [0.25, 0.5, 0.75, 1].map((t, i) => h('text', { key: 'y' + i, x: PL - 10, y: Y(yMax * t) + 4, textAnchor: 'end', fill: MUTED, style: { font: '500 11.5px ' + MONO } }, yFormat(yMax * t))),
       [0.25, 0.5, 0.75, 1].map((t, i) => h('text', { key: 'x' + i, x: X(xMax * t), y: H - PB + 20, textAnchor: 'middle', fill: MUTED, style: { font: '500 11.5px ' + MONO } }, xFormat(Math.round(xMax * t)))),
-      h('line', { x1: PL, x2: W - PR, y1: H - PB, y2: H - PB, stroke: '#BDBDB8' }),
-      h('line', { x1: PL, x2: PL, y1: PT, y2: H - PB, stroke: '#BDBDB8' }),
-      h('line', { x1: X(medX), x2: X(medX), y1: PT, y2: H - PB, stroke: '#5F5F5B', strokeDasharray: '5 5' }),
-      h('line', { x1: PL, x2: W - PR, y1: Y(medY), y2: Y(medY), stroke: '#5F5F5B', strokeDasharray: '5 5' }),
+      h('line', { x1: PL, x2: W - PR, y1: H - PB, y2: H - PB, stroke: 'var(--gx-ln3)' }),
+      h('line', { x1: PL, x2: PL, y1: PT, y2: H - PB, stroke: 'var(--gx-ln3)' }),
+      h('line', { x1: X(medX), x2: X(medX), y1: PT, y2: H - PB, stroke: 'var(--gx-mut)', strokeDasharray: '5 5' }),
+      h('line', { x1: PL, x2: W - PR, y1: Y(medY), y2: Y(medY), stroke: 'var(--gx-mut)', strokeDasharray: '5 5' }),
       h('text', { x: X(medX) + 6, y: PT - 10, textAnchor: 'start', fill: MUTED, style: { font: '500 10.5px ' + MONO } }, 'median ' + xFormat(Math.round(medX))),
       h('text', { x: PL + 6, y: Y(medY) - 7, textAnchor: 'start', fill: MUTED, style: { font: '500 10.5px ' + MONO } }, 'median ' + yFormat(medY)),
-      corner(ql.tr, W - PR - 8, PT + 14, 'end', '#9B2C1F'),
+      corner(ql.tr, W - PR - 8, PT + 14, 'end', '#D9483B'),
       corner(ql.tl, PL + 8, PT + 14, 'start', '#6B5A2E'),
-      corner(ql.br, W - PR - 8, H - PB - 10, 'end', '#2E6B34'),
+      corner(ql.br, W - PR - 8, H - PB - 10, 'end', '#2FA35A'),
       corner(ql.bl, PL + 8, H - PB - 10, 'start', '#3F5162'),
       points.map((p, i) => h('circle', {
         key: i, cx: X(p.x), cy: Y(p.y), r: p.r || 6, fill: p.color || PALETTE[0], fillOpacity: 0.9,
@@ -283,7 +283,7 @@ export function makeCharts(React) {
         .map(({ p }, i) => {
           const dy = [-14, 21, -26, 31, -38][i % 5];
           return h('text', {
-            key: 'n' + i, x: X(p.x), y: Y(p.y) + dy, textAnchor: 'middle', fill: '#9B2C1F',
+            key: 'n' + i, x: X(p.x), y: Y(p.y) + dy, textAnchor: 'middle', fill: '#D9483B',
             style: { font: '700 10.5px ' + FONT, pointerEvents: 'none' },
           }, p.name.split(' ').slice(0, 2).join(' '));
         }),
@@ -298,8 +298,8 @@ export function makeCharts(React) {
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, maxHeight: height ? height + 'px' : 'none', overflowY: height ? 'auto' : 'visible', paddingRight: 4 } },
       data.map((d, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: 'minmax(70px,1.1fr) minmax(60px,2fr) auto', gap: 10, alignItems: 'center' } },
         h('span', { style: { font: '400 12.5px ' + FONT, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, d.name),
-        h('div', { style: { position: 'relative', height: 6, borderRadius: 0, background: '#EDEDEA' } },
-          h('div', { style: { position: 'absolute', inset: 0, width: (d.value / max) * 100 + '%', borderRadius: 0, background: d.value <= threshold ? PALETTE[2] : (d.value <= threshold * 2 ? '#C4561B' : '#9B2C1F') } }),
+        h('div', { style: { position: 'relative', height: 6, borderRadius: 0, background: 'var(--gx-sf2)' } },
+          h('div', { style: { position: 'absolute', inset: 0, width: (d.value / max) * 100 + '%', borderRadius: 0, background: d.value <= threshold ? PALETTE[2] : (d.value <= threshold * 2 ? '#F0782D' : '#D9483B') } }),
           h('div', { style: { position: 'absolute', left: (threshold / max) * 100 + '%', top: -4, bottom: -4, width: 1, background: '#5F5F5B' } })),
         h('span', { style: { font: '500 12px ' + MONO, color: MUTED, textAlign: 'right', whiteSpace: 'nowrap' } }, format(d.value))))
     );

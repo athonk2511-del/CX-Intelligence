@@ -30,7 +30,11 @@ export function cellLabel(key) { const p = String(key).split(','); return colNam
 
 export async function createMap(el, data, opts) {
   const L = await loadLeaflet();
-  const map = L.map(el, { zoomControl: true, worldCopyJump: false, minZoom: 4 });
+  // Scrolling the page over the map must not zoom it: wheel zoom turns on after a click on the map and off when the
+  // pointer leaves. Zoom buttons, double-click, pinch and drag work as before.
+  const map = L.map(el, { zoomControl: true, worldCopyJump: false, minZoom: 4, scrollWheelZoom: false });
+  map.on('click', () => map.scrollWheelZoom.enable());
+  map.on('mouseout', () => map.scrollWheelZoom.disable());
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
   map.setView([-2.5, 117], 5);
   let F = { colorBy: 'status', status: [true, true, true], hide: {}, branch: -1, wd: [true, true, false], wdOnly: false, display: 'points', heatCat: 'all', heatR: 20, ptA: 1, heatA: 0.8, areaA: 1 };

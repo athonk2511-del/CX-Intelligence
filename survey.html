@@ -18,7 +18,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--pa,#1F1F1D);outline-offset:2px}
 .plogo{position:absolute;top:18px;left:max(3vw,16px);height:14px;z-index:6;opacity:.9}
-.plogo.inv{filter:brightness(0) invert(1)}
+.plogo{mix-blend-mode:multiply}
+.plogo.inv{filter:invert(1) hue-rotate(180deg);mix-blend-mode:screen}
 /* ---------- Player (responden) ---------- */
 .pl{position:fixed;inset:0;background:var(--pb);color:var(--pi);font-family:Inter,var(--f);overflow:hidden}
 .pl.load{display:grid;place-items:center;background:#fff}

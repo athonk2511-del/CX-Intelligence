@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-27 b (Tampilan baru: tema GlobalXtreme, mode gelap/terang, IDS Board / Map / Side by side)
+
+### Changed
+
+- **Tampilan baru di semua halaman** dengan warna GlobalXtreme: hitam dan kuning **#F9C900**. Font: Space Grotesk (judul dan angka besar), Inter (teks), JetBrains Mono (label dan tabel). Kartu, tombol, menu, filter, dan tabel memakai sudut membulat dan jarak yang lebih lega.
+- **Mode gelap dan terang**: tombol Light/Dark di kanan atas. Pilihan disimpan per browser; default gelap. Warna teks, garis, latar, label status (hijau, merah, kuning, ungu), dan grafik disesuaikan supaya tetap terbaca di kedua mode.
+- **Animasi**: kartu muncul bergantian dari bawah, angka KPI berhitung naik, kartu terangkat dengan garis kuning saat disorot, garis cahaya kuning di header. Halaman IDS dan arrivals board **tanpa** animasi kartu dan hitungan supaya tidak mengganggu dispatcher. Semua animasi mati otomatis kalau perangkat memakai pengaturan "kurangi gerakan".
+- **Menu samping** selalu terbuka di layar lebar (1280 px ke atas). Di layar lebih kecil tetap menu geser seperti sebelumnya.
+- Warna seri grafik dibuat lebih terang (merah, hijau, biru, oranye, ungu) supaya terlihat di latar gelap maupun terang, termasuk di PDF.
+- **IDS: pilihan tampilan Board / Map / Side by side** di atas peta:
+  - **Board**: daftar WO saja. Filter dan team setup tetap ada, peta disembunyikan.
+  - **Map**: peta besar. Pop-up alarm teknisi dan follow-up pelanggan tetap muncul.
+  - **Side by side** (default di layar lebar): peta diam di kiri, dispatch board di-scroll di kanan.
+  Pilihan disimpan per browser.
+- **Peta tidak lagi ikut zoom saat halaman di-scroll.** Zoom dengan roda mouse aktif setelah peta diklik, dan mati lagi saat kursor keluar dari peta. Tombol +/−, double-click, cubit (pinch) dan geser tetap seperti biasa. Berlaku untuk Customer map dan IDS.
+
+### Tidak berubah
+
+- Semua perhitungan, filter, sinkronisasi IDS, alarm teknisi, auto check-in, tracking, role, survei, dan Download PDF. Perubahan ini hanya menyentuh tampilan.
+
 ## 2026-11-27 (Surveys: survey builder, terhubung ke CSAT)
 
 ### Added

@@ -6,12 +6,12 @@
 // first. A planned lunch break is taken out of every team's day. Drive times: OSRM car routes (or a straight-line estimate)
 // multiplied by a traffic factor for the zone: tourist centre, dense, medium or open land (from customer density per cell).
 
-const SANS = "500 12px 'IBM Plex Sans',system-ui,sans-serif";
-const MONO = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
-const C = {
-  ink: '#1F1F1D', text: '#3A3A37', muted: '#5F5F5B', line: '#DCDCD8', soft: '#EBEBE7', bg: '#F4F4F2', paper: '#FAFAF8', white: '#FFFFFF',
-  acc: '#E8B400', accDeep: '#7A5E00', good: '#2E6B34', goodBg: '#EEF5EE', bad: '#B42318', badBg: '#FBF1EF', badLine: '#E2B8B1',
-  warn: '#7A4A10', warnBg: '#FBF5E6', warnLine: '#E3CF96', vip: '#6D28D9', vipBg: '#F3EEFC',
+const SANS = "500 12px 'Inter',system-ui,sans-serif";
+const MONO = "500 11px 'JetBrains Mono',ui-monospace,monospace";
+const C = {   // theme tokens (CSS variables, see index.html) so the board follows dark / light mode
+  ink: 'var(--gx-ink)', text: 'var(--gx-text)', muted: 'var(--gx-mut)', line: 'var(--gx-ln)', soft: 'var(--gx-sf2)', bg: 'var(--gx-soft)', paper: 'var(--gx-paper)', white: 'var(--gx-sf)',
+  acc: '#F9C900', onAcc: '#0B0B0A', accDeep: 'var(--gx-acct)', good: '#22884A', goodBg: 'var(--gx-good-bg)', bad: '#CF3B2E', badBg: 'var(--gx-bad-bg)', badLine: 'var(--gx-bad-ln)',
+  warn: 'var(--gx-warn)', warnBg: 'var(--gx-warn-bg)', warnLine: 'var(--gx-warn-ln)', vip: 'var(--gx-vip)', vipBg: 'var(--gx-vip-bg)',
 };
 
 export const TIERS = { VIP: { s: 10000, r: 5 }, Highest: { s: 800, r: 4 }, High: { s: 600, r: 3 }, Normal: { s: 400, r: 2 }, Low: { s: 200, r: 1 } };
@@ -44,7 +44,7 @@ export const BANDS = [
   { min: 3, color: '#8DB33A', label: '3–4 WO' },
   { min: 5, color: '#E0A800', label: '5–7 WO' },
   { min: 8, color: '#D9480F', label: '8–11 WO' },
-  { min: 12, color: '#7F1D1D', label: '12+ WO' },
+  { min: 12, color: 'var(--gx-bad)', label: '12+ WO' },
 ];
 export const bandOf = s => { let b = BANDS[0]; BANDS.forEach(x => { if (s >= x.min) b = x; }); return b; };
 const TYPES = {
@@ -54,12 +54,12 @@ const TYPES = {
 const CONF = { none: 'Not contacted', ok: 'Confirmed', noresp: 'No answer', resched: 'Asks to reschedule', cancel: 'Cancelled' };
 // Card colour by urgency (SLA left and urgent VIP). Red = do now; blue = safe, can be negotiated with the customer.
 const URG = {
-  red: { c: '#C92A2A', bg: '#FFF5F5', label: 'Act now', tip: 'SLA breached, will miss its SLA on this route, or urgent VIP (Wiredown / Power)' },
-  orange: { c: '#E8590C', bg: '#FFF4E6', label: 'Due soon', tip: 'SLA due within the near-breach hours' },
-  yellow: { c: '#E0A800', bg: '#FFFBEA', label: 'Due today', tip: 'SLA due before today\u2019s working hours end' },
-  green: { c: '#2B8A3E', bg: '#F1FAF2', label: 'Due tomorrow', tip: 'SLA due during the next working day' },
-  blue: { c: '#1971C2', bg: '#EFF6FD', label: 'Safe · negotiable', tip: 'SLA due later: can be rescheduled with the customer' },
-  done: { c: '#8A8A85', bg: '#FFFFFF', label: 'Done', tip: 'Checked out' },
+  red: { c: '#C92A2A', bg: 'var(--gx-bad-bg)', label: 'Act now', tip: 'SLA breached, will miss its SLA on this route, or urgent VIP (Wiredown / Power)' },
+  orange: { c: '#E8590C', bg: 'var(--gx-warn-bg)', label: 'Due soon', tip: 'SLA due within the near-breach hours' },
+  yellow: { c: '#E0A800', bg: 'var(--gx-acc-bg)', label: 'Due today', tip: 'SLA due before today\u2019s working hours end' },
+  green: { c: '#2B8A3E', bg: 'var(--gx-good-bg)', label: 'Due tomorrow', tip: 'SLA due during the next working day' },
+  blue: { c: '#1971C2', bg: 'var(--gx-info-bg)', label: 'Safe · negotiable', tip: 'SLA due later: can be rescheduled with the customer' },
+  done: { c: '#8A8A85', bg: 'var(--gx-sf)', label: 'Done', tip: 'Checked out' },
 };
 const STAT = { none: 'Not started', start: 'On the way', checkin: 'Checked in', checkout: 'Checked out' };
 // Version of this planner, stamped on plans it makes (shows in the change log which screens are up to date).
@@ -101,7 +101,7 @@ const DEF = {
 };
 
 const pad = n => String(n).padStart(2, '0');
-const NEW_C = '#1D4ED8', NEW_BG = '#EEF3FF';
+const NEW_C = '#2F6FE0', NEW_BG = 'var(--gx-info-bg)';
 const IDLE_T = { stop: 'berhenti lama', hub: 'kembali ke kantor', long: 'terlalu lama di WO' };
 const IDLE_REASONS = ['Sudah dihubungi, lanjut ke WO berikutnya', 'Ambil material / peralatan', 'Kendaraan bermasalah', 'Menunggu pelanggan / akses lokasi', 'Pekerjaan memang rumit', 'Istirahat / makan', 'Cuaca / hujan', 'Diminta atasan / tugas lain', 'Tidak bisa dihubungi', 'Lainnya'];   // "BARU": WO from a later WO file upload, not checked yet
 const hm = m => { m = Math.round(m); return pad(Math.floor(m / 60)) + ':' + pad(m % 60); };
@@ -569,32 +569,32 @@ class Dispatch {
     const x = L[0], { f, a, b } = x, J = this._J;
     let names = []; try { names = store.load('gx.ids.agents') || []; } catch (er) {}
     const who = this.ui.fuName || '', can = !b || who.trim().length > 0;
-    const ln = (t, st) => e('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
+    const ln = (t, st) => e('div', { style: { font: "500 13px 'Inter',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
     const cust = j => (j.uid || '—') + ' · CID ' + j.cid + (j.name ? ' · ' + j.name : '') + (j.area ? ' · ' + j.area : '');
     const go = () => { if (can) this.fuAck(x.k, who); };
     return e('div', { key: 'fu', role: 'alertdialog', 'aria-live': 'assertive', 'aria-label': 'Follow-up pelanggan berikutnya',
         style: { position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', width: 'min(560px, calc(100vw - 32px))', zIndex: 9999,
-          background: C.white, border: '3px solid #B42318', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
-      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#B42318;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
-      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#B42318', color: C.white } },
-        e('span', { style: { font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, b ? 'SEGERA FOLLOW-UP PELANGGAN BERIKUTNYA' : 'TEKNISI SUDAH CHECK-IN'),
-        L.length > 1 ? e('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alert') : null),
+          background: C.white, border: '3px solid #D9483B', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
+      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#D9483B;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
+      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#D9483B', color: C.white } },
+        e('span', { style: { font: "700 12px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, b ? 'SEGERA FOLLOW-UP PELANGGAN BERIKUTNYA' : 'TEKNISI SUDAH CHECK-IN'),
+        L.length > 1 ? e('span', { style: { font: "600 11px 'JetBrains Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alert') : null),
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px' } },
         ln([e('b', { key: 't' }, f.tn), ' sudah check-in di ', e('b', { key: 'w' }, a.wo), ' pukul ' + hm(f.ci) + '.']),
         ln(cust(a), { color: C.muted, fontSize: 12 }),
-        b ? e('div', { style: { padding: '8px 10px', border: '1px solid #FEC84B', borderRadius: 4, background: '#FFFAEB', display: 'flex', flexDirection: 'column', gap: 4 } },
+        b ? e('div', { style: { padding: '8px 10px', border: '1px solid #FEC84B', borderRadius: 4, background: 'var(--gx-acc-bg)', display: 'flex', flexDirection: 'column', gap: 4 } },
           ln(['Segera lakukan follow-up untuk pelanggan ', e('b', { key: 'b' }, b.wo), '.']),
           ln(cust(b), { fontSize: 12 }),
-          ln(['Estimasi kedatangan teknisi: ', e('b', { key: 'e', style: { font: "700 15px 'IBM Plex Mono',ui-monospace,monospace" } }, hm(f.from) + ' – ' + hm(f.to))])) :
+          ln(['Estimasi kedatangan teknisi: ', e('b', { key: 'e', style: { font: "700 15px 'JetBrains Mono',ui-monospace,monospace" } }, hm(f.from) + ' – ' + hm(f.to))])) :
           ln('Tidak ada pelanggan berikutnya yang perlu di-follow-up untuk team ini (semua sudah Confirmed, sudah berjalan, atau ini pekerjaan terakhir).', { color: C.muted }),
-        b ? e('label', { style: { display: 'flex', flexDirection: 'column', gap: 3, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, 'Nama agent yang melakukan follow-up',
+        b ? e('label', { style: { display: 'flex', flexDirection: 'column', gap: 3, font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink } }, 'Nama agent yang melakukan follow-up',
           e('input', { type: 'text', value: who, list: 'gx-fu-agents', maxLength: 40, autoFocus: true, placeholder: 'Ketik nama agent',
             onChange: ev => { this.ui.fuName = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Enter') go(); },
-            style: { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }),
+            style: { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'Inter',system-ui,sans-serif", color: C.ink } }),
           e('datalist', { id: 'gx-fu-agents' }, ...names.map(n => e('option', { key: n, value: n })))) : null,
         e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' } },
           e('button', { type: 'button', onClick: go, disabled: !can,
-            style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#B42318' : '#D0D5DD', color: C.white, font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } },
+            style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#D9483B' : 'var(--gx-sf2)', color: C.white, font: "600 13px 'Inter',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } },
             b ? 'Saya tangani · tutup alert' : 'OK, tutup'),
           b ? e('button', { type: 'button', onClick: () => this.locate(b), style: { padding: '6px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS, cursor: 'pointer' } }, 'Lihat ' + b.wo) : null,
           b && !can ? e('span', { style: { font: SANS, color: C.bad } }, 'Isi nama agent untuk menutup alert.') : null)));
@@ -692,17 +692,17 @@ class Dispatch {
     const x = L[0], a = x.a;
     let names = []; try { names = store.load('gx.ids.agents') || []; } catch (er) {}
     const who = this.ui.idName || '', why = this.ui.idWhy || '', note = this.ui.idNote || '', can = who.trim() && why && (why !== 'Lainnya' || note.trim());
-    const ln = (t, st) => e('div', { style: { font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
-    const inp = { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, background: C.white };
+    const ln = (t, st) => e('div', { style: { font: "500 13px 'Inter',system-ui,sans-serif", color: C.ink, lineHeight: 1.45, ...st } }, t);
+    const inp = { padding: '6px 8px', border: '1px solid ' + C.line, borderRadius: 3, font: "500 13px 'Inter',system-ui,sans-serif", color: C.ink, background: C.white };
     const go = () => { if (can) this.idleAck(x.k, who, why, note); };
     const map = 'https://www.google.com/maps?q=' + a.lat + ',' + a.lng;
     return e('div', { key: 'idle', role: 'alertdialog', 'aria-live': 'assertive', 'aria-label': 'Alarm teknisi',
         style: { position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', width: 'min(580px, calc(100vw - 32px))', zIndex: 9998,
-          background: C.white, border: '3px solid #B42318', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
-      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#B42318;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
-      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#B42318', color: C.white } },
-        e('span', { style: { font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, 'ALARM TEKNISI · ' + IDLE_T[a.type].toUpperCase()),
-        L.length > 1 ? e('span', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alarm') : null),
+          background: C.white, border: '3px solid #D9483B', borderRadius: 6, boxShadow: '0 12px 40px rgba(0,0,0,0.28)', animation: 'gxFuFlash 1s ease-in-out infinite', overflow: 'hidden' } },
+      e('style', null, '@keyframes gxFuFlash{0%,100%{border-color:#D9483B;box-shadow:0 12px 40px rgba(180,35,24,.35)}50%{border-color:#F79009;box-shadow:0 12px 40px rgba(247,144,9,.55)}}'),
+      e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#D9483B', color: C.white } },
+        e('span', { style: { font: "700 12px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.1em' } }, 'ALARM TEKNISI · ' + IDLE_T[a.type].toUpperCase()),
+        L.length > 1 ? e('span', { style: { font: "600 11px 'JetBrains Mono',ui-monospace,monospace" } }, '1 dari ' + L.length + ' alarm') : null),
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px' } },
         ln([e('b', { key: 't' }, a.tn), ' ' + this.idleText(a) + '.']),
         ln('Tracker ' + a.dev + ' · sisa shift sampai ' + hm(a.shiftEnd) + (a.next ? ' · WO berikutnya ' + a.next : ''), { color: C.muted, fontSize: 12 }),
@@ -716,7 +716,7 @@ class Dispatch {
         e('datalist', { id: 'gx-fu-agents' }, ...names.map(n => e('option', { key: n, value: n }))),
         e('input', { type: 'text', value: note, maxLength: 200, placeholder: why === 'Lainnya' ? 'Wajib: jelaskan alasannya' : 'Catatan (opsional)', onChange: ev => { this.ui.idNote = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Enter') go(); }, style: inp }),
         e('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          e('button', { type: 'button', onClick: go, disabled: !can, style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#B42318' : '#D0D5DD', color: C.white, font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } }, 'Simpan · tutup alarm'),
+          e('button', { type: 'button', onClick: go, disabled: !can, style: { padding: '7px 14px', border: 0, borderRadius: 3, background: can ? '#D9483B' : 'var(--gx-sf2)', color: C.white, font: "600 13px 'Inter',system-ui,sans-serif", cursor: can ? 'pointer' : 'not-allowed' } }, 'Simpan · tutup alarm'),
           !can ? e('span', { style: { font: SANS, color: C.bad } }, 'Isi nama agent dan hasil konfirmasi.') : null)));
   }
   // The day's alarm history under the board: every alarm, who handled it and what the team said.
@@ -726,10 +726,10 @@ class Dispatch {
     const t = ms => { const d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
     return e('div', { key: 'idlebox', style: { border: '1px solid ' + C.line, borderRadius: 4, background: C.white, padding: '6px 12px' } },
       e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: nOpen ? C.bad : C.ink } }, 'ALARM TEKNISI HARI INI · ' + L.length + (nOpen ? ' (' + nOpen + ' belum ditangani)' : '')),
+        e('span', { style: { font: "600 12.5px 'Inter',system-ui,sans-serif", color: nOpen ? C.bad : C.ink } }, 'ALARM TEKNISI HARI INI · ' + L.length + (nOpen ? ' (' + nOpen + ' belum ditangani)' : '')),
         e('button', { type: 'button', onClick: () => { this.ui.idleHist = !open; this.onChange(); }, style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, font: SANS, cursor: 'pointer' } }, open ? 'Sembunyikan' : 'Lihat riwayat')),
       open ? e('div', { style: { marginTop: 4 } }, ...L.slice().reverse().map(({ k, a }) => e('div', { key: k, style: { display: 'flex', flexWrap: 'wrap', gap: '2px 10px', padding: '5px 0', borderTop: '1px solid ' + C.soft, font: SANS, color: C.text } },
-        e('span', { style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 44 } }, t(a.at)),
+        e('span', { style: { font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, minWidth: 44 } }, t(a.at)),
         e('span', { style: { fontWeight: 600, color: C.ink, minWidth: 130 } }, a.tn),
         e('span', { style: { minWidth: 110, color: C.bad } }, IDLE_T[a.type]),
         e('span', { style: { flex: '1 1 260px' } }, this.idleText(a)),
@@ -1491,7 +1491,7 @@ class Dispatch {
     const a = this.isNew(P, j); if (!a) return null;
     const d = new Date(a.late ? a.made : a.up), t = pad(d.getHours()) + ':' + pad(d.getMinutes());
     return e('span', { key: 'new', title: a.late ? 'WO dibuat setelah plan hari ini dibuat (' + t + '), jadi masuk lewat upload berikutnya dan ditempatkan IDS otomatis. Cek tim dan urutannya, lalu klik Sudah dicek.' : 'WO tambahan dari upload file WO ' + t + '. Cek tim dan urutannya, lalu klik Sudah dicek.',
-      style: { padding: '1px 7px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 10.5px 'IBM Plex Sans',system-ui,sans-serif", letterSpacing: '0.04em', whiteSpace: 'nowrap' } },
+      style: { padding: '1px 7px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 10.5px 'Inter',system-ui,sans-serif", letterSpacing: '0.04em', whiteSpace: 'nowrap' } },
       a.late ? 'BARU · WO dibuat ' + t : 'BARU · upload ' + t);
   }
   // "WO baru" panel above the board: every unchecked WO from later uploads, newest upload first, where IDS put it.
@@ -1499,7 +1499,7 @@ class Dispatch {
     const L = this.newList(P); if (!L.length) return null;
     const ro = this.readOnly, open = this.ui.newOpen !== false, where = new Map();
     T.forEach((t, n) => t.rows.forEach((r, i) => where.set(r.j.key, { n, i, r })));
-    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + NEW_C, borderRadius: 3, background: solid ? NEW_C : C.white, color: solid ? '#FFFFFF' : NEW_C, font: "600 11.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + NEW_C, borderRadius: 3, background: solid ? NEW_C : C.white, color: solid ? '#FFFFFF' : NEW_C, font: "600 11.5px 'Inter',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
     const groups = new Map();
     L.forEach(j => { const a = P.added[j.key], up = a.late ? 0 : a.up; if (!groups.has(up)) groups.set(up, []); groups.get(up).push(j); });
     const nT = P.teams.length, moveOpts = { '': 'Move to…' };
@@ -1510,10 +1510,10 @@ class Dispatch {
       const place = w ? this.tn(w.n) + ' · stop ' + (w.i + 1) + ' · ETA ' + hm(w.r.arr) : P.next.includes(j.key) ? 'H+1 · ' + ({ pending: 'Pending', customer: 'customer request', manual: 'no location' }[P.why[j.key]] || 'tidak muat hari ini') : '—';
       const opts = { ...moveOpts }; if (!P.next.includes(j.key)) opts.next = 'Defer H+1';
       return e('div', { key: j.key, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', padding: '6px 0', borderTop: '1px solid ' + C.soft } },
-        e('span', { style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, j.wo),
-        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (j.uid || j.name || '—') + ' · CID ' + j.cid),
+        e('span', { style: { font: "600 12.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, j.wo),
+        e('span', { style: { font: "600 12.5px 'Inter',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (j.uid || j.name || '—') + ' · CID ' + j.cid),
         e('span', { style: { font: SANS, color: C.muted, minWidth: 130 } }, [j.tier, j.cat, j.area].filter(Boolean).join(' · ')),
-        e('span', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: w ? C.ink : C.warn, flex: '1 1 200px' } }, '→ ' + place),
+        e('span', { style: { font: "600 12px 'Inter',system-ui,sans-serif", color: w ? C.ink : C.warn, flex: '1 1 200px' } }, '→ ' + place),
         e('span', { style: { display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' } },
           btn('sh', 'Lihat', () => this.showOnBoard(j)),
           ro || lk ? null : e('select', { key: 'mv', value: '', 'aria-label': 'Move to', onChange: ev => { const v = ev.target.value; if (v === '') return; if (v === 'next') return this.move(P, j.key, 'next', null); const [t, x] = v.split(':'); this.move(P, j.key, +t, x === 'next' ? this.nextSlot(P, +t, j.key) : null); },
@@ -1523,7 +1523,7 @@ class Dispatch {
     return e('div', { key: 'newbox', style: { border: '2px solid ' + NEW_C, borderRadius: 4, background: NEW_BG, padding: '8px 12px' } },
       e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
         e('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-          e('span', { style: { padding: '2px 8px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 12px 'IBM Plex Sans',system-ui,sans-serif" } }, 'WO BARU · ' + L.length),
+          e('span', { style: { padding: '2px 8px', borderRadius: 3, background: NEW_C, color: '#FFFFFF', font: "700 12px 'Inter',system-ui,sans-serif" } }, 'WO BARU · ' + L.length),
           e('span', { style: { font: SANS, color: C.text } }, 'Masuk dari upload file WO setelah plan dibuat dan sudah ditempatkan IDS otomatis. Cek tim dan urutannya, pindahkan kalau perlu, lalu klik Sudah dicek.')),
         e('span', { style: { display: 'flex', gap: 6 } },
           btn('tg', open ? 'Sembunyikan' : 'Tampilkan', () => { this.ui.newOpen = !open; this.onChange(); }),
@@ -1531,7 +1531,7 @@ class Dispatch {
       open ? e('div', { style: { marginTop: 4 } }, ...[...groups.entries()].sort((a, b) => b[0] - a[0]).map(([up, js]) => {
         const d = new Date(up);
         return e('div', { key: 'g' + up, style: { marginTop: 6 } },
-          e('div', { style: { font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", color: NEW_C, textTransform: 'uppercase', letterSpacing: '0.04em' } }, up ? 'Upload file WO ' + day(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + js.length + ' WO' : 'Masuk sebelum tanda BARU aktif · WO dibuat setelah plan dibuat · ' + js.length + ' WO'),
+          e('div', { style: { font: "600 11px 'JetBrains Mono',ui-monospace,monospace", color: NEW_C, textTransform: 'uppercase', letterSpacing: '0.04em' } }, up ? 'Upload file WO ' + day(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + js.length + ' WO' : 'Masuk sebelum tanda BARU aktif · WO dibuat setelah plan dibuat · ' + js.length + ' WO'),
           ...js.sort((a, b) => (where.has(a.key) ? 0 : 1) - (where.has(b.key) ? 0 : 1) || this.cmp(a, b)).map(row));
       })) : null);
   }
@@ -2098,36 +2098,36 @@ class Dispatch {
       : ev.lat != null && !arrived && now < x.arr ? 'driving there · arrives about ' + hm(x.arr) + ' (' + x.drive + ' min)'
       : ev.lat != null && !arrived ? 'should be there (no arrival yet) · until ' + hm(x.end)
       : 'handling now · until ' + hm(x.end);
-    const on = now >= x.at && now < x.end, red = '#B42318', ink = '#7A1C12';
+    const on = now >= x.at && now < x.end, red = '#D9483B', ink = '#7A1C12';
     const late = this._late && this._late.n === i ? this._late.keys : [];
     const box = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, textAlign: 'center',
-      background: 'repeating-linear-gradient(135deg, #FDF0EE 0 8px, #F9E1DD 8px 16px)', border: '1px ' + (on ? 'solid' : 'dashed') + ' ' + red, borderLeft: '5px solid ' + red, borderRadius: 3 };
-    const ctl = !this.readOnly && now < x.end ? e('span', { key: 'c', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 2, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+      background: 'repeating-linear-gradient(135deg, var(--gx-bad-bg) 0 8px, var(--gx-bad-bg) 8px 16px)', border: '1px ' + (on ? 'solid' : 'dashed') + ' ' + red, borderLeft: '5px solid ' + red, borderRadius: 3 };
+    const ctl = !this.readOnly && now < x.end ? e('span', { key: 'c', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 2, font: "500 11px 'Inter',system-ui,sans-serif", color: ink } },
       'Handling', e('input', { key: 'd' + (ev.dur || 0), type: 'number', step: 0.5, min: 0.5, max: 12, defaultValue: nf1((ev.dur || 360) / 60).replace('.0', ''), 'aria-label': 'Mass outage handling time in hours',
         onBlur: ev2 => this.setMassDur(P, i, ev, ev2.target.value), onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); },
-        style: { width: 46, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }), 'h',
-      e('button', { key: 'x', type: 'button', onClick: () => this.endMass(P, i, ev), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: C.white, color: red, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, now < x.at ? 'Cancel' : 'End now')) : null;
-    const lateRow = late.length ? e('span', { key: 'l', style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: red } },
+        style: { width: 46, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, background: C.white } }), 'h',
+      e('button', { key: 'x', type: 'button', onClick: () => this.endMass(P, i, ev), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: C.white, color: red, font: "600 11px 'Inter',system-ui,sans-serif", cursor: 'pointer' } }, now < x.at ? 'Cancel' : 'End now')) : null;
+    const lateRow = late.length ? e('span', { key: 'l', style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "600 11px 'Inter',system-ui,sans-serif", color: red } },
       late.length + ' WO now start' + (late.length === 1 ? 's' : '') + ' after ' + hm(this.tlast(i)) + ' (too late for this shift)',
-      this.readOnly ? null : e('button', { key: 'dl', type: 'button', onMouseDown: ev2 => ev2.stopPropagation(), onClick: () => this.deferLate(P, i, late), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: red, color: C.white, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Defer them to H+1')) : null;
-    const dv = this.trackerOf(i), ro = this.readOnly, tin = { width: 50, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white };
+      this.readOnly ? null : e('button', { key: 'dl', type: 'button', onMouseDown: ev2 => ev2.stopPropagation(), onClick: () => this.deferLate(P, i, late), style: { padding: '1px 8px', border: '1px solid ' + red, borderRadius: 3, background: red, color: C.white, font: "600 11px 'Inter',system-ui,sans-serif", cursor: 'pointer' } }, 'Defer them to H+1')) : null;
+    const dv = this.trackerOf(i), ro = this.readOnly, tin = { width: 50, padding: '2px 4px', border: '1px solid ' + C.badLine, borderRadius: 3, font: "600 11.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, background: C.white };
     const tBox = (kind, val, auto) => ro ? e('span', { key: kind, style: { font: MONO, color: C.ink } }, (kind === 'ci' ? 'Arrived ' : 'Left ') + (val != null ? hm(val) : '—'))
       : e('label', { key: kind, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, kind === 'ci' ? 'Arrived' : 'Left',
         e('input', { key: kind + (val == null ? '' : val), type: 'text', inputMode: 'numeric', maxLength: 5, placeholder: 'hh:mm', defaultValue: val != null ? hm(val) : '', 'aria-label': kind === 'ci' ? 'Arrival at the mass outage' : 'Leaving the mass outage',
           onBlur: ev2 => { if (ev2.target.value !== (val != null ? hm(val) : '')) this.setMassTime(P, i, ev, kind, ev2.target.value); }, onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); }, style: tin }),
-        auto ? e('span', { style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null);
-    const locRow = e('span', { key: 'loc', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+        auto ? e('span', { style: { font: "600 9.5px 'JetBrains Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null);
+    const locRow = e('span', { key: 'loc', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 6, font: "500 11px 'Inter',system-ui,sans-serif", color: ink } },
       ro ? (ev.lat != null ? e('span', { key: 'll', style: { font: MONO } }, ev.lat + ', ' + ev.lng) : e('span', { key: 'll' }, 'No location'))
         : e('input', { key: 'll' + (ev.lat || ''), type: 'text', maxLength: 80, defaultValue: ev.lat != null ? ev.lat + ', ' + ev.lng : '', placeholder: 'latitude, longitude', 'aria-label': 'Mass outage location',
-          onBlur: ev2 => this.setMassLoc(P, i, ev, ev2.target.value), onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); }, style: { ...tin, width: 170, font: "500 11px 'IBM Plex Mono',ui-monospace,monospace" } }),
-      ev.lat != null ? e('button', { key: 'lc', type: 'button', onClick: () => this.onPan && this.onPan(ev.lat, ev.lng), style: { padding: '1px 8px', border: '1px solid ' + C.badLine, borderRadius: 3, background: C.white, color: ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Locate') : null,
+          onBlur: ev2 => this.setMassLoc(P, i, ev, ev2.target.value), onKeyDown: ev2 => { if (ev2.key === 'Enter') ev2.target.blur(); }, style: { ...tin, width: 170, font: "500 11px 'JetBrains Mono',ui-monospace,monospace" } }),
+      ev.lat != null ? e('button', { key: 'lc', type: 'button', onClick: () => this.onPan && this.onPan(ev.lat, ev.lng), style: { padding: '1px 8px', border: '1px solid ' + C.badLine, borderRadius: 3, background: C.white, color: ink, font: "600 11px 'Inter',system-ui,sans-serif", cursor: 'pointer' } }, 'Locate') : null,
       ev.lat != null && dv && dv.lat != null ? e('span', { key: 'tk', style: { font: MONO, color: this.metres(dv, ev) <= (+this.st.cfg.massM || 300) ? C.good : ink } },
         'tracker ' + (this.metres(dv, ev) >= 1000 ? nf1(this.metres(dv, ev) / 1000) + ' km' : this.metres(dv, ev) + ' m') + ' away' + (dv.last ? ' · ' + hm((d => d.getHours() * 60 + d.getMinutes())(new Date(dv.last))) : '')) : null);
-    const timesRow = ev.lat != null || arrived || ev.endAt != null ? e('span', { key: 'tm', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 10, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: ink } },
+    const timesRow = ev.lat != null || arrived || ev.endAt != null ? e('span', { key: 'tm', onMouseDown: ev2 => ev2.stopPropagation(), style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 10, font: "500 11px 'Inter',system-ui,sans-serif", color: ink } },
       tBox('ci', ev.ci, ev.ciAuto), tBox('co', ev.endAt, ev.coAuto)) : null;
-    const undo = ev.coUndo && ev.endAt == null ? e('span', { key: 'ud', style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: red } }, 'Back at the outage since ' + hm(ev.coUndo.back) + ' after leaving ' + hm(ev.coUndo.left)) : null;
-    const inner = [e('span', { key: 'w', style: { font: "700 12.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.18em', color: ink, paddingLeft: '0.18em' } }, 'MASS OUTAGE HANDLING'),
-      ev.note ? e('span', { key: 'n', style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, overflowWrap: 'anywhere' } }, ev.note) : null,
+    const undo = ev.coUndo && ev.endAt == null ? e('span', { key: 'ud', style: { font: "600 11px 'Inter',system-ui,sans-serif", color: red } }, 'Back at the outage since ' + hm(ev.coUndo.back) + ' after leaving ' + hm(ev.coUndo.left)) : null;
+    const inner = [e('span', { key: 'w', style: { font: "700 12.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.18em', color: ink, paddingLeft: '0.18em' } }, 'MASS OUTAGE HANDLING'),
+      ev.note ? e('span', { key: 'n', style: { font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink, overflowWrap: 'anywhere' } }, ev.note) : null,
       e('span', { key: 'r', style: { font: MONO, color: ink } }, hm(x.at) + '–' + hm(x.end) + ' · ' + dh(x.end - x.at) + ' · ' + st + (ev.by ? ' · ' + ev.by : '')),
       locRow, timesRow, undo, ctl, lateRow];
     if (row) return e('tr', { key: 'brk' + k }, e('td', { colSpan: span, style: { padding: '4px 8px', borderBottom: '1px solid ' + C.soft } }, e('div', { style: { ...box, padding: '7px 8px' } }, ...inner)));
@@ -2137,10 +2137,10 @@ class Dispatch {
   breakCard(e, x, k, row, span) {
     if (x.type === 'mass') return this.massCard(e, this._ctx && this._ctx.P, x, k, row, span);
     const b = this.breakLabel(x);
-    const bg = 'repeating-linear-gradient(135deg, #EEF1F5 0 8px, #E2E7EE 8px 16px)';
-    const inner = [e('span', { key: 'w', style: { font: "700 13px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.35em', color: '#2F3B4A', paddingLeft: '0.35em' } }, 'BREAK'),
-      e('span', { key: 'r', style: { font: MONO, color: '#4A5868' } }, b.range + ' · ' + b.st + (x.src === 'app' ? ' · technician app' : x.by ? ' · ' + x.by : ''))];
-    const box = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, textAlign: 'center', background: bg, border: '1px ' + (b.on ? 'solid' : 'dashed') + ' #5B6B80', borderLeft: '5px solid #5B6B80', borderRadius: 3 };
+    const bg = 'repeating-linear-gradient(135deg, var(--gx-sf2) 0 8px, var(--gx-ln) 8px 16px)';
+    const inner = [e('span', { key: 'w', style: { font: "700 13px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.35em', color: 'var(--gx-text)', paddingLeft: '0.35em' } }, 'BREAK'),
+      e('span', { key: 'r', style: { font: MONO, color: 'var(--gx-mut)' } }, b.range + ' · ' + b.st + (x.src === 'app' ? ' · technician app' : x.by ? ' · ' + x.by : ''))];
+    const box = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, textAlign: 'center', background: bg, border: '1px ' + (b.on ? 'solid' : 'dashed') + ' var(--gx-ln3)', borderLeft: '5px solid var(--gx-ln3)', borderRadius: 3 };
     if (row) return e('tr', { key: 'brk' + k }, e('td', { colSpan: span, style: { padding: '4px 8px', borderBottom: '1px solid ' + C.soft } }, e('div', { style: { ...box, padding: '6px 8px' } }, ...inner)));
     return e('div', { key: 'brk' + k, style: { ...box, padding: '8px 9px', marginBottom: 6, minHeight: 42 } }, ...inner);
   }
@@ -2228,16 +2228,16 @@ class Dispatch {
   timeBox(e, P, j, kind, bare) {
     const mt = this.st.meta[j.key] || {}, ek = kind + ':' + j.key, err = (this.ui.coErr || {})[ek];
     const t = kind === 'ci' ? this.ciOf(j) : this.coOf(j), val = t != null ? hm(t) : '', word = kind === 'ci' ? 'Check-in' : 'Check-out';
-    if (this.readOnly) return e('span', { key: kind, style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: val ? C.ink : C.muted } }, (bare ? '' : word + ' ') + (val || '—'));
+    if (this.readOnly) return e('span', { key: kind, style: { font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: val ? C.ink : C.muted } }, (bare ? '' : word + ' ') + (val || '—'));
     const commit = ev => { if (ev.target.value !== val) this.setTime(P, j, kind, ev.target.value); };
     const auto = kind === 'ci' ? mt.ciAuto : mt.coAuto;
     return e('span', { key: kind, style: { display: 'inline-flex', flexDirection: 'column', gap: 2 } },
-      e('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, bare ? null : word,
+      e('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, font: "500 11px 'Inter',system-ui,sans-serif", color: C.muted } }, bare ? null : word,
         e('input', { key: kind + '-' + val, type: 'text', inputMode: 'numeric', defaultValue: val, placeholder: 'hh:mm', maxLength: 5, 'aria-label': word + ' time', title: auto ? word + ' set automatically from tracker ' + auto.dev : word + ' time (hh:mm)',
           onMouseDown: ev => ev.stopPropagation(), onBlur: commit, onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); },
-          style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : !val && kind === 'ci' ? C.warnLine : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
-        auto ? e('span', { title: 'Set automatically from the tracker', style: { font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null),
-      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad, maxWidth: 160 } }, err) : null);
+          style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : !val && kind === 'ci' ? C.warnLine : C.line), borderRadius: 3, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
+        auto ? e('span', { title: 'Set automatically from the tracker', style: { font: "600 9.5px 'JetBrains Mono',ui-monospace,monospace", color: C.good } }, 'AUTO') : null),
+      err ? e('span', { style: { font: "500 10.5px 'Inter',system-ui,sans-serif", color: C.bad, maxWidth: 160 } }, err) : null);
   }
   coInput(e, P, j) { return this.timeBox(e, P, j, 'co'); }
   // Note on a work order, shared with every screen (kept with the WO until it is closed). Empty text removes it.
@@ -2251,7 +2251,7 @@ class Dispatch {
   // Note box: the full text on a pale yellow strip (who wrote it and when); click to edit. Viewers read it only.
   noteBox(e, j, where) {
     const mt = this.st.meta[j.key] || {}, txt = mt.note || '', ro = this.readOnly, editing = !ro && this.ui.noteEdit === j.key;
-    const small = "500 10px 'IBM Plex Mono',ui-monospace,monospace";
+    const small = "500 10px 'JetBrains Mono',ui-monospace,monospace";
     if (editing) {
       const commit = el => this.setNote(j, el.value);
       return e('div', { key: 'note', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 3, width: '100%' } },
@@ -2259,18 +2259,18 @@ class Dispatch {
           onInput: ev => { const c = ev.target.parentNode && ev.target.parentNode.querySelector('[data-cnt]'); if (c) c.textContent = ev.target.value.length + '/' + NOTE_MAX; },
           onKeyDown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); commit(ev.target); } if (ev.key === 'Escape') { this.ui.noteEdit = null; this.onChange(); } },
           onBlur: ev => commit(ev.target),
-          style: { width: '100%', boxSizing: 'border-box', resize: 'none', padding: '4px 6px', border: '1px solid ' + C.acc, borderRadius: 3, background: '#FFFDF3', color: C.ink, font: "400 11.5px/1.4 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } }),
+          style: { width: '100%', boxSizing: 'border-box', resize: 'none', padding: '4px 6px', border: '1px solid ' + C.acc, borderRadius: 3, background: 'var(--gx-acc-bg)', color: C.ink, font: "400 11.5px/1.4 'Inter',system-ui,sans-serif", outline: 'none' } }),
         e('span', { style: { display: 'flex', justifyContent: 'space-between', font: small, color: C.muted } },
           e('span', { 'data-cnt': '1' }, txt.length + '/' + NOTE_MAX), e('span', null, 'Enter saves · Esc cancels')));
     }
     if (!txt) return ro ? (where === 'list' ? e('span', { key: 'note', style: { color: C.muted } }, '—') : null)
       : e('button', { key: 'note', type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => { this.ui.noteEdit = j.key; this.onChange(); }, title: 'Add a note every dispatcher sees',
-        style: { alignSelf: 'flex-start', padding: '1px 7px', border: '1px dashed ' + C.line, borderRadius: 3, background: 'transparent', color: C.muted, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, '+ Note');
+        style: { alignSelf: 'flex-start', padding: '1px 7px', border: '1px dashed ' + C.line, borderRadius: 3, background: 'transparent', color: C.muted, font: "500 11px 'Inter',system-ui,sans-serif", cursor: 'pointer' } }, '+ Note');
     const at = mt.noteAt ? new Date(mt.noteAt) : null, today = at && ymd(at) === this.today();
     const when = at ? (today ? '' : at.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ') + pad(at.getHours()) + ':' + pad(at.getMinutes()) : '';
     return e('div', { key: 'note', onMouseDown: ev => ev.stopPropagation(), onClick: ro ? undefined : () => { this.ui.noteEdit = j.key; this.onChange(); }, title: ro ? undefined : 'Click to edit the note',
-      style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 7px', borderLeft: '3px solid ' + C.acc, borderRadius: 2, background: '#FFF8DB', cursor: ro ? 'default' : 'text' } },
-      e('span', { style: { font: "500 11.5px/1.4 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, txt),
+      style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 7px', borderLeft: '3px solid ' + C.acc, borderRadius: 2, background: 'var(--gx-acc-bg)', cursor: ro ? 'default' : 'text' } },
+      e('span', { style: { font: "500 11.5px/1.4 'Inter',system-ui,sans-serif", color: C.ink, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, txt),
       mt.noteBy || when ? e('span', { style: { font: small, color: C.accDeep } }, [mt.noteBy, when].filter(Boolean).join(' · ')) : null);
   }
   // Recalculate after a check-out (or other real progress): ETAs move, every job stays in its team at its place, and
@@ -2401,7 +2401,7 @@ class Dispatch {
   cxList(e, P) {
     const J = this._J, list = (J && J.cx || []).slice().sort((a, b) => ((this.st.meta[b.key] || {}).cx || {}).at - ((this.st.meta[a.key] || {}).cx || {}).at);
     if (!list.length) return null;
-    const open = !!this.ui.cxOpen, ro = this.readOnly, small = "500 11px 'IBM Plex Mono',ui-monospace,monospace";
+    const open = !!this.ui.cxOpen, ro = this.readOnly, small = "500 11px 'JetBrains Mono',ui-monospace,monospace";
     const when = t => { if (!t) return ''; const d = new Date(t); return (ymd(d) === this.today() ? '' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ') + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
     return e('div', { key: 'cx', style: { border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
       e('button', { type: 'button', onClick: () => { this.ui.cxOpen = !open; this.onChange(); }, 'aria-expanded': open,
@@ -2438,19 +2438,19 @@ class Dispatch {
     const BS = this._BS = this.bases(m, bi, J), B = BS[0];
     this.ensureRoad(J, B);
     this._ctx = { m, bi, B, name: m.branches[bi] };
-    const note = (title, text, tone) => ({ kpis: [], cards: [host.card(title, { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: tone || C.text } }, text) })] });
+    const note = (title, text, tone) => ({ kpis: [], cards: [host.card(title, { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'Inter',system-ui,sans-serif", color: tone || C.text } }, text) })] });
     // Wait for the shared plan before showing (or changing) anything, so this screen never starts from an old plan.
     if (this.api && !this.sh.ready) { this.shPoll(true); return note('Shared plan', 'Loading the shared ' + this.type + ' plan…', C.muted); }
     // Work orders could not be read from the CSV files: show nothing rather than plan from partial data, which would
     // remove work orders from the shared plan for everyone.
-    if (ctx.dataProblem) return note('Work orders not loaded', 'The work-order files could not be read on this screen, so the board is hidden to keep the shared plan safe. ' + ctx.dataProblem + ' Reload the page; if this stays, ask the dashboard admin.', C.bad || '#9B2C1F');
+    if (ctx.dataProblem) return note('Work orders not loaded', 'The work-order files could not be read on this screen, so the board is hidden to keep the shared plan safe. ' + ctx.dataProblem + ' Reload the page; if this stays, ask the dashboard admin.', C.bad || '#D9483B');
     this._devs = ctx.devices || null;
     const P = this.plan(m, bi, J, B);
     if (!P && this.stale) {
       const old = this.st.plans[m.branches[bi]] || {}, nJob = (old.teams || []).flat().length, nMan = Object.keys(old.manual || {}).length;
       const nConf = (old.teams || []).flat().filter(k => { const c = (this.st.meta[k] || {}).conf; return c && c !== 'none'; }).length;
       if (this.readOnly) return note('Shared plan', 'The last ' + this.type + ' plan for ' + (m.branches[bi] || 'this branch') + ' is for ' + this.fmtDay(this.stale) + '. The board appears as soon as a dispatcher confirms today\u2019s plan.', C.muted);
-      const P0 = { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: C.text };
+      const P0 = { margin: 0, font: "400 13px/1.6 'Inter',system-ui,sans-serif", color: C.text };
       const armed = this.ui.newArmed;
       const b = (label, fn, dark, extra) => e('button', { type: 'button', onClick: fn, style: { padding: '6px 12px', border: '1px solid ' + (dark ? C.ink : C.line), borderRadius: 3, background: dark ? C.ink : C.white, color: dark ? C.white : C.ink, font: SANS, cursor: 'pointer', ...(extra || {}) } }, label);
       return { kpis: [], cards: [host.card('Shared plan', { span: 12, body: e('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 } },
@@ -2486,10 +2486,10 @@ class Dispatch {
     const btn = (key, label, onClick, dark, extra) => e('button', { key, type: 'button', onClick,
       style: { padding: '5px 11px', border: '1px solid ' + (dark ? C.ink : C.line), borderRadius: 3, background: dark ? C.ink : C.white, color: dark ? C.white : C.ink, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none', ...(extra || {}) } }, label);
     const row = (label, kids, k) => e('div', { key: k || label, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 } },
-      e('span', { style: { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.muted, minWidth: 78 } }, label), ...kids);
+      e('span', { style: { font: "600 10.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.muted, minWidth: 78 } }, label), ...kids);
     const pill = (txt, tone, k) => {
-      const t = { bad: [C.badBg, C.bad, C.badLine], warn: [C.warnBg, C.warn, C.warnLine], vip: [C.vipBg, C.vip, '#D9CCF5'], good: [C.goodBg, C.good, '#C9DEC9'], acc: ['#FBF3D6', C.accDeep, '#EBD58A'] }[tone] || [C.bg, C.muted, C.line];
-      return e('span', { key: k, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, border: '1px solid ' + t[2], background: t[0], color: t[1], font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", whiteSpace: 'nowrap' } }, txt);
+      const t = { bad: [C.badBg, C.bad, C.badLine], warn: [C.warnBg, C.warn, C.warnLine], vip: [C.vipBg, C.vip, 'var(--gx-ln)'], good: [C.goodBg, C.good, 'var(--gx-ln)'], acc: ['var(--gx-acc-bg)', C.accDeep, 'var(--gx-warn-ln)'] }[tone] || [C.bg, C.muted, C.line];
+      return e('span', { key: k, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, border: '1px solid ' + t[2], background: t[0], color: t[1], font: "600 10.5px 'JetBrains Mono',ui-monospace,monospace", whiteSpace: 'nowrap' } }, txt);
     };
     const sw = (color, k, round) => e('span', { key: k, style: { width: 10, height: 10, borderRadius: round ? '50%' : 2, background: color, flex: 'none' } });
 
@@ -2525,7 +2525,7 @@ class Dispatch {
         e('span', { key: 'pd', style: { font: MONO, color: C.ink } }, this.fmtDay(P.date)),
         this.future(P) ? pill('Prepared ahead · kept as it is until Re-plan', 'acc', 'pf') : null,
         e('span', { key: 'pb', style: { font: SANS, color: C.muted } }, BS.length > 1 ? 'from ' + BS.length + ' bases' : 'from ' + B.name + (B.guess ? ' (approx.)' : '')),
-        this.readOnly ? e('span', { key: 'ro', style: { padding: '2px 8px', borderRadius: 3, background: C.soft, color: C.ink, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, 'View only') : null,
+        this.readOnly ? e('span', { key: 'ro', style: { padding: '2px 8px', borderRadius: 3, background: C.soft, color: C.ink, font: "600 11px 'Inter',system-ui,sans-serif" } }, 'View only') : null,
         this.readOnly ? null : btn('rp', armed ? 'Click again: rebuild the whole schedule (teams and order change)' : 'Re-plan (rebuild schedule)', () => this.replan(), true, armed ? { background: C.bad, borderColor: C.bad } : null),
         !this.readOnly && P.date === this.today() && this.nowMin() >= Math.max(...P.teams.map((t, i) => this.tend(i)), cfg.end) - 30
           ? e('span', { key: 'eve', style: { padding: '2px 8px', border: '1px solid ' + C.warnLine, borderRadius: 3, background: C.warnBg, color: C.warn, font: SANS } }, 'Planning tomorrow? Press Prepare plan first: this board is today\u2019s plan.') : null,
@@ -2597,7 +2597,7 @@ class Dispatch {
           e('span', { style: { position: 'relative', width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: 'rgba(140,140,136,.2)', border: '1.5px solid rgba(31,31,29,.25)' } },
             e('span', { style: { position: 'absolute', right: -6, top: -6, width: 10, height: 10, borderRadius: '50%', background: '#2B8A3E', color: '#FFFFFF', font: "700 7px sans-serif", lineHeight: '10px', textAlign: 'center' } }, '✓')), 'Checked out'),
         e('span', { key: 'lgr', style: { display: 'flex', alignItems: 'center', gap: 5, font: SANS, color: C.text } },
-          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: '#FCC419', border: '1.5px solid #1F1F1D', font: "700 9px sans-serif", lineHeight: '11px', textAlign: 'center', color: '#1F1F1D' } }, '↻'), 'Visited, customer asks to reschedule'),
+          e('span', { style: { width: 14, height: 14, boxSizing: 'border-box', borderRadius: 3, background: '#FCC419', border: '1.5px solid var(--gx-ink)', font: "700 9px sans-serif", lineHeight: '11px', textAlign: 'center', color: 'var(--gx-ink)' } }, '↻'), 'Visited, customer asks to reschedule'),
         e('span', { key: 'lgd', style: { font: SANS, color: C.muted } }, 'route lines appear once the road route is loaded'),
       ], 'lgd'),
       row('Opacity', [['cellA', 'Grid cells', 0.36], ['routeA', 'Route lines', 1]].map(([k, label, def]) => {
@@ -2757,15 +2757,15 @@ class Dispatch {
   heldBox(e, P) {
     const L = this.heldList(P); if (!L.length) return null;
     const ro = this.readOnly, open = !!this.ui.heldOpen;
-    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + C.warn, borderRadius: 3, background: solid ? C.warn : C.white, color: solid ? '#FFFFFF' : C.warn, font: "600 11.5px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
+    const btn = (key, label, onClick, solid) => e('button', { key, type: 'button', onClick, style: { padding: '3px 9px', border: '1px solid ' + C.warn, borderRadius: 3, background: solid ? C.warn : C.white, color: solid ? '#FFFFFF' : C.warn, font: "600 11.5px 'Inter',system-ui,sans-serif", cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
     const nCo = L.filter(x => x.kind === 'co').length;
     return e('div', { key: 'heldbox', style: { border: '1px solid ' + C.warn, borderRadius: 4, background: C.white, padding: '6px 12px' } },
       e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.warn } }, 'WO TERTAHAN · ' + L.length + ' WO open di data tapi tidak ada di plan' + (nCo ? ' (' + nCo + ' sudah di-check-out di IDS)' : '')),
+        e('span', { style: { font: "600 12.5px 'Inter',system-ui,sans-serif", color: C.warn } }, 'WO TERTAHAN · ' + L.length + ' WO open di data tapi tidak ada di plan' + (nCo ? ' (' + nCo + ' sudah di-check-out di IDS)' : '')),
         btn('tg', open ? 'Sembunyikan' : 'Lihat alasannya', () => { this.ui.heldOpen = !open; this.onChange(); })),
       open ? e('div', { style: { marginTop: 4 } }, ...L.sort((a, b) => this.cmp(a.j, b.j)).map(x => e('div', { key: x.j.key, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', padding: '6px 0', borderTop: '1px solid ' + C.soft } },
-        e('span', { style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, x.j.wo),
-        e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (x.j.uid || x.j.name || '—') + ' · CID ' + x.j.cid),
+        e('span', { style: { font: "600 12.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, minWidth: 150 } }, x.j.wo),
+        e('span', { style: { font: "600 12.5px 'Inter',system-ui,sans-serif", color: C.ink, minWidth: 120 } }, (x.j.uid || x.j.name || '—') + ' · CID ' + x.j.cid),
         e('span', { style: { font: SANS, color: C.text, flex: '1 1 320px' } }, x.reasons.join(' ')),
         ro ? null : btn('in', 'Masukkan ke IDS', () => this.forceIn({ w: { wo: x.j.wo }, cid: x.j.cid, uid: x.j.uid, name: x.j.name, area: x.j.area, can: true, reasons: x.reasons, held: true }), true)))) : null);
   }
@@ -2806,7 +2806,7 @@ class Dispatch {
       e('div', { style: { padding: '6px 10px', font: SANS, color: C.muted, borderBottom: '1px solid ' + C.line } }, head + ' Penjelasannya:'),
       ...L.map(dg => e('div', { key: dg.cid, style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid ' + C.line } },
         e('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 300px' } },
-          e('span', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, [dg.uid || '—', 'CID ' + dg.cid, dg.name, dg.w ? dg.w.wo : null].filter(Boolean).join(' · ')),
+          e('span', { style: { font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink } }, [dg.uid || '—', 'CID ' + dg.cid, dg.name, dg.w ? dg.w.wo : null].filter(Boolean).join(' · ')),
           dg.inIds ? e('span', { style: { font: SANS, color: C.good } }, 'Sudah ada di IDS.') : null,
           ...dg.reasons.map((r, n) => e('span', { key: n, style: { font: SANS, color: dg.loading ? C.muted : C.bad } }, '• ' + r))),
         !ro && dg.can && !dg.loading ? e('button', { type: 'button', onClick: () => this.forceIn(dg), title: 'Masukkan WO ini ke IDS walaupun tidak memenuhi syarat. Berlaku sampai WO closed di data.',
@@ -2817,7 +2817,7 @@ class Dispatch {
     const x = this._ctx, t = x && x.m && x.m.woUpdated; if (!t) return null;
     const d = new Date(t), age = (Date.now() - t) / 3600e3, old = age >= 2;
     const txt = 'File WO terakhir di-upload ' + d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' (' + (age < 1 ? Math.max(1, Math.round(age * 60)) + ' menit' : Math.floor(age) + ' jam') + ' lalu)' + (old ? '. WO yang dibuat setelah itu belum masuk: upload ulang file WO.' : '.');
-    return e('div', { key: 'wf', style: { padding: '4px 2px 0', font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: old ? C.warn : C.muted } }, txt);
+    return e('div', { key: 'wf', style: { padding: '4px 2px 0', font: "500 11px 'Inter',system-ui,sans-serif", color: old ? C.warn : C.muted } }, txt);
   }
   // Drag handle (2026-11-19): a WO card or row is moved only by dragging this grip, so its text can be selected and
   // copied like normal text. The whole card or row is shown as the drag image. Move to stays available.
@@ -2832,7 +2832,7 @@ class Dispatch {
         } catch (x) {}
       },
       onDragEnd: () => { if (this.ui.drag || this.ui.drop) { this.ui.drag = null; this.ui.drop = null; this.onChange(); } },
-      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, minWidth: 18, height: 22, marginRight: 2, borderRadius: 3, background: C.soft, color: C.muted, cursor: 'grab', font: "700 13px 'IBM Plex Mono',ui-monospace,monospace", lineHeight: 1, userSelect: 'none', flex: 'none' } }, '⠿');
+      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, minWidth: 18, height: 22, marginRight: 2, borderRadius: 3, background: C.soft, color: C.muted, cursor: 'grab', font: "700 13px 'JetBrains Mono',ui-monospace,monospace", lineHeight: 1, userSelect: 'none', flex: 'none' } }, '⠿');
   }
   // Scroll the board (or list) to a job and outline it for a few seconds.
   showOnBoard(j) {
@@ -2845,7 +2845,7 @@ class Dispatch {
     const toneC = { good: C.good, acc: C.accDeep, bad: C.bad, warn: C.warn, done: C.muted };
     const input = e('input', { key: 'fq', type: 'search', value: q, placeholder: 'Find a customer: CID, user ID, WO, name…', 'aria-label': 'Find a customer in today\u2019s plan',
       onChange: ev => { this.ui.findQ = ev.target.value; this.onChange(); }, onKeyDown: ev => { if (ev.key === 'Escape') { this.ui.findQ = ''; this.onChange(); } if (ev.key === 'Enter' && hits[0] && hits[0].at) this.showOnBoard(hits[0].j); },
-      style: { width: '100%', boxSizing: 'border-box', padding: '7px 10px', border: '1px solid ' + (tq ? C.ink : C.line), borderRadius: 3, background: C.white, color: C.ink, font: "500 13px 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } });
+      style: { width: '100%', boxSizing: 'border-box', padding: '7px 10px', border: '1px solid ' + (tq ? C.ink : C.line), borderRadius: 3, background: C.white, color: C.ink, font: "500 13px 'Inter',system-ui,sans-serif", outline: 'none' } });
     const res = tq.length < 2 ? null : !hits.length
       ? this.diagBox(e)
       : e('div', { key: 'rs', style: { border: '1px solid ' + C.line, borderTop: 'none', background: C.white, maxHeight: 380, overflowY: 'auto' } },
@@ -2855,15 +2855,15 @@ class Dispatch {
             : h.nx >= 0 ? 'Deferred to H+1 · ' + ({ customer: 'customer request', pending: 'Pending (rescheduled)', manual: 'added by hand, no location' }[P.why[j.key]] || 'internal reason') : 'Not in today\u2019s plan';
           return e('div', { key: j.key, style: { display: 'grid', gridTemplateColumns: 'minmax(170px,1.1fr) minmax(190px,1.3fr) minmax(150px,1fr) auto', gap: '4px 12px', alignItems: 'center', padding: '8px 10px', borderTop: '1px solid ' + C.soft, borderLeft: '4px solid ' + ug.c } },
             e('div', { style: { minWidth: 0 } },
-              e('div', { style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (j.uid || '—') + ' · CID ' + j.cid),
+              e('div', { style: { font: "600 13px 'Inter',system-ui,sans-serif", color: C.ink } }, (j.uid || '—') + ' · CID ' + j.cid),
               e('div', { style: { font: MONO, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, j.wo + ' · ' + (j.name || '—') + (j.area ? ' · ' + j.area : ''))),
             e('div', { style: { minWidth: 0 } },
-              e('div', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: h.at ? C.ink : h.nx >= 0 ? C.warn : C.muted } }, where),
+              e('div', { style: { font: "600 12px 'Inter',system-ui,sans-serif", color: h.at ? C.ink : h.nx >= 0 ? C.warn : C.muted } }, where),
               e('div', { style: { font: MONO, color: C.muted } }, j.cat + ' · ' + j.tier + ' · ' + ug.label + (mt.conf && mt.conf !== 'none' ? ' · customer: ' + CONF[mt.conf] : ''))),
             e('div', { style: { minWidth: 0 } },
-              e('div', { style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: toneC[st.tone] || C.text } }, st.label),
+              e('div', { style: { font: "600 12px 'Inter',system-ui,sans-serif", color: toneC[st.tone] || C.text } }, st.label),
               e('div', { style: { font: MONO, color: C.muted } }, st.t),
-              mt.note ? e('div', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.accDeep, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: mt.note }, 'Note: ' + mt.note) : null),
+              mt.note ? e('div', { style: { font: "500 11px 'Inter',system-ui,sans-serif", color: C.accDeep, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: mt.note }, 'Note: ' + mt.note) : null),
             e('div', { style: { display: 'flex', gap: 4 } },
               h.at || h.nx >= 0 ? e('button', { type: 'button', onClick: () => this.showOnBoard(j), style: { padding: '3px 9px', border: '1px solid ' + C.ink, borderRadius: 3, background: C.ink, color: C.white, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap' } }, 'Show on board') : null,
               j.forced && !this.readOnly ? e('button', { type: 'button', onClick: () => this.forceOut(P, j), title: 'Keluarkan lagi WO yang tadi dimasukkan manual', style: { padding: '3px 9px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.bad, font: SANS, cursor: 'pointer' } }, 'Keluarkan') : null,
@@ -2938,7 +2938,7 @@ class Dispatch {
   arrivals(m, ctx) {
     const R = this.R, e = R.createElement, host = ctx.host;
     const bi = this.branchIdx(m, ctx.hostBi), name = m.branches[bi];
-    const note = (text, tone) => ({ kpis: [], cards: [host.card(this.type + ' arrivals board', { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'IBM Plex Sans',system-ui,sans-serif", color: tone || C.muted } }, text) })] });
+    const note = (text, tone) => ({ kpis: [], cards: [host.card(this.type + ' arrivals board', { span: 12, body: e('p', { style: { margin: 0, font: "400 13px/1.6 'Inter',system-ui,sans-serif", color: tone || C.muted } }, text) })] });
     if (this.api && !this.sh.ready) { this.shPoll(true); return note('Loading the shared ' + this.type + ' plan…'); }
     if (ctx.dataProblem) return note('The work-order files could not be read on this screen. ' + ctx.dataProblem, C.bad);
     const J = this._J = this.jobs(m, bi), BS = this._BS = this.bases(m, bi, J), B = BS[0];
@@ -2983,24 +2983,24 @@ class Dispatch {
     if ((this.ui.arrPage || 0) >= pages) this.ui.arrPage = 0;
     const pg = this.ui.arrPage || 0, shown = list.slice(pg * per, pg * per + per);
     // ---------- view ----------
-    const MONO12 = "600 12px 'IBM Plex Mono',ui-monospace,monospace";
+    const MONO12 = "600 12px 'JetBrains Mono',ui-monospace,monospace";
     const sel = (key, label, val, opts, on) => e('label', { key, style: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 4px 4px 10px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white } },
-      e('span', { style: { font: "600 10px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.muted } }, label),
-      e('select', { value: val, onChange: ev => on(ev.target.value), 'aria-label': label, style: { border: 'none', background: 'transparent', color: C.ink, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", padding: '2px 4px', cursor: 'pointer', maxWidth: 190 } },
+      e('span', { style: { font: "600 10px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.muted } }, label),
+      e('select', { value: val, onChange: ev => on(ev.target.value), 'aria-label': label, style: { border: 'none', background: 'transparent', color: C.ink, font: "600 12px 'Inter',system-ui,sans-serif", padding: '2px 4px', cursor: 'pointer', maxWidth: 190 } },
         ...opts.map(([k, v]) => e('option', { key: k, value: k }, v))));
     const btn = (key, label, on, dark, title) => e('button', { key, type: 'button', onClick: on, title, style: { padding: '5px 11px', border: '1px solid ' + (dark ? C.ink : C.line), borderRadius: 3, background: dark ? C.ink : C.white, color: dark ? C.white : C.ink, font: SANS, cursor: 'pointer', whiteSpace: 'nowrap' } }, label);
     const areas = [...new Set(rows.map(areaOf))].sort();
     const d = new Date(), clock = pad(d.getHours()) + ':' + pad(d.getMinutes());
     const head = e('div', { key: 'hd', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', background: C.ink, color: C.white, borderRadius: '3px 3px 0 0', borderBottom: '3px solid ' + C.acc } },
       e('div', null,
-        e('div', { style: { font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.16em', textTransform: 'uppercase', color: C.acc } }, (this.type === 'WCM' ? 'WCM maintenance' : 'WWR wiredown') + ' · ' + name),
-        e('div', { style: { font: "600 20px 'IBM Plex Sans',system-ui,sans-serif", letterSpacing: '0.02em' } }, 'Technician arrivals')),
+        e('div', { style: { font: "600 10.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.16em', textTransform: 'uppercase', color: C.acc } }, (this.type === 'WCM' ? 'WCM maintenance' : 'WWR wiredown') + ' · ' + name),
+        e('div', { style: { font: "600 20px 'Inter',system-ui,sans-serif", letterSpacing: '0.02em' } }, 'Technician arrivals')),
       e('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
-        e('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 7, font: "600 11px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.12em' } },
-          e('span', { style: { width: 9, height: 9, borderRadius: '50%', background: this.sh.err ? C.bad : C.acc, boxShadow: '0 0 0 3px rgba(232,180,0,.25)' } }), this.sh.err ? 'RECONNECTING' : 'LIVE'),
+        e('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 7, font: "600 11px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.12em' } },
+          e('span', { style: { width: 9, height: 9, borderRadius: '50%', background: this.sh.err ? C.bad : C.acc, boxShadow: '0 0 0 3px rgba(249,201,0,.25)' } }), this.sh.err ? 'RECONNECTING' : 'LIVE'),
         e('div', { style: { textAlign: 'right' } },
-          e('div', { style: { font: "600 24px 'IBM Plex Mono',ui-monospace,monospace", lineHeight: 1 } }, clock),
-          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: '#B8B8B3' } }, this.fmtDay(P.date)))));
+          e('div', { style: { font: "600 24px 'JetBrains Mono',ui-monospace,monospace", lineHeight: 1 } }, clock),
+          e('div', { style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: '#B8B8B3' } }, this.fmtDay(P.date)))));
     const ctrl = e('div', { key: 'ct', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', background: C.paper, borderLeft: '1px solid ' + C.line, borderRight: '1px solid ' + C.line } },
       sel('so', 'Sort', pr.sort, [['eta', 'ETA, earliest first'], ['status', 'Status, then ETA'], ['team', 'Team route order']], v => this.setArr({ sort: v })),
       sel('tm', 'Team', pr.team, [['all', 'All teams']].concat(T.map((t, i) => t.rows.length ? [String(i), this.tn(i)] : null).filter(Boolean)), v => this.setArr({ team: v })),
@@ -3008,39 +3008,39 @@ class Dispatch {
       sel('ar', 'Area', pr.area, [['all', 'All areas']].concat(areas.map(a => [a, a])), v => this.setArr({ area: v })),
       e('span', { key: 'sp', style: { flex: 1 } }),
       e('button', { key: 'pp', type: 'button', title: this.ui.arrPause ? 'Resume page turning' : 'Pause page turning', onClick: () => { this.ui.arrPause = !this.ui.arrPause; this._arrAt = Date.now(); this.onChange(); },
-        style: { width: 32, height: 30, border: '1px solid ' + C.acc, borderRadius: 3, background: this.ui.arrPause ? C.acc : '#FBF3D6', color: C.ink, font: "700 12px 'IBM Plex Mono',ui-monospace,monospace", cursor: 'pointer' } }, this.ui.arrPause ? '▶' : 'II'),
-      e('label', { key: 'sc', style: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Next page every',
+        style: { width: 32, height: 30, border: '1px solid ' + C.acc, borderRadius: 3, background: this.ui.arrPause ? C.acc : 'var(--gx-acc-bg)', color: C.ink, font: "700 12px 'JetBrains Mono',ui-monospace,monospace", cursor: 'pointer' } }, this.ui.arrPause ? '▶' : 'II'),
+      e('label', { key: 'sc', style: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, font: "500 11px 'Inter',system-ui,sans-serif", color: C.muted } }, 'Next page every',
         e('input', { key: 'sec' + pr.sec, type: 'number', min: 5, max: 300, step: 5, defaultValue: pr.sec, 'aria-label': 'Seconds per page', onBlur: ev => { const v = Math.round(+ev.target.value); if (v >= 5 && v <= 300 && v !== pr.sec) this.setArr({ sec: v }); }, onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); },
           style: { width: 46, padding: '2px 4px', border: '1px solid ' + C.line, borderRadius: 3, font: MONO12, color: C.ink, textAlign: 'center' } }), 's'),
       sel('rw', 'Rows', String(pr.rows), [['auto', 'Fit screen'], ['10', '10'], ['15', '15'], ['20', '20'], ['25', '25']], v => this.setArr({ rows: v })),
-      e('span', { key: 'cnt', style: { padding: '6px 10px', borderRadius: 3, background: C.acc, color: C.ink, font: MONO12 } }, fmtN(list.length) + ' WO'),
+      e('span', { key: 'cnt', style: { padding: '6px 10px', borderRadius: 3, background: C.acc, color: C.onAcc, font: MONO12 } }, fmtN(list.length) + ' WO'),
       btn('fs', fs ? 'Exit TV mode' : 'TV mode', () => { try { if (fs) document.exitFullscreen(); else { const el = document.getElementById('ids-arr-' + this.type); if (el && el.requestFullscreen) el.requestFullscreen(); } } catch (x) {} }, true, 'Full screen for a TV'));
-    const th = { padding: '9px 12px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink, textAlign: 'left', background: C.acc, whiteSpace: 'nowrap' };
+    const th = { padding: '9px 12px', font: "600 10.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink, textAlign: 'left', background: C.acc, whiteSpace: 'nowrap' };
     const toneC = { good: C.good, acc: C.accDeep, bad: C.bad, warn: C.warn, done: C.muted };
     const dot = { good: '#2E7D4F', acc: C.acc, bad: C.bad, warn: '#D09A1C', done: '#9A9A95' };
     const td = { padding: '9px 12px', borderBottom: '1px solid ' + C.soft, verticalAlign: 'middle' };
     const body = shown.map(x => {
       const j = x.j, r = x.r, ug = URG[r.urg] || URG.blue, isNext = next && next.j.key === j.key, done = x.st.rank === 3;
-      return e('tr', { key: j.key, style: { background: isNext ? '#FFFBEA' : done ? C.paper : C.white, opacity: done ? 0.72 : 1 } },
+      return e('tr', { key: j.key, style: { background: isNext ? 'var(--gx-acc-bg)' : done ? C.paper : C.white, opacity: done ? 0.72 : 1 } },
         e('td', { style: { ...td, borderLeft: '5px solid ' + (isNext ? C.acc : done ? C.line : ug.c) } },
           e('div', { style: { display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0 8px' } },
-            e('span', { style: { font: "600 15px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, j.uid || j.name || '—'),
-            e('span', { style: { padding: '0 5px', border: '1px solid ' + C.line, borderRadius: 2, font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, 'CID'),
+            e('span', { style: { font: "600 15px 'Inter',system-ui,sans-serif", color: C.ink } }, j.uid || j.name || '—'),
+            e('span', { style: { padding: '0 5px', border: '1px solid ' + C.line, borderRadius: 2, font: "600 9.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, 'CID'),
             e('span', { style: { font: MONO12, color: C.text } }, j.cid)),
-          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, j.wo + ' · ' + j.cat + ' · ' + j.tier)),
+          e('div', { style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, j.wo + ' · ' + j.cat + ' · ' + j.tier)),
         e('td', { style: td },
-          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 13.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } },
+          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 13.5px 'Inter',system-ui,sans-serif", color: C.ink } },
             e('span', { style: { width: 10, height: 10, borderRadius: 2, flex: 'none', background: this.pal[x.i % this.pal.length] } }), this.tn(x.i)),
-          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, 'stop ' + (x.n + 1) + ' of ' + T[x.i].rows.length)),
+          e('div', { style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, 'stop ' + (x.n + 1) + ' of ' + T[x.i].rows.length)),
         e('td', { style: td },
-          e('div', { style: { font: "600 17px 'IBM Plex Mono',ui-monospace,monospace", color: done ? C.muted : C.ink } }, hm(r.arr), isNext ? e('span', { style: { marginLeft: 8, padding: '1px 6px', borderRadius: 2, background: C.acc, color: C.ink, font: "700 10px 'IBM Plex Mono',ui-monospace,monospace", verticalAlign: 'middle' } }, 'NEXT') : null),
-          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, (this.ciOf(j) != null ? 'arrived · ' : 'ETA · ') + this.fmtDay(P.date, true))),
+          e('div', { style: { font: "600 17px 'JetBrains Mono',ui-monospace,monospace", color: done ? C.muted : C.ink } }, hm(r.arr), isNext ? e('span', { style: { marginLeft: 8, padding: '1px 6px', borderRadius: 2, background: C.acc, color: C.onAcc, font: "700 10px 'JetBrains Mono',ui-monospace,monospace", verticalAlign: 'middle' } }, 'NEXT') : null),
+          e('div', { style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, (this.ciOf(j) != null ? 'arrived · ' : 'ETA · ') + this.fmtDay(P.date, true))),
         e('td', { style: td },
-          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.04em', textTransform: 'uppercase', color: toneC[x.st.tone] || C.text } },
+          e('div', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.04em', textTransform: 'uppercase', color: toneC[x.st.tone] || C.text } },
             e('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: 'none', background: dot[x.st.tone] || C.line } }), x.st.label),
-          e('div', { style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, x.st.t || '—')),
-        e('td', { style: { ...td, whiteSpace: 'nowrap' } }, e('span', { title: ug.tip, style: { padding: '2px 8px', borderRadius: 3, background: done ? C.soft : ug.c, color: done ? C.muted : C.white, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif" } }, done ? 'Done' : ug.label)),
-        e('td', { style: { ...td, textAlign: 'right' } }, e('span', { style: { display: 'inline-block', padding: '4px 10px', border: '1.5px solid ' + C.ink, borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: areaOf(x) }, areaOf(x))));
+          e('div', { style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, x.st.t || '—')),
+        e('td', { style: { ...td, whiteSpace: 'nowrap' } }, e('span', { title: ug.tip, style: { padding: '2px 8px', borderRadius: 3, background: done ? C.soft : ug.c, color: done ? C.muted : C.white, font: "600 11px 'Inter',system-ui,sans-serif" } }, done ? 'Done' : ug.label)),
+        e('td', { style: { ...td, textAlign: 'right' } }, e('span', { style: { display: 'inline-block', padding: '4px 10px', border: '1.5px solid ' + C.ink, borderRadius: 3, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: areaOf(x) }, areaOf(x))));
     });
     const table = e('div', { key: 'tb', style: { overflowX: 'auto', border: '1px solid ' + C.line, borderTop: 'none', background: C.white } },
       e('table', { style: { width: '100%', minWidth: 860, borderCollapse: 'collapse' } },
@@ -3055,7 +3055,7 @@ class Dispatch {
       e('span', { style: { font: MONO, color: C.ink } }, (this.ui.arrPause ? 'Paused' : 'Auto · ' + pr.sec + ' s') + ' · page ' + (pg + 1) + ' / ' + pages));
     const wrap = e('div', { id: 'ids-arr-' + this.type, style: { display: 'flex', flexDirection: 'column', background: fs ? C.bg : 'transparent', padding: fs ? 18 : 0, minHeight: fs ? '100vh' : 0, boxSizing: 'border-box', overflowY: fs ? 'auto' : 'visible' } },
       head, ctrl, table, foot,
-      e('div', { key: 'nt', style: { marginTop: 8, font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } },
+      e('div', { key: 'nt', style: { marginTop: 8, font: "500 11px 'Inter',system-ui,sans-serif", color: C.muted } },
         'Read only: follows the shared ' + this.type + ' plan of the dispatchers within about 10 seconds. ETA = planned arrival on the current route (arrival time once checked in). Sort, filters, page time and rows are kept on this screen only.'));
     if (!this._fsHook && typeof document !== 'undefined') { this._fsHook = true; document.addEventListener('fullscreenchange', () => this.onChange()); window.addEventListener('resize', () => { if (this.arrOn) this.onChange(); }); }
     return { kpis: fs ? [] : kpis, cards: [host.card(this.type + ' arrivals board', { span: 12, meta: fmtN(rows.length) + ' WO today · ' + done + ' done', body: wrap })] };
@@ -3063,7 +3063,7 @@ class Dispatch {
 
   /* ---------- layout toggle (Google Drive style) and list layout ---------- */
   layoutToggle(e) {
-    const blue = '#0B57D0', icon = paths => e('svg', { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': 'true', style: { display: 'block' } }, ...paths.map((d, i) => e('path', { key: i, d, fill: 'currentColor' })));
+    const blue = '#2F6FE0', icon = paths => e('svg', { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': 'true', style: { display: 'block' } }, ...paths.map((d, i) => e('path', { key: i, d, fill: 'currentColor' })));
     const LIST = ['M3 7h18v2H3zM3 11h18v2H3zM3 15h18v2H3z'], GRID = ['M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'], CHECK = ['M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z'];
     const seg = (v, label, ic, first) => {
       const on = (this.ui.layout || 'board') === v;
@@ -3076,7 +3076,7 @@ class Dispatch {
   }
   // One table: a section per team (header with hub, shift, tracker and totals), one row per job in route order, H+1 last.
   listView(e, P, T, B, pill, col) {
-    const J = this._J, ro = this.readOnly, th = { padding: '6px 6px', font: "600 10.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, textAlign: 'left', borderBottom: '1px solid ' + C.line, whiteSpace: 'nowrap', background: C.paper, position: 'sticky', top: 0, zIndex: 1 };
+    const J = this._J, ro = this.readOnly, th = { padding: '6px 6px', font: "600 10.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, textAlign: 'left', borderBottom: '1px solid ' + C.line, whiteSpace: 'nowrap', background: C.paper, position: 'sticky', top: 0, zIndex: 1 };
     const heads = ['#', 'Work order', 'Customer', 'Job', 'Priority', 'ETA', 'Drive', 'Customer status', 'Technician', 'Check-in', 'Check-out', ''];
     const rows = [];
     const drop = this.ui.drop;
@@ -3086,7 +3086,7 @@ class Dispatch {
       rows.push(e('tr', { key: 'h' + id, onDragOver, onDrop },
         e('td', { colSpan: heads.length, style: { padding: '10px 8px 6px', borderTop: '2px solid ' + (drop && drop.col === id ? C.ink : C.line), background: warn ? C.warnBg : C.white } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' } },
-            e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.ink } },
+            e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.06em', textTransform: 'uppercase', color: C.ink } },
               e('span', { style: { width: 10, height: 10, borderRadius: warn ? '50%' : 2, background: warn ? 'transparent' : color, border: warn ? '2px solid ' + color : 'none', boxSizing: 'border-box' } }), title),
             ...info))));
     };
@@ -3126,8 +3126,8 @@ class Dispatch {
       onDragOver: ev => { if (!this.ui.drag) return; ev.preventDefault(); const b = ev.currentTarget.getBoundingClientRect(); this.setDrop(colId, ev.clientY < b.top + b.height / 2 ? idx : idx + 1); },
       onDrop: ev => { ev.preventDefault(); const k = this.ui.drag, d = this.ui.drop; this.ui.drag = null; this.ui.drop = null; if (k && d) this.move(P, k, d.col, d.idx); else this.onChange(); },
       style: { background: ug.bg, opacity: this.ui.drag === j.key ? 0.4 : 1, cursor: 'auto', boxShadow: line ? 'inset 0 3px 0 ' + C.acc : 'none', outline: this.ui.hl === j.key ? '3px solid ' + C.acc : 'none', outlineOffset: -3 } },
-      td('n', [this.grip(e, j, !lk && !ro), colId === 'next' ? '—' : String(idx + 1)], { borderLeft: '5px solid ' + ug.c, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, width: 46, whiteSpace: 'nowrap' }),
-      td('wo', [e('div', { key: 'a', style: { font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' } }, j.wo),
+      td('n', [this.grip(e, j, !lk && !ro), colId === 'next' ? '—' : String(idx + 1)], { borderLeft: '5px solid ' + ug.c, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, width: 46, whiteSpace: 'nowrap' }),
+      td('wo', [e('div', { key: 'a', style: { font: "600 12.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' } }, j.wo),
         e('div', { key: 'b', style: { font: MONO, color: C.muted, whiteSpace: 'nowrap' } }, (j.uid || '—') + ' · CID ' + j.cid)]),
       td('cu', [e('div', { key: 'a', style: { color: C.ink } }, j.name || '—'), e('div', { key: 'b', style: { color: C.muted, fontSize: 11.5 } }, [j.area, j.prob].filter(Boolean).join(' · ')),
         ...flags.slice(0, 3).map((f, k) => e('div', { key: 'f' + k, style: { fontSize: 11, fontWeight: 600, color: f[0] === 'bad' ? C.bad : f[0] === 'good' ? C.good : f[0] === 'info' ? C.muted : C.warn } }, f[1])),
@@ -3137,10 +3137,10 @@ class Dispatch {
       td('jb', [e('div', { key: 'c' }, j.cat), e('div', { key: 'd', style: { font: MONO, color: C.muted } }, nf1(this.dur(j) / 60).replace('.0', '') + ' h')], { minWidth: 80 }),
       td('pr', e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
         this.newBadge(e, P, j),
-        e('span', { key: 'u', title: ug.tip, style: { padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif", whiteSpace: 'nowrap' } }, ug.label),
+        e('span', { key: 'u', title: ug.tip, style: { padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'Inter',system-ui,sans-serif", whiteSpace: 'nowrap' } }, ug.label),
         pill(j.tier, j.tier === 'VIP' ? 'vip' : j.tier === 'Highest' || j.tier === 'High' ? 'acc' : null, 't'),
         e('span', { key: 's', style: { font: MONO, color: C.ink } }, fmtN(this.score(j))))),
-      td('eta', r ? [e('div', { key: 'a', style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
+      td('eta', r ? [e('div', { key: 'a', style: { font: "600 13px 'JetBrains Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
         e('div', { key: 'b', style: { font: MONO, color: co != null ? C.good : C.muted } }, '→ ' + hm(r.end) + (co != null ? ' ✓' : ''))]
         : (ro ? (P.why[j.key] === 'customer' ? 'Customer request' : 'Internal') : sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request', pending: 'Pending · rescheduled', manual: 'Added by hand · no location' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason')), { whiteSpace: 'nowrap' }),
       td('dr', r ? e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, whiteSpace: 'nowrap' } }, (r.road ? '+' : '~') + r.hop + ' min', e('br'), nf1(r.d) + ' km') : '—'),
@@ -3208,7 +3208,7 @@ class Dispatch {
       this.devs() ? (dv => e('span', { key: 'trk', title: dv ? this.devLabel(dv) : 'Assign a tracker in Teams & crew', style: { color: !dv ? C.muted : dv.state === 'online' ? C.good : dv.state === 'stale' ? C.warn : C.bad } },
         dv ? '· tracker ' + dv.name + ' · ' + dv.state + (dv.last ? ' ' + dh((Date.now() - dv.last) / 60000) + ' ago' : '') : '· no tracker'))(this.trackerOf(n)) : null,
       (a => a ? e('span', { key: 'tga', title: 'Tracker dipasang otomatis ' + hm((d => d.getHours() * 60 + d.getMinutes())(new Date(a.at))) + ': berhenti ' + a.m + ' m dari ' + a.wo + ' (' + a.why + ')' + (a.from != null ? ', sebelumnya di ' + this.tn(a.from) : '') + '. Ubah di Teams & crew kalau salah.',
-        style: { padding: '0 5px', borderRadius: 3, background: C.good, color: '#FFFFFF', font: "600 9.5px 'IBM Plex Mono',ui-monospace,monospace" } }, 'AUTO') : null)(this.autoTagOf(P, n)),
+        style: { padding: '0 5px', borderRadius: 3, background: C.good, color: '#FFFFFF', font: "600 9.5px 'JetBrains Mono',ui-monospace,monospace" } }, 'AUTO') : null)(this.autoTagOf(P, n)),
       (w => w ? e('span', { key: 'wa', title: w.others.length ? 'Area lain: ' + w.others.join(', ') : 'Semua WO di area ini', style: { color: C.ink, fontWeight: 600 } },
         '· Working area: ' + w.name + ' (' + w.n + '/' + w.total + ' WO' + (w.others.length ? ', +' + w.others.length + ' area' : '') + ')') : null)(this.workArea(P, n)));
   }
@@ -3220,18 +3220,18 @@ class Dispatch {
     const form = open ? (() => {
       const now = Math.floor(this.nowMin()), def = hm(Math.max(this.tstart(n), Math.min(now, this.tend(n) - 1)));
       const go = el => this.startBreak(P, n, el.value);
-      return e('div', { key: 'bf', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #5B6B80', borderRadius: 3, background: '#EEF1F5' } },
-        e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: '#2F3B4A' } }, 'Break starts',
+      return e('div', { key: 'bf', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid var(--gx-ln3)', borderRadius: 3, background: 'var(--gx-sf2)' } },
+        e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: 'var(--gx-text)' } }, 'Break starts',
           e('input', { key: 'bt' + n, type: 'text', inputMode: 'numeric', defaultValue: def, maxLength: 5, autoFocus: true, placeholder: 'hh:mm', 'aria-label': 'Break start time',
             onInput: ev => { const mm = /^(\d{1,2})[:.](\d{2})$/.exec(ev.target.value.trim()), o = ev.target.parentNode.querySelector('[data-end]'); if (o) o.textContent = mm ? '→ back ' + hm(+mm[1] * 60 + +mm[2] + len) : ''; },
             onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.brkFor = null; this.onChange(); } },
-            style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : C.line), borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
-          e('span', { 'data-end': '1', style: { font: MONO, color: '#4A5868' } }, '→ back ' + hm((m => +m[0] * 60 + +m[1])(def.split(':')) + len)),
+            style: { width: 52, padding: '3px 5px', border: '1px solid ' + (err ? C.bad : C.line), borderRadius: 3, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, background: C.white } }),
+          e('span', { 'data-end': '1', style: { font: MONO, color: 'var(--gx-mut)' } }, '→ back ' + hm((m => +m[0] * 60 + +m[1])(def.split(':')) + len)),
           e('span', { style: { font: MONO, color: C.muted } }, '(' + len + ' min)')),
         e('span', { style: { display: 'flex', gap: 6 } },
           b('bs', 'Start break', false, ev => go(ev.currentTarget.closest('div').querySelector('input'))),
           b('bc', 'Cancel', false, () => { this.ui.brkFor = null; if (this.ui.brkErr) delete this.ui.brkErr[n]; this.onChange(); })),
-        err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
+        err ? e('span', { style: { font: "500 10.5px 'Inter',system-ui,sans-serif", color: C.bad } }, err) : null);
     })() : null;
     return e('div', { key: 'ev', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
       this.readOnly ? null : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
@@ -3239,11 +3239,11 @@ class Dispatch {
         b('pr', pr ? 'Problem solved' : 'Problem', !!pr, () => pr ? this.endEv(P, n, 'problem') : this.startEv(P, n, 'problem')),
         (ms => e('button', { key: 'ms', type: 'button', title: 'Send this team to a mass outage (gangguan massal)',
           onClick: () => { if (ms) return this.endMass(P, n, ms); this.ui.massFor = this.ui.massFor === n ? null : n; this.onChange(); },
-          style: { padding: '2px 8px', border: '1px solid #B42318', borderRadius: 3, background: ms ? '#B42318' : C.white, color: ms ? C.white : '#B42318', font: SANS, fontSize: 11.5, fontWeight: 600, cursor: 'pointer' } },
+          style: { padding: '2px 8px', border: '1px solid #D9483B', borderRadius: 3, background: ms ? '#D9483B' : C.white, color: ms ? C.white : '#D9483B', font: SANS, fontSize: 11.5, fontWeight: 600, cursor: 'pointer' } },
           ms ? (this.nowMin() < this.massAt(P, n, ms).at ? 'Cancel mass outage' : 'End mass outage') : this.ui.massFor === n ? 'Mass outage…' : 'Mass outage'))(this.massOf(P, n))),
       form,
       this.massForm(e, P, n, b),
-      ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: x.planned ? C.muted : x.type === 'break' ? (this.breakLabel(x).on ? '#2F3B4A' : C.muted) : x.end == null ? C.bad : C.muted, fontWeight: !x.planned && x.type === 'break' && this.breakLabel(x).on ? 700 : 500 } },
+      ...L.map((x, k) => e('span', { key: 'e' + k, style: { font: "500 10.5px 'JetBrains Mono',ui-monospace,monospace", color: x.planned ? C.muted : x.type === 'break' ? (this.breakLabel(x).on ? 'var(--gx-text)' : C.muted) : x.end == null ? C.bad : C.muted, fontWeight: !x.planned && x.type === 'break' && this.breakLabel(x).on ? 700 : 500 } },
         x.planned ? 'Lunch ' + hm(x.at) + '–' + hm(x.end) + ' · ' + Math.round(this.evDur(x)) + ' min · planned'
           : x.type === 'mass' ? 'Mass outage ' + hm(x.at) + '–' + hm(x.end) + ' · ' + dh(x.end - x.at) + (x.note ? ' · ' + x.note : '') + ' · ' + (x.by || 'dispatcher')
           : x.type === 'break' ? 'Break ' + this.breakLabel(x).range + ' · ' + this.breakLabel(x).st + ' · ' + (x.src === 'app' ? 'app' : x.by || x.src || 'dispatcher')
@@ -3254,34 +3254,34 @@ class Dispatch {
     const err = (this.ui.massErr || {})[n], J = this._J, now = Math.floor(this.nowMin());
     const def = hm(Math.max(this.tstart(n), Math.min(now, this.tend(n) - 1))), hrs = nf1(+this.st.cfg.massH || 6).replace('.0', '');
     const on = (P.teams[n] || []).map(k => J.by.get(k)).find(j => j && this.ciOf(j) != null && this.coOf(j) == null);
-    const tx = { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, background: C.white };
+    const tx = { padding: '3px 5px', border: '1px solid ' + C.line, borderRadius: 3, font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, background: C.white };
     const go = el => { const f = el.closest('[data-mass]'); this.startMass(P, n, f.querySelector('[name=ms]').value, f.querySelector('[name=mh]').value, f.querySelector('[name=mn]').value, f.querySelector('[name=ml]').value); };
-    return e('div', { key: 'mf', 'data-mass': '1', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 8px', border: '1px solid #B42318', borderRadius: 3, background: '#FDF0EE' } },
-      e('span', { style: { font: "700 11px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.12em', color: '#7A1C12' } }, 'MASS OUTAGE HANDLING'),
+    return e('div', { key: 'mf', 'data-mass': '1', onMouseDown: ev => ev.stopPropagation(), style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 8px', border: '1px solid #D9483B', borderRadius: 3, background: 'var(--gx-bad-bg)' } },
+      e('span', { style: { font: "700 11px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.12em', color: 'var(--gx-bad)' } }, 'MASS OUTAGE HANDLING'),
       e('span', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, font: SANS, color: C.ink } }, 'Called at',
         e('input', { name: 'ms', type: 'text', inputMode: 'numeric', defaultValue: def, maxLength: 5, placeholder: 'hh:mm', 'aria-label': 'Mass outage start', style: { ...tx, width: 52 } }),
         'for', e('input', { name: 'mh', type: 'number', step: 0.5, min: 0.5, max: 12, defaultValue: hrs, 'aria-label': 'Handling time in hours', style: { ...tx, width: 52 } }), 'h'),
-      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'Gamas title (as in the WO / ticket)',
+      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'Inter',system-ui,sans-serif", color: 'var(--gx-bad)' } }, 'Gamas title (as in the WO / ticket)',
         e('input', { name: 'mn', type: 'text', maxLength: 100, placeholder: 'e.g. Gamas Cemagi / GX-DPS-44692', 'aria-label': 'Mass outage title',
           onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
-          style: { ...tx, font: "500 12px 'IBM Plex Sans',system-ui,sans-serif", width: '100%', boxSizing: 'border-box' } })),
-      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'Location (optional): latitude, longitude from Google Maps',
+          style: { ...tx, font: "500 12px 'Inter',system-ui,sans-serif", width: '100%', boxSizing: 'border-box' } })),
+      e('label', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: "600 11px 'Inter',system-ui,sans-serif", color: 'var(--gx-bad)' } }, 'Location (optional): latitude, longitude from Google Maps',
         e('input', { name: 'ml', type: 'text', maxLength: 80, placeholder: 'e.g. -8.626317, 115.11262', 'aria-label': 'Mass outage location (latitude, longitude)',
           onKeyDown: ev => { if (ev.key === 'Enter') go(ev.target); if (ev.key === 'Escape') { this.ui.massFor = null; this.onChange(); } },
-          style: { ...tx, font: "500 12px 'IBM Plex Mono',ui-monospace,monospace", width: '100%', boxSizing: 'border-box' } })),
-      on ? e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: '#7A1C12' } }, 'On site at ' + on.wo + ': the team finishes it first, then goes (about ' + hm(this.massEff({ at: now, dur: 60, after: on.key }, this.baseEv(P, n)).at) + ').') : null,
-      e('span', { style: { font: "500 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, 'Every ETA after it moves. Jobs this team was driving to go back to Not started. With a location, the outage shows on the map, drives to and from it are counted, and the tracker checks the team in and out.'),
+          style: { ...tx, font: "500 12px 'JetBrains Mono',ui-monospace,monospace", width: '100%', boxSizing: 'border-box' } })),
+      on ? e('span', { style: { font: "500 11px 'Inter',system-ui,sans-serif", color: 'var(--gx-bad)' } }, 'On site at ' + on.wo + ': the team finishes it first, then goes (about ' + hm(this.massEff({ at: now, dur: 60, after: on.key }, this.baseEv(P, n)).at) + ').') : null,
+      e('span', { style: { font: "500 11px 'Inter',system-ui,sans-serif", color: C.muted } }, 'Every ETA after it moves. Jobs this team was driving to go back to Not started. With a location, the outage shows on the map, drives to and from it are counted, and the tracker checks the team in and out.'),
       e('span', { style: { display: 'flex', gap: 6 } },
-        e('button', { type: 'button', onClick: ev => go(ev.currentTarget), style: { padding: '3px 10px', border: '1px solid #B42318', borderRadius: 3, background: '#B42318', color: C.white, font: SANS, fontWeight: 600, cursor: 'pointer' } }, 'Send to mass outage'),
+        e('button', { type: 'button', onClick: ev => go(ev.currentTarget), style: { padding: '3px 10px', border: '1px solid #D9483B', borderRadius: 3, background: '#D9483B', color: C.white, font: SANS, fontWeight: 600, cursor: 'pointer' } }, 'Send to mass outage'),
         b('mc', 'Cancel', false, () => { this.ui.massFor = null; if (this.ui.massErr) delete this.ui.massErr[n]; this.onChange(); })),
-      err ? e('span', { style: { font: "500 10.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.bad } }, err) : null);
+      err ? e('span', { style: { font: "500 10.5px 'Inter',system-ui,sans-serif", color: C.bad } }, err) : null);
   }
   nameInput(e, n) {
-    if (this.readOnly) return e('span', { key: 'nm' + n, style: { font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.tn(n));
+    if (this.readOnly) return e('span', { key: 'nm' + n, style: { font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink } }, this.tn(n));
     return e('input', { key: 'nm' + n + '|' + this.tn(n), type: 'text', defaultValue: this.tn(n), placeholder: 'Team ' + (n + 1), title: 'Team name: click to edit',
       onBlur: ev => { const v = ev.target.value.trim(); if (v !== this.tn(n)) { const old = this.tn(n); this.setName(n, v === 'Team ' + (n + 1) ? '' : v); this.note(old + ' renamed to ' + this.tn(n) + '.'); this.save(); } },
       onKeyDown: ev => { if (ev.key === 'Enter') ev.target.blur(); if (ev.key === 'Escape') { ev.target.value = this.tn(n); ev.target.blur(); } },
-      style: { width: 150, minWidth: 0, padding: '2px 5px', border: '1px solid transparent', borderBottom: '1px dashed #B8B8B3', borderRadius: 2, background: 'transparent', color: C.ink, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", outline: 'none' } });
+      style: { width: 150, minWidth: 0, padding: '2px 5px', border: '1px solid transparent', borderBottom: '1px dashed #B8B8B3', borderRadius: 2, background: 'transparent', color: C.ink, font: "600 12px 'Inter',system-ui,sans-serif", outline: 'none' } });
   }
   column(e, id, title, color, head, badge, cards, P, warn) {
     const drop = this.ui.drop, active = drop && drop.col === id;
@@ -3292,7 +3292,7 @@ class Dispatch {
     return e('div', { key: 'col' + id, style: { flex: '0 0 288px', display: 'flex', flexDirection: 'column', background: warn ? C.warnBg : C.paper, border: '1px solid ' + (active ? C.ink : warn ? C.warnLine : C.line), borderRadius: 3, ...(warn ? { position: 'sticky', left: 0, zIndex: 3, boxShadow: '6px 0 10px -6px rgba(0,0,0,0.18)', maxHeight: 900, overflowY: 'auto' } : {}) } },
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '9px 10px', borderBottom: '1px solid ' + (warn ? C.warnLine : C.line) } },
         e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-          e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 11.5px 'IBM Plex Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: C.ink } },
+          e('span', { style: { display: 'flex', alignItems: 'center', gap: 7, font: "600 11.5px 'JetBrains Mono',ui-monospace,monospace", letterSpacing: '0.08em', textTransform: 'uppercase', color: C.ink } },
             e('span', { style: { width: 10, height: 10, borderRadius: warn ? '50%' : 2, background: warn ? 'transparent' : color, border: warn ? '2px solid ' + color : 'none', boxSizing: 'border-box', flex: 'none' } }), title), badge),
         ...head),
       e('div', { onDragOver, onDrop, style: { display: 'flex', flexDirection: 'column', gap: 0, padding: 8, minHeight: 80 } },
@@ -3320,7 +3320,7 @@ class Dispatch {
       pill(j.cat + ' · ' + nf1(this.dur(j) / 60).replace('.0', '') + 'h', this.cat(j.cat).lvl === 'Critical' ? 'bad' : this.cat(j.cat).lvl === 'High' ? 'warn' : null, 'c'),
       pill(this.cellName(j), null, 'g')];
     const ug = URG[r ? r.urg : this.urgency(j, null)] || URG.blue;
-    chips.unshift(e('span', { key: 'ug', title: ug.tip, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'IBM Plex Sans',system-ui,sans-serif" } }, ug.label));
+    chips.unshift(e('span', { key: 'ug', title: ug.tip, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 3, background: ug.c, color: '#FFFFFF', font: "600 10.5px 'Inter',system-ui,sans-serif" } }, ug.label));
     const rm = this.rem(j);
     if (rm < 0) chips.push(pill('SLA breached ' + dd(-rm), 'bad', 's')); else if (this.soon(j)) chips.push(pill('SLA ' + dh(rm) + ' left', 'warn', 's'));
     if (ag) chips.push(pill('Aging +' + AGING * ag, 'warn', 'a'));
@@ -3346,27 +3346,27 @@ class Dispatch {
         e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
           e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 8px', minWidth: 0 } },
             this.grip(e, j, !lk && !this.readOnly),
-            e('span', { style: { font: "600 14px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink, wordBreak: 'break-all' } }, j.uid || j.name || '—'),
-            e('span', { style: { font: "600 12px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, 'CID ' + j.cid)),
-          e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' }, title: 'Priority score' }, fmtN(sc))),
-        e('div', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, j.wo + ' · ' + fd(j.t) + (j.area ? ' · ' + j.area : '') + (j.prob ? ' · ' + j.prob : '')),
+            e('span', { style: { font: "600 14px 'Inter',system-ui,sans-serif", color: C.ink, wordBreak: 'break-all' } }, j.uid || j.name || '—'),
+            e('span', { style: { font: "600 12px 'JetBrains Mono',ui-monospace,monospace", color: C.ink } }, 'CID ' + j.cid)),
+          e('span', { style: { font: "600 13px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, whiteSpace: 'nowrap' }, title: 'Priority score' }, fmtN(sc))),
+        e('div', { style: { font: "400 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, j.wo + ' · ' + fd(j.t) + (j.area ? ' · ' + j.area : '') + (j.prob ? ' · ' + j.prob : '')),
         e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } }, ...chips),
         r ? e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8 } },
           e('div', null,
-            e('span', { style: { font: "600 16px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
+            e('span', { style: { font: "600 16px 'JetBrains Mono',ui-monospace,monospace", color: C.ink } }, hm(r.arr)),
             e('span', { style: { font: MONO, color: this.coOf(j) != null ? C.good : C.muted } }, ' → ' + hm(r.end) + (this.coOf(j) != null ? ' ✓' : '')),
-            e('div', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(0) + (this.coOf(j) != null ? ' · actual finish' : ' · ETA'))),
+            e('div', { style: { font: "400 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, day(0) + (this.coOf(j) != null ? ' · actual finish' : ' · ETA'))),
           e('div', { style: { font: MONO, color: r.road ? C.muted : C.warn, textAlign: 'right' }, title: r.road ? 'Road drive time' : 'Straight-line estimate' }, (r.road ? '+' : '~') + r.hop + ' min' + (r.road ? '' : ' est.'), e('br'), nf1(r.d) + ' km'))
-          : this.readOnly ? e('div', { style: { font: "400 11px 'IBM Plex Sans',system-ui,sans-serif", color: C.muted } }, (P.why[j.key] === 'customer' ? 'Customer request · no aging' : 'Internal · aging +' + AGING) + ' · ' + day(1))
+          : this.readOnly ? e('div', { style: { font: "400 11px 'Inter',system-ui,sans-serif", color: C.muted } }, (P.why[j.key] === 'customer' ? 'Customer request · no aging' : 'Internal · aging +' + AGING) + ' · ' + day(1))
           : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
             sel('why', P.why[j.key] || 'internal', { internal: 'Internal · aging +' + AGING, customer: 'Customer request · no aging', pending: 'Pending · rescheduled', manual: 'Added by hand · no location' }, ev => { P.why[j.key] = ev.target.value; this.changed(j.wo + ': deferral reason set to ' + ev.target.value + '.'); }, 'Deferral reason'),
-            e('span', { style: { font: "400 10.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
-        r && r.hint && !this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: URG.blue.c } },
+            e('span', { style: { font: "400 10.5px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, day(1))),
+        r && r.hint && !this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px dashed ' + URG.blue.c, borderRadius: 3, font: "500 11.5px 'Inter',system-ui,sans-serif", color: URG.blue.c } },
           (this._J.by.get(r.hint.after) || {}).wo + ' is ' + r.hint.m + ' m away. Do this job right after it?' + (r.hint.delay ? ' ' + (this._J.by.get(r.hint.by) || {}).wo + ' (higher priority) would start ' + dh(r.hint.delay) + ' later.' : ''),
-          e('button', { type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'), style: { padding: '2px 8px', border: '1px solid ' + URG.blue.c, borderRadius: 3, background: C.white, color: URG.blue.c, font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", cursor: 'pointer' } }, 'Move next')) : null,
-        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'IBM Plex Sans',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
+          e('button', { type: 'button', onMouseDown: ev => ev.stopPropagation(), onClick: () => this.move(P, j.key, colId, r.hint.idx, j.wo + ' moved next to ' + (this._J.by.get(r.hint.after) || {}).wo + ' (' + r.hint.m + ' m away, same visit).'), style: { padding: '2px 8px', border: '1px solid ' + URG.blue.c, borderRadius: 3, background: C.white, color: URG.blue.c, font: "600 11px 'Inter',system-ui,sans-serif", cursor: 'pointer' } }, 'Move next')) : null,
+        r && r.f.length ? e('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, ...r.f.map((f, n) => e('span', { key: n, style: { font: "600 11px 'Inter',system-ui,sans-serif", color: f[0] === 'bad' ? C.bad : f[0] === 'info' ? C.muted : f[0] === 'good' ? C.good : C.warn } }, f[1]))) : null,
         this.noteBox(e, j, 'card'),
-        this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', font: "500 11.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.text } },
+        this.readOnly ? e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', font: "500 11.5px 'Inter',system-ui,sans-serif", color: C.text } },
           e('span', null, 'Customer: ' + (CONF[mt.conf || 'none'] || '—')), e('span', null, 'Technician: ' + STAT[mt.stat || 'none'] + (this.ciOf(j) != null ? ' · in ' + hm(this.ciOf(j)) : '') + (this.coOf(j) != null ? ' · out ' + hm(this.coOf(j)) : '')),
           mini('loc', 'Locate', () => this.locate(j), 'Show on the map'))
         : e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' } },
@@ -3383,10 +3383,10 @@ class Dispatch {
   cellTable(e, P, host, col, G) {
     const cfg = this.st.cfg;
     if (!G.length) return e('div', { style: { font: SANS, color: C.muted, padding: '8px 0' } }, 'No open ' + this.type + ' jobs in scope.');
-    const mono = v => e('span', { style: { font: "500 12.5px 'IBM Plex Mono',ui-monospace,monospace" } }, v);
+    const mono = v => e('span', { style: { font: "500 12.5px 'JetBrains Mono',ui-monospace,monospace" } }, v);
     const rows = (this.ui.cellsAll ? G : G.slice(0, 25)).map(g => [
       mono('#' + g.rank),
-      e('button', { type: 'button', onClick: () => this.locate(g.jobs.slice().sort(this.cmp)[0]), title: 'Show on the map', style: { display: 'inline-flex', alignItems: 'center', gap: 7, padding: 0, border: 'none', background: 'none', cursor: 'pointer', font: "600 12.5px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink, textDecoration: 'underline', textUnderlineOffset: 3, textDecorationColor: '#B8B8B3', whiteSpace: 'nowrap' } },
+      e('button', { type: 'button', onClick: () => this.locate(g.jobs.slice().sort(this.cmp)[0]), title: 'Show on the map', style: { display: 'inline-flex', alignItems: 'center', gap: 7, padding: 0, border: 'none', background: 'none', cursor: 'pointer', font: "600 12.5px 'JetBrains Mono',ui-monospace,monospace", color: C.ink, textDecoration: 'underline', textUnderlineOffset: 3, textDecorationColor: '#B8B8B3', whiteSpace: 'nowrap' } },
         e('span', { style: { width: 12, height: 12, borderRadius: 2, background: g.band.color, flex: 'none' } }), this.M.cellLabel(g.key)),
       [...g.areas].slice(0, 2).join(', ') || '—',
       fmtN(g.jobs.length),
@@ -3394,7 +3394,7 @@ class Dispatch {
       nf1(g.work / 60) + ' h',
       g.ctr ? e('span', { style: { color: C.ink, fontWeight: 600, whiteSpace: 'nowrap' } }, 'Busy · own team')
         : e('span', { style: { color: C.warn, whiteSpace: 'nowrap' } }, 'Neighbour / floater'),
-      g.ctr ? e('span', { style: { font: "600 13px 'IBM Plex Mono',ui-monospace,monospace", color: C.ink } }, String(g.need) + (g.left ? ' +' : '')) : '—',
+      g.ctr ? e('span', { style: { font: "600 13px 'JetBrains Mono',ui-monospace,monospace", color: C.ink } }, String(g.need) + (g.left ? ' +' : '')) : '—',
       g.ctr ? e('span', { style: { whiteSpace: 'nowrap', color: g.finish > cfg.end ? C.bad : C.text } }, dh(g.finish - cfg.start) + ' · done ' + hm(g.finish)) : '—',
       g.tms.length ? e('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } }, ...g.tms.map(n => e('span', { key: n, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, e('span', { style: { width: 8, height: 8, borderRadius: 2, background: col(n) } }), this.tn(n))))
         : e('span', { style: { color: C.bad, fontWeight: 600 } }, 'none'),
@@ -3408,8 +3408,8 @@ class Dispatch {
     const L = this.st.log;
     if (!L.length) return e('div', { style: { font: SANS, color: C.muted } }, 'No changes yet.');
     return e('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' } },
-      ...L.slice(0, 80).map((l, n) => e('div', { key: n, style: { display: 'grid', gridTemplateColumns: '92px minmax(0,1fr)', gap: 8, font: "400 12.5px/1.5 'IBM Plex Sans',system-ui,sans-serif", color: C.text, paddingBottom: 6, borderBottom: '1px solid ' + C.soft } },
-        e('span', { style: { font: "400 11px 'IBM Plex Mono',ui-monospace,monospace", color: C.muted } }, l.t), e('span', null, l.by ? e('strong', { style: { fontWeight: 600, color: C.ink } }, l.by + ': ') : null, l.msg))));
+      ...L.slice(0, 80).map((l, n) => e('div', { key: n, style: { display: 'grid', gridTemplateColumns: '92px minmax(0,1fr)', gap: 8, font: "400 12.5px/1.5 'Inter',system-ui,sans-serif", color: C.text, paddingBottom: 6, borderBottom: '1px solid ' + C.soft } },
+        e('span', { style: { font: "400 11px 'JetBrains Mono',ui-monospace,monospace", color: C.muted } }, l.t), e('span', null, l.by ? e('strong', { style: { fontWeight: 600, color: C.ink } }, l.by + ': ') : null, l.msg))));
   }
 
   settings(e, row, chip, btn) {
@@ -3426,7 +3426,7 @@ class Dispatch {
     const canPlan = this.canPlan(), dis = canPlan ? {} : { disabled: true };
     const nTeams = Math.max(1, Math.round(+d.teams || 1)), nDet = Math.max(nTeams, this.teamCount());
     const Pn = this.st.plans[name];
-    const tLab = n => e('span', { key: 'tl', style: { ...tx, width: 170, display: 'inline-block', border: 0, background: 'transparent', font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, (d.names || [])[n] || 'Team ' + (n + 1));
+    const tLab = n => e('span', { key: 'tl', style: { ...tx, width: 170, display: 'inline-block', border: 0, background: 'transparent', font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink } }, (d.names || [])[n] || 'Team ' + (n + 1));
     // 1. Team details: name and tracker. Never changes an ETA or the schedule.
     const detailRows = Array.from({ length: nDet }, (_, n) => {
         const cr = (d.crew || [])[n] || {}, upd = p => { const a = (d.crew || []).slice(); a[n] = { ...(a[n] || {}), ...p }; d.crew = a; this.onChange(); };
@@ -3434,7 +3434,7 @@ class Dispatch {
         return row(n ? '' : 'Team', [
           e('input', { key: 'cn', type: 'text', value: nm, placeholder: 'Team ' + (n + 1), 'aria-label': 'Team ' + (n + 1) + ' name', maxLength: 40,
             onChange: ev => { const a = (d.names || []).slice(); a[n] = ev.target.value; d.names = a; this.onChange(); },
-            style: { ...tx, width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif" } }),
+            style: { ...tx, width: 170, font: "600 12px 'Inter',system-ui,sans-serif" } }),
           lab('Tracker', 'ca' + n),
           ...this.trackerField(e, cr, upd, d, n, tx, nDet),
           (a => a && String(cr.app || '') === a.dev ? e('span', { key: 'tga', style: { font: SANS, color: C.good } }, 'AUTO ' + hm((t => t.getHours() * 60 + t.getMinutes())(new Date(a.at))) + ' · ' + a.wo) : null)(this.autoTagOf(Pn, n)),
@@ -3460,7 +3460,7 @@ class Dispatch {
     const warnSave = this.ui.saveMsg ? e('span', { key: 'sw', style: { font: SANS, color: C.bad } }, this.ui.saveMsg) : null;
     const dDirty = this.detailsDirty();
     const head = (k, title, note, color) => e('div', { key: k, style: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 6, borderTop: '1px solid ' + C.line } },
-      e('span', { style: { font: "600 12.5px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, title),
+      e('span', { style: { font: "600 12.5px 'Inter',system-ui,sans-serif", color: C.ink } }, title),
       e('span', { style: { font: SANS, color: color || C.muted } }, note));
     const detBlock = [
       head('h1', '1 · Team details (name and tracker)', 'Safe to change at any time. Saving does not change any ETA, team or order of the schedule. ' + nDet + ' teams: follows the number of teams in charge today. A tracker that parks at a team\u2019s first WO (or a WO it is checked in at) is given to that team automatically (AUTO); correct it here if it is wrong.', C.good),
@@ -3476,7 +3476,7 @@ class Dispatch {
       this.limited ? null : btn('rs', 'Reset defaults', () => { const keep = { bases: d.bases, branch: d.branch, names: d.names, crew: d.crew, dispPlan: d.dispPlan }; this.ui.draft = { ...JSON.parse(JSON.stringify(DEF)), ...keep }; this.onChange(); })], 'act') : null;
     const close = row('', [btn('cx', dirty ? 'Discard all unsaved changes' : 'Close', () => this.discardSettings())], 'cls');
     const box = { key: 'set', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid ' + C.line, borderRadius: 3, background: C.paper } };
-    const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
+    const top = row('', [e('span', { key: 'tt', style: { font: "600 13px 'Inter',system-ui,sans-serif", color: C.ink } }, this.limited ? 'Teams & crew' : 'Settings'),
       dirty ? e('span', { key: 'tn', style: { font: SANS, color: C.warn } }, 'Unsaved changes') : null], 'top');
     const actions = planBtn;
     // Dispatchers: team details always; the planning setup only when the admin allows it (else shown read-only).
@@ -3568,7 +3568,7 @@ class Dispatch {
     const rows = L.map((t, n) => {
       const other = t.name === OTHER;
       return row(n ? '' : 'Job types', [
-        other ? e('span', { key: 'on', style: { width: 170, font: "600 12px 'IBM Plex Sans',system-ui,sans-serif", color: C.ink } }, 'Other (no word matched)') : inp(t, 'name', 170, 'Job type name', n),
+        other ? e('span', { key: 'on', style: { width: 170, font: "600 12px 'Inter',system-ui,sans-serif", color: C.ink } }, 'Other (no word matched)') : inp(t, 'name', 170, 'Job type name', n),
         e('input', { key: 'mn' + n, type: 'number', step: 5, min: 10, value: t.min, 'aria-label': 'Job type ' + (n + 1) + ' minutes', onChange: ev => { t.min = ev.target.value === '' ? '' : +ev.target.value; upd(); }, style: { ...tx, width: 64 } }), lab('min', 'mu' + n),
         e('select', { key: 'lv' + n, value: t.lvl || 'Low', 'aria-label': 'Job type ' + (n + 1) + ' priority', onChange: ev => { t.lvl = ev.target.value; upd(); }, style: { padding: '4px 6px', border: '1px solid ' + C.line, borderRadius: 3, background: C.white, color: C.ink, font: SANS } },
           ...Object.keys(LEVELS).map(k => e('option', { key: k, value: k }, k + ' priority'))),
