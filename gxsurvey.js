@@ -130,7 +130,7 @@ const CSS = `
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = (n = 8) => { const a = 'abcdefghijkmnpqrstuvwxyz23456789'; let s = ''; crypto.getRandomValues(new Uint8Array(n)).forEach(x => { s += a[x % a.length]; }); return s; };
 const clone = o => JSON.parse(JSON.stringify(o));
-const safeColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#1F1F1D';
+const safeColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#F9C900';
 const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
 const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '0%';
 const fmtN = (x, d) => Number(x).toLocaleString('id-ID', { maximumFractionDigits: d });
@@ -147,7 +147,7 @@ const TYPES = {
 };
 const OPT = ['choice', 'checkbox', 'dropdown'];
 const NUMERIC = ['scale', 'rating', 'nps', 'number'];
-const SW = ['#1F1F1D', '#F9C900', '#2FA35A', '#5B8BC7', '#D9483B', '#F0782D', '#1f5eff', '#7a5af8'];
+const SW = ['#F9C900', '#1F1F1D', '#2FA35A', '#5B8BC7', '#D9483B', '#F0782D', '#1f5eff', '#7a5af8'];
 const opt = l => ({ id: uid(5), label: l, jump: '' });
 function newQ(type) {
   const q = { id: uid(6), type, title: '', desc: '', required: false };
@@ -164,7 +164,7 @@ function newQ(type) {
 const mq = (t, p) => Object.assign(newQ(t), p);
 function newForm() {
   const now = new Date().toISOString();
-  return { id: uid(8), title: 'Survei tanpa judul', desc: '', color: 'var(--gx-ink)', bg: 'light', showLogo: true, showWelcome: true, startText: 'Mulai', showProgress: true,
+  return { id: uid(8), title: 'Survei tanpa judul', desc: '', color: '#F9C900', bg: 'dark', showLogo: true, showWelcome: true, startText: 'Mulai', showProgress: true,
     thanksTitle: 'Terima kasih!', thanksMsg: 'Jawaban Anda sudah kami terima.', accepting: true, closedMsg: 'Survei ini sudah tidak menerima jawaban.',
     oneResponse: false, hidden: '', csat: { on: false, ratingQ: '', commentQ: '', whoQ: '' }, questions: [], createdAt: now, updatedAt: now };
 }
@@ -187,7 +187,7 @@ function template(t) {
         mq('nps', { title: 'Seberapa mungkin Anda merekomendasikan layanan kami kepada teman atau keluarga?', required: true }), c],
       csat: { on: false, ratingQ: r.id, commentQ: c.id, whoQ: 'h:cid' } });
   } else if (t === 'nps') {
-    Object.assign(f, { title: 'Survei rekomendasi pelanggan', desc: 'Pendapat Anda membantu kami menjadi lebih baik.', color: 'var(--gx-good)', hidden: 'cid',
+    Object.assign(f, { title: 'Survei rekomendasi pelanggan', desc: 'Pendapat Anda membantu kami menjadi lebih baik.', hidden: 'cid',
       questions: [mq('nps', { title: 'Seberapa mungkin Anda merekomendasikan kami kepada teman atau rekan?', required: true }), mq('long', { title: 'Apa alasan utama dari skor yang Anda berikan?' }),
         mq('checkbox', { title: 'Hal apa yang paling penting bagi Anda?', options: [opt('Kecepatan internet'), opt('Kestabilan koneksi'), opt('Respons layanan pelanggan'), opt('Harga')], allowOther: true })] });
   }

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-27 c (Halaman survei responden: tampilan GX dan perbaikan logika lompat)
+
+### Fixed
+
+- **Survei dengan logika lompat bisa macet.** Di `survey.html`, pertanyaan pilihan ganda, dropdown, atau Ya/Tidak yang memakai "Lompat ke pertanyaan berdasarkan jawaban" berhenti dengan error saat responden menekan OK, sehingga survei tidak bisa dikirim. Contohnya template "Kunjungan teknisi". Survei tanpa logika lompat tidak terdampak.
+
+### Changed
+
+- Halaman responden mengikuti tampilan baru: judul dan pertanyaan memakai Space Grotesk, label dan angka JetBrains Mono, cahaya kuning yang bergerak pelan di latar, garis cahaya di atas, progress bar menyala, opsi jawaban muncul bergantian, tombol OK berbentuk pil dengan kilau saat disorot, serta centang beranimasi saat memilih. Efek hover hanya aktif di perangkat dengan mouse, jadi di HP pilihan tidak bergeser setelah disentuh. Semua animasi mati otomatis kalau perangkat memakai pengaturan "kurangi gerakan".
+- Latar gelap memakai hitam GX #0B0B0A.
+- Survei baru otomatis memakai **kuning GX #F9C900 dengan latar gelap**. Warna kuning ada di urutan pertama pilihan warna. Survei yang sudah ada tetap memakai warnanya masing-masing.
+
 ## 2026-11-27 b (Tampilan baru: tema GlobalXtreme, mode gelap/terang, IDS Board / Map / Side by side)
 
 ### Changed

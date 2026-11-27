@@ -2003,7 +2003,7 @@ class Component extends DCLogic {
     if (this.surveyApi) { this.surveyApi.destroy(); this.surveyApi = null; }
     this.surveyEl = el;
     if (!el) return;
-    import('./gxsurvey.js?v=2026-11-27b').then(M => { if (this.surveyEl !== el) return; this.surveyApi = M.mount(el, { D: this.D, me: this.state.me || { role: 'admin' } }); })
+    import('./gxsurvey.js?v=2026-11-27c').then(M => { if (this.surveyEl !== el) return; this.surveyApi = M.mount(el, { D: this.D, me: this.state.me || { role: 'admin' } }); })
       .catch(e => { el.textContent = 'Survey module failed to load: ' + e.message; });
   };
 

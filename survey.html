@@ -7,7 +7,7 @@
 <title>Survei · GlobalXtreme</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
 /* Halaman responden survei CX Intelligence (gaya Typeform). Data: Apps Script proxy → survey.gs. */
 :root{--f:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
@@ -106,6 +106,61 @@ input.pin[type=date],input.pin[type=time]{color-scheme:light dark;max-width:320p
 @media(max-width:600px){.start{grid-template-columns:minmax(0,1fr)}.tplart{height:64px}.types,.grid2,.mxe{grid-template-columns:minmax(0,1fr)}.qnum{display:none}.qwrap{grid-template-columns:minmax(0,1fr)}.bar{grid-template-columns:minmax(0,1fr) auto}.bar .bt{grid-column:1/-1;grid-row:2}.save{display:none}.h1{font-size:28px}.tabs{top:61px;justify-content:flex-start}.jump{max-width:none;flex:1 1 100%}.opt{flex-wrap:wrap}.step{padding-top:60px}.nums button{flex:1 1 14%;min-width:0;height:50px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important}}
 
+
+/* ---------- GX look: type, light, motion ---------- */
+.pl{font-family:Inter,var(--f)}
+.qq,.wt{font-family:'Space Grotesk',Inter,sans-serif;font-weight:500;letter-spacing:-.025em}
+.qq{font-size:clamp(24px,3.6vw,36px);line-height:1.18}
+.wt{font-size:clamp(36px,6vw,64px);line-height:1.02;font-weight:600}
+.qnum,.ch kbd,.nums button,.hint,.meta,.pvbar{font-family:'JetBrains Mono',ui-monospace,monospace}
+.qnum{font-size:14px;padding-top:12px}
+.glow{position:absolute;width:62vmax;height:62vmax;border-radius:50%;pointer-events:none;filter:blur(40px);opacity:.16;background:radial-gradient(circle,var(--pa) 0%,transparent 62%);z-index:0}
+.glow.g1{left:-22vmax;top:-26vmax;animation:drift1 18s ease-in-out infinite alternate}
+.glow.g2{right:-26vmax;bottom:-30vmax;opacity:.1;animation:drift2 22s ease-in-out infinite alternate}
+@keyframes drift1{to{transform:translate(18vmax,14vmax) scale(1.15)}}
+@keyframes drift2{to{transform:translate(-16vmax,-12vmax) scale(.9)}}
+.pstreak{position:absolute;left:0;top:4px;width:240px;height:2px;z-index:4;pointer-events:none;background:linear-gradient(90deg,transparent,var(--pa),transparent);animation:streak 4.2s cubic-bezier(.6,0,.2,1) infinite}
+@keyframes streak{0%{transform:translateX(-30%);opacity:0}15%{opacity:1}100%{transform:translateX(130vw);opacity:0}}
+.stage{z-index:1}
+.pbar{height:5px}
+.pbar i{position:relative;box-shadow:0 0 14px var(--pa);transition:width .8s cubic-bezier(.16,1,.3,1)}
+.pbar i::after{content:"";position:absolute;right:-1px;top:50%;width:9px;height:9px;border-radius:50%;background:var(--pa);transform:translate(50%,-50%);box-shadow:0 0 12px 3px var(--pa)}
+@keyframes rise{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+.step:not(.settled) .qnum,.step:not(.settled) .qq,.step:not(.settled) .wt{animation:rise .8s cubic-bezier(.16,1,.3,1) .06s both}
+.step:not(.settled) .qd,.step:not(.settled) .wd{animation:rise .8s cubic-bezier(.16,1,.3,1) .14s both}
+.step:not(.settled) .qin :is(.ch,.pill),.step:not(.settled) .nums button,.step:not(.settled) .stars,.step:not(.settled) .pin,.step:not(.settled) .mx>div{animation:rise .6s cubic-bezier(.16,1,.3,1) .22s both}
+.step:not(.settled) .okrow,.step:not(.settled) .meta{animation:rise .7s cubic-bezier(.16,1,.3,1) .42s both}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(1),.step:not(.settled) .nums button:nth-child(1),.step:not(.settled) .mx>div:nth-child(1){animation-delay:0.22s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(2),.step:not(.settled) .nums button:nth-child(2),.step:not(.settled) .mx>div:nth-child(2){animation-delay:0.27s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(3),.step:not(.settled) .nums button:nth-child(3),.step:not(.settled) .mx>div:nth-child(3){animation-delay:0.32s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(4),.step:not(.settled) .nums button:nth-child(4),.step:not(.settled) .mx>div:nth-child(4){animation-delay:0.37s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(5),.step:not(.settled) .nums button:nth-child(5),.step:not(.settled) .mx>div:nth-child(5){animation-delay:0.42s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(6),.step:not(.settled) .nums button:nth-child(6),.step:not(.settled) .mx>div:nth-child(6){animation-delay:0.47s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(7),.step:not(.settled) .nums button:nth-child(7),.step:not(.settled) .mx>div:nth-child(7){animation-delay:0.52s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(8),.step:not(.settled) .nums button:nth-child(8),.step:not(.settled) .mx>div:nth-child(8){animation-delay:0.57s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(9),.step:not(.settled) .nums button:nth-child(9),.step:not(.settled) .mx>div:nth-child(9){animation-delay:0.62s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(10),.step:not(.settled) .nums button:nth-child(10),.step:not(.settled) .mx>div:nth-child(10){animation-delay:0.67s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(11),.step:not(.settled) .nums button:nth-child(11),.step:not(.settled) .mx>div:nth-child(11){animation-delay:0.72s}
+.step:not(.settled) .qin :is(.ch,.pill):nth-child(12),.step:not(.settled) .nums button:nth-child(12),.step:not(.settled) .mx>div:nth-child(12){animation-delay:0.77s}
+
+.ch{border-radius:12px;min-height:52px;transition:background .2s,box-shadow .2s,transform .25s cubic-bezier(.16,1,.3,1)}
+.ch kbd{font-size:12px;font-weight:600;min-width:26px;height:26px;padding:0 4px;box-sizing:border-box;border-radius:7px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--pa) 60%,transparent);color:var(--pa);background:var(--pb);transition:transform .2s,background .2s,color .2s}
+.ch.on kbd{background:var(--pa);color:var(--pb)}
+.ch.blink svg path{stroke-dasharray:24;stroke-dashoffset:24;animation:draw .35s ease-out forwards}
+.nums button{border-radius:12px;transition:background .2s,color .2s,transform .2s cubic-bezier(.16,1,.3,1)}
+
+.nums button.on{transform:translateY(-3px);box-shadow:0 10px 24px -10px var(--pa)}
+
+.pill{border-radius:999px;transition:background .2s,color .2s,transform .2s}
+
+.okb{position:relative;overflow:hidden;border-radius:999px;padding:11px 26px;transition:filter .2s,transform .2s cubic-bezier(.16,1,.3,1)}
+.okb::after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.45) 50%,transparent 65%);transform:translateX(-120%);transition:transform .75s ease}
+@media (hover:hover){.ch:hover{transform:translateX(4px)}.ch:hover kbd{transform:scale(1.08)}.nums button:hover{transform:translateY(-3px)}.stars button:hover{transform:translateY(-3px) scale(1.06)}.pill:hover{transform:translateY(-2px)}.okb:hover{transform:translateY(-2px)}.okb:hover::after{transform:translateX(120%)}}
+.pnav button{transition:filter .2s}.pnav button:hover{filter:brightness(1.15)}
+.pnav button:first-child{border-radius:999px 0 0 999px}.pnav button:last-child{border-radius:0 999px 999px 0}
+.endc{filter:drop-shadow(0 0 18px color-mix(in srgb,var(--pa) 55%,transparent));animation:pop .6s cubic-bezier(.16,1,.3,1) both}
+.pin{transition:border-color .25s}
+@media (prefers-reduced-motion:reduce){.glow,.pstreak{animation:none!important}.ch:hover,.nums button:hover,.okb:hover{transform:none}}
 </style>
 </head>
 <body>
@@ -119,11 +174,11 @@ const S = { view: 'player' };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const range = (a, b) => { const r = []; for (let i = a; i <= b; i++) r.push(i); return r; };
 const LS = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
-const safeColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#1F1F1D';
+const safeColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#F9C900';
 function lum(hex) { const c = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; }
 function theme(f) {
   const c = safeColor(f.color);
-  if (f.bg === 'dark') return { bg: '#0f1115', ink: '#f2f4f7', ac: lum(c) < .08 ? '#f2f4f7' : c };
+  if (f.bg === 'dark') return { bg: '#0B0B0A', ink: '#F5F5F0', ac: lum(c) < .08 ? '#F9C900' : c };
   if (f.bg === 'color') { const ink = lum(c) > .45 ? '#111317' : '#ffffff'; return { bg: c, ink, ac: ink }; }
   return { bg: '#ffffff', ink: '#14171c', ac: lum(c) > .5 ? '#7A5E00' : c };
 }
@@ -135,6 +190,7 @@ async function call(op, payload) {
   return j.data;
 }
 const store = { getForm: id => call('form', { id }), submit: (formId, answers, hidden) => call('submit', { formId, answers, hidden }) };
+const LOGIC = ['choice', 'dropdown', 'yesno'];   // question types whose answers can jump to another question
 const QS = new URLSearchParams(location.search);
 // Hidden fields (mis. ?cid=...&wo=...) dikirim hanya jika didaftarkan di pengaturan survei; server menyaring lagi.
 let HIDDEN = {};
@@ -157,7 +213,7 @@ function openPlayer(form, preview, special) {
   P = { form, preview, i: special || (form.showWelcome !== false ? -1 : 0), ans: {}, other: {}, hist: [], order: {}, busy: false, cur: null };
   if (!special && !form.questions.length) P.i = 'empty';
   form.questions.forEach(q => { if (q.shuffle && q.options) { const a = q.options.map((_, k) => k); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } P.order[q.id] = a; } });
-  app.innerHTML = `<div class="pl" id="pl" style="${tvars(theme(form))}">${form.showProgress !== false ? '<div class="pbar"><i id="pfill"></i></div>' : ''}
+  app.innerHTML = `<div class="pl" id="pl" style="${tvars(theme(form))}"><span class="glow g1" aria-hidden="true"></span><span class="glow g2" aria-hidden="true"></span><span class="pstreak" aria-hidden="true"></span>${form.showProgress !== false ? '<div class="pbar"><i id="pfill"></i></div>' : ''}
   ${form.showLogo !== false ? `<img class="plogo${theme(form).bg === '#ffffff' ? '' : ' inv'}" src="gx-wordmark.png" alt="GlobalXtreme">` : ''}
   ${preview ? '<div class="pvbar">Pratinjau, jawaban tidak disimpan <button data-p="exit">Tutup</button></div>' : ''}
   <div class="stage" id="stage"></div><div class="pnav" id="pnav"><button data-p="prev" aria-label="Pertanyaan sebelumnya">↑</button><button data-p="next" aria-label="Pertanyaan berikutnya">↓</button></div><div class="perr" id="perr" role="alert"></div></div>`;
@@ -210,6 +266,7 @@ function showStep(dir) {
   const qs = P.form.questions; P.cur = typeof P.i === 'number' && P.i >= 0 ? qs[P.i].id : null;
   const old = curStep(); if (old) { old.classList.add('gone', dir < 0 ? 'out-down' : 'out-up'); setTimeout(() => old.remove(), 420); }
   const d = document.createElement('div'); d.className = 'step ' + (dir < 0 ? 'in-down' : 'in-up'); d.innerHTML = stepHTML(); st.appendChild(d);
+  setTimeout(() => d.classList.add('settled'), 1100);
   const fill = document.getElementById('pfill'); if (fill) fill.style.width = (P.i === 'end' ? 100 : typeof P.i === 'number' && P.i >= 0 ? Math.round(P.i / qs.length * 100) : 0) + '%';
   const nav = document.getElementById('pnav'); if (nav) nav.style.visibility = P.cur ? 'visible' : 'hidden';
   const ta = d.querySelector('textarea.pin'); if (ta) autoGrow(ta);
